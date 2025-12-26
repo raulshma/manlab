@@ -185,8 +185,25 @@ internal static class Program
         var repoRoot = FindRepoRoot(Directory.GetCurrentDirectory());
         var rids = new List<string>();
 
-        // Defaults mirror scripts/publish-agent.ps1
-        rids.AddRange(new[] { "linux-x64", "linux-arm64", "win-x64" });
+        // Native AOT does not support cross-OS compilation.
+        // Default to RIDs compatible with the current OS.
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            rids.Add("win-x64");
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            rids.AddRange(new[] { "linux-x64", "linux-arm64" });
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            rids.AddRange(new[] { "osx-x64", "osx-arm64" });
+        }
+        else
+        {
+            // Fallback to current RID if we can't detect OS
+            rids.Add(RuntimeInformation.RuntimeIdentifier);
+        }
 
         string? agentProject = null;
         string? artifactsRoot = null;
@@ -327,6 +344,12 @@ internal static class Program
         Console.WriteLine("  --artifacts-root <path>              Local artifacts output (default: artifacts/agent)");
         Console.WriteLine("  --server-distribution-root <path>    Staging folder served by BinariesController");
         Console.WriteLine("  -h, --help                           Show help");
+        Console.WriteLine();
+        Console.WriteLine("Note: Native AOT does not support cross-OS compilation.");
+        Console.WriteLine("Default RIDs are based on the current OS:");
+        Console.WriteLine("  Windows: win-x64");
+        Console.WriteLine("  Linux:   linux-x64, linux-arm64");
+        Console.WriteLine("  macOS:   osx-x64, osx-arm64");
         Console.WriteLine();
         Console.WriteLine("Staged layout:");
         Console.WriteLine("  {DistributionRoot}/agent/{rid}/manlab-agent[.exe]");
