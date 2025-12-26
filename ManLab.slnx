@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ManLab.Server/ManLab.Server.csproj" />
+    <Project Path="src/ManLab.Shared/ManLab.Shared.csproj" />
+  </Folder>
+</Solution>
