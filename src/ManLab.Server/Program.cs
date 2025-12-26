@@ -2,6 +2,7 @@ using ManLab.Server.Data;
 using ManLab.Server.Hubs;
 using ManLab.Server.Services;
 using Microsoft.EntityFrameworkCore;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -72,6 +73,7 @@ app.MapDefaultEndpoints();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.MapScalarApiReference();
 }
 
 app.MapControllers();
