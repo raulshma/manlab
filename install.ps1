@@ -33,7 +33,7 @@
 
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory = $true)]
+  [Parameter(Mandatory = $false)]
   [string]$Server,
 
   [Parameter(Mandatory = $false)]
@@ -90,6 +90,20 @@ function Download-File([string]$Url, [string]$OutFile) {
 }
 
 Assert-Admin
+
+# Support non-interactive configuration via environment variables as well.
+# This is useful for SSH bootstrap flows.
+if ([string]::IsNullOrWhiteSpace($Server)) {
+  $Server = if (-not [string]::IsNullOrWhiteSpace($env:MANLAB_SERVER_BASE_URL)) { $env:MANLAB_SERVER_BASE_URL } else { $env:MANLAB_SERVER }
+}
+
+if ([string]::IsNullOrWhiteSpace($AuthToken)) {
+  $AuthToken = if (-not [string]::IsNullOrWhiteSpace($env:MANLAB_ENROLLMENT_TOKEN)) { $env:MANLAB_ENROLLMENT_TOKEN } else { $env:MANLAB_AUTH_TOKEN }
+}
+
+if ([string]::IsNullOrWhiteSpace($Server)) {
+  throw "Server is required. Provide -Server or set MANLAB_SERVER_BASE_URL / MANLAB_SERVER."
+}
 
 $Server = Trim-TrailingSlash $Server
 $hubUrl = "$Server/hubs/agent"

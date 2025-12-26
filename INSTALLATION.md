@@ -44,3 +44,12 @@ After install:
 
 - Task Scheduler → Task Scheduler Library → **ManLab Agent**
 - Logs: `C:\ProgramData\ManLab\Agent\agent.log`
+
+## SSH onboarding transport (server-side)
+
+For the **zero-config bootstrap via SSH**, the server uses an **embedded SSH library** (`Renci.SshNet`, a.k.a. SSH.NET) in `src/ManLab.Server/Services/Ssh/SshProvisioningService.cs`.
+
+Why this approach (vs spawning `ssh`/`scp` binaries):
+
+- **Pros:** works cross-platform from the ASP.NET server, no dependency on external binaries, easier to stream progress and enforce host-key policy.
+- **Cons:** the server must handle SSH behaviors itself (auth modes, host key verification, quoting/escaping), and Windows targets must have **OpenSSH Server** enabled.

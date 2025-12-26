@@ -117,8 +117,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Support non-interactive config via environment variables as well.
+# (Useful for SSH bootstrap flows where passing args may be cumbersome.)
 if [[ -z "$SERVER" ]]; then
-  echo "ERROR: --server is required." >&2
+  SERVER="${MANLAB_SERVER_BASE_URL:-${MANLAB_SERVER:-}}"
+fi
+
+if [[ -z "$TOKEN" ]]; then
+  # Accept either an explicit enrollment token variable or the generic auth token.
+  TOKEN="${MANLAB_ENROLLMENT_TOKEN:-${MANLAB_AUTH_TOKEN:-}}"
+fi
+
+if [[ -z "$SERVER" ]]; then
+  echo "ERROR: --server is required (or set MANLAB_SERVER_BASE_URL / MANLAB_SERVER)." >&2
   usage
   exit 1
 fi
