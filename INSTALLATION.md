@@ -30,6 +30,10 @@ After install:
 - `systemctl status manlab-agent`
 - `journalctl -u manlab-agent -f`
 
+Uninstall / cleanup (removes systemd unit, env file, and install directory):
+
+- `sudo ./install.sh --uninstall`
+
 ## Windows (`install.ps1`)
 
 - Installs to `C:\ProgramData\ManLab\Agent`
@@ -45,9 +49,15 @@ After install:
 - Task Scheduler → Task Scheduler Library → **ManLab Agent**
 - Logs: `C:\ProgramData\ManLab\Agent\agent.log`
 
+Uninstall / cleanup (removes Scheduled Task and deletes install directory):
+
+- `./install.ps1 -Uninstall`
+
 ## SSH onboarding transport (server-side)
 
 For the **zero-config bootstrap via SSH**, the server uses an **embedded SSH library** (`Renci.SshNet`, a.k.a. SSH.NET) in `src/ManLab.Server/Services/Ssh/SshProvisioningService.cs`.
+
+The same SSH provisioning flow can also run the installer scripts in **uninstall mode** to remove and clean up the agent from a connected target.
 
 Why this approach (vs spawning `ssh`/`scp` binaries):
 

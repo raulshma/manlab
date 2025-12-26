@@ -127,6 +127,46 @@ public sealed class SshProvisioningService
         }
     }
 
+    public async Task<(bool Success, string? HostKeyFingerprint, bool RequiresHostKeyTrust, string Logs)> UninstallAgentAsync(
+        ConnectionOptions options,
+        Uri serverBaseUrl,
+        IProgress<string> progress,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        progress.Report("Connecting over SSH...");
+
+        using var client = CreateSshClient(options, out var hostKey);
+        try
+        {
+            client.Connect();
+        }
+        catch (SshConnectionException) when (hostKey.TrustRequired)
+        {
+            return (false, hostKey.Fingerprint, true, "SSH host key not trusted.");
+        }
+
+        progress.Report("Connected. Detecting OS...");
+
+        var target = DetectTarget(client);
+        progress.Report($"Detected target: {target.Raw}");
+
+        if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(target.OsFamily, "unix", StringComparison.OrdinalIgnoreCase))
+        {
+            var logs = await UninstallLinuxAsync(client, serverBaseUrl, progress, cancellationToken);
+            client.Disconnect();
+            return (true, hostKey.Fingerprint, false, logs);
+        }
+        else
+        {
+            var logs = await UninstallWindowsAsync(client, serverBaseUrl, progress, cancellationToken);
+            client.Disconnect();
+            return (true, hostKey.Fingerprint, false, logs);
+        }
+    }
+
     private static Task<string> InstallLinuxAsync(
         SshClient client,
         Uri serverBaseUrl,
@@ -215,6 +255,60 @@ public sealed class SshProvisioningService
         var output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
         progress.Report("Windows installer finished.");
         return Task.FromResult(RedactToken(output, enrollmentToken));
+    }
+
+    private static Task<string> UninstallLinuxAsync(
+        SshClient client,
+        Uri serverBaseUrl,
+        IProgress<string> progress,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var server = serverBaseUrl.ToString().TrimEnd('/');
+        var url = server + "/install.sh";
+
+        progress.Report("Running Linux uninstaller (requires root or passwordless sudo)...");
+
+        var idu = Execute(client, "id -u", maxChars: 64)?.Trim();
+        var isRoot = string.Equals(idu, "0", StringComparison.Ordinal);
+        var sudoPrefix = isRoot ? string.Empty : "sudo -n ";
+
+        var cmd = $"sh -c \"set -e; " +
+                  $"if command -v curl >/dev/null 2>&1; then DL='curl -fsSL'; " +
+                  $"elif command -v wget >/dev/null 2>&1; then DL='wget -qO-'; " +
+                  $"else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
+                  $"$DL '{EscapeSingleQuotes(url)}' | {sudoPrefix}bash -s -- --uninstall\"";
+
+        var output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
+        progress.Report("Linux uninstaller finished.");
+        return Task.FromResult(output);
+    }
+
+    private static Task<string> UninstallWindowsAsync(
+        SshClient client,
+        Uri serverBaseUrl,
+        IProgress<string> progress,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var server = serverBaseUrl.ToString().TrimEnd('/');
+        var url = server + "/install.ps1";
+
+        progress.Report("Running Windows uninstaller (requires elevated PowerShell on the target)...");
+
+        // Download to %TEMP% then execute with -Uninstall.
+        var ps = "$ErrorActionPreference='Stop'; " +
+                 "$p = Join-Path $env:TEMP 'manlab-install.ps1'; " +
+                 $"Invoke-WebRequest -UseBasicParsing -Uri '{EscapeSingleQuotes(url)}' -OutFile $p; " +
+                 "& $p -Uninstall;";
+
+        var cmd = $"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{EscapeDoubleQuotes(ps)}\"";
+
+        var output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
+        progress.Report("Windows uninstaller finished.");
+        return Task.FromResult(output);
     }
 
     /// <summary>

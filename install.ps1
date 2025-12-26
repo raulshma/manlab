@@ -29,6 +29,9 @@
 
 .PARAMETER Force
   Overwrite existing files and re-register scheduled task
+
+.PARAMETER Uninstall
+  Removes the scheduled task and deletes the install directory.
 #>
 
 [CmdletBinding()]
@@ -49,7 +52,10 @@ param(
   [string]$Rid,
 
   [Parameter(Mandatory = $false)]
-  [switch]$Force
+  [switch]$Force,
+
+  [Parameter(Mandatory = $false)]
+  [switch]$Uninstall
 )
 
 Set-StrictMode -Version Latest
@@ -90,6 +96,51 @@ function Download-File([string]$Url, [string]$OutFile) {
 }
 
 Assert-Admin
+
+if ($Uninstall) {
+  Write-Host "Uninstalling ManLab Agent"
+  Write-Host "  Task name:   $TaskName"
+  Write-Host "  Install dir: $InstallDir"
+
+  # Remove scheduled task if present (best-effort)
+  $taskExists = $false
+  try {
+    schtasks /Query /TN "$TaskName" | Out-Null
+    $taskExists = $true
+  } catch {
+    $taskExists = $false
+  }
+
+  if ($taskExists) {
+    try {
+      Write-Host "Stopping scheduled task: $TaskName"
+      schtasks /End /TN "$TaskName" | Out-Null
+    } catch {
+      # ignore
+    }
+
+    Write-Host "Removing scheduled task: $TaskName"
+    schtasks /Delete /TN "$TaskName" /F | Out-Null
+  } else {
+    Write-Host "Scheduled task not found; skipping."
+  }
+
+  # Remove install directory
+  if (-not [string]::IsNullOrWhiteSpace($InstallDir) -and (Test-Path $InstallDir)) {
+    # Basic safety guard
+    if ($InstallDir.TrimEnd('\\') -eq 'C:' -or $InstallDir.TrimEnd('\\') -eq 'C:\\') {
+      throw "Refusing to delete unsafe InstallDir: $InstallDir"
+    }
+
+    Write-Host "Deleting install directory: $InstallDir"
+    Remove-Item -Path $InstallDir -Recurse -Force
+  } else {
+    Write-Host "Install directory not found; skipping."
+  }
+
+  Write-Host "Uninstall complete."
+  exit 0
+}
 
 # Support non-interactive configuration via environment variables as well.
 # This is useful for SSH bootstrap flows.

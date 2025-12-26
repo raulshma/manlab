@@ -21,6 +21,7 @@ import {
   fetchOnboardingMachines,
   installAgent,
   testSshConnection,
+  uninstallAgent,
 } from '../api';
 import type {
   OnboardingMachine,
@@ -169,8 +170,27 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     },
   });
 
+  const uninstallMutation = useMutation({
+    mutationFn: async () => {
+      if (!selected) throw new Error('No machine selected');
+      return uninstallAgent(selected.id, {
+        serverBaseUrl,
+        trustHostKey,
+        password: password || undefined,
+        privateKeyPem: privateKeyPem || undefined,
+        privateKeyPassphrase: privateKeyPassphrase || undefined,
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['onboardingMachines'] });
+    },
+  });
+
   const isBusy =
-    createMachineMutation.isPending || testMutation.isPending || installMutation.isPending;
+    createMachineMutation.isPending ||
+    testMutation.isPending ||
+    installMutation.isPending ||
+    uninstallMutation.isPending;
 
   return (
     <DialogTrigger>
@@ -414,6 +434,25 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                               }}
                             />
 
+                            <ConfirmationModal
+                              trigger={
+                                <Button
+                                  isDisabled={isBusy || !lastTest?.success}
+                                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  Uninstall agent
+                                </Button>
+                              }
+                              title="Uninstall ManLab Agent"
+                              message={`This will connect to ${selected.host}:${selected.port} over SSH and remove the ManLab agent service/task and installed files. Continue?`}
+                              confirmText="Uninstall"
+                              isLoading={uninstallMutation.isPending}
+                              onConfirm={async () => {
+                                setLogs([]);
+                                await uninstallMutation.mutateAsync();
+                              }}
+                            />
+
                             {!lastTest?.success && (
                               <span className="text-sm text-slate-400">
                                 Run <span className="font-medium text-slate-200">Test connection</span> before installing.
@@ -456,11 +495,11 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                           )}
 
                           <div className="mt-4">
-                            <div className="text-xs text-slate-400 mb-2">Install logs (live)</div>
+                            <div className="text-xs text-slate-400 mb-2">Job logs (live)</div>
                             <div className="bg-black/30 border border-slate-700 rounded-lg p-3 max-h-64 overflow-auto">
                               {logs.length === 0 ? (
                                 <div className="text-sm text-slate-500">
-                                  No logs yet. Start an install to see progress.
+                                  No logs yet. Start a job to see progress.
                                 </div>
                               ) : (
                                 <pre className="text-xs text-slate-200 whitespace-pre-wrap">

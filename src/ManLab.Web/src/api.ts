@@ -3,7 +3,7 @@
  * Provides functions for fetching data from the server REST API.
  */
 
-import type { Node, Telemetry, Command, OnboardingMachine, SshTestResponse, StartInstallResponse, SshAuthMode } from './types';
+import type { Node, Telemetry, Command, OnboardingMachine, SshTestResponse, StartInstallResponse, StartUninstallResponse, SshAuthMode } from './types';
 
 const API_BASE = '/api';
 
@@ -170,6 +170,24 @@ export async function installAgent(machineId: string, input: {
   });
   if (!response.ok) {
     throw new Error(`Install start failed: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function uninstallAgent(machineId: string, input: {
+  serverBaseUrl: string;
+  trustHostKey: boolean;
+  password?: string;
+  privateKeyPem?: string;
+  privateKeyPassphrase?: string;
+}): Promise<StartUninstallResponse> {
+  const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}/uninstall`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(`Uninstall start failed: ${await response.text()}`);
   }
   return response.json();
 }

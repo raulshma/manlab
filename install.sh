@@ -20,6 +20,7 @@ ManLab Agent installer (Linux)
 
 Usage:
   install.sh --server <http(s)://host:port> [--token <token>] [--install-dir <dir>] [--rid <rid>] [--force]
+  install.sh --uninstall [--install-dir <dir>]
 
 Options:
   --server        Base URL to ManLab Server (e.g. http://localhost:5247)
@@ -27,6 +28,7 @@ Options:
   --install-dir   Install directory (default: /opt/manlab-agent)
   --rid           Override runtime identifier (default: auto-detected)
   --force         Overwrite existing files and reinstall service
+  --uninstall     Stop/disable the agent and remove installed files
   -h, --help      Show help
 
 Notes:
@@ -94,6 +96,7 @@ TOKEN=""
 INSTALL_DIR="/opt/manlab-agent"
 RID=""
 FORCE=0
+UNINSTALL=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -107,6 +110,8 @@ while [[ $# -gt 0 ]]; do
       RID="${2:-}"; shift 2 ;;
     --force)
       FORCE=1; shift 1 ;;
+    --uninstall)
+      UNINSTALL=1; shift 1 ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -128,12 +133,6 @@ if [[ -z "$TOKEN" ]]; then
   TOKEN="${MANLAB_ENROLLMENT_TOKEN:-${MANLAB_AUTH_TOKEN:-}}"
 fi
 
-if [[ -z "$SERVER" ]]; then
-  echo "ERROR: --server is required (or set MANLAB_SERVER_BASE_URL / MANLAB_SERVER)." >&2
-  usage
-  exit 1
-fi
-
 require_root
 need_cmd uname
 need_cmd id
@@ -144,6 +143,45 @@ need_cmd tee
 need_cmd rm
 need_cmd cp
 need_cmd mktemp
+
+# Uninstall mode does not require server/token.
+if [[ $UNINSTALL -eq 1 ]]; then
+  SERVICE_NAME="manlab-agent"
+  ENV_FILE="/etc/manlab-agent.env"
+  UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+  if ! systemctl list-unit-files >/dev/null 2>&1; then
+    echo "ERROR: systemd does not appear to be available on this system." >&2
+    exit 1
+  fi
+
+  echo "Uninstalling ManLab Agent"
+  echo "  Service:     $SERVICE_NAME"
+  echo "  Install dir: $INSTALL_DIR"
+
+  # Best-effort: stop/disable service if it exists.
+  systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+  systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+
+  # Remove unit + env.
+  rm -f "$UNIT_FILE" || true
+  rm -f "$ENV_FILE" || true
+  systemctl daemon-reload || true
+
+  # Remove installation directory.
+  if [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" != "/" ]]; then
+    rm -rf "$INSTALL_DIR" || true
+  fi
+
+  echo "Uninstall complete."
+  exit 0
+fi
+
+if [[ -z "$SERVER" ]]; then
+  echo "ERROR: --server is required (or set MANLAB_SERVER_BASE_URL / MANLAB_SERVER)." >&2
+  usage
+  exit 1
+fi
 
 SERVER="$(trim_trailing_slash "$SERVER")"
 HUB_URL="$SERVER/hubs/agent"

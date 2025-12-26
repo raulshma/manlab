@@ -38,9 +38,29 @@ public sealed class OnboardingJobRunner
         return _running.TryAdd(machineId, task);
     }
 
+    public bool TryStartUninstall(Guid machineId, UninstallRequest request)
+    {
+        if (_running.ContainsKey(machineId))
+        {
+            return false;
+        }
+
+        var task = Task.Run(() => RunUninstallAsync(machineId, request));
+        return _running.TryAdd(machineId, task);
+    }
+
     public sealed record InstallRequest(
         string ServerBaseUrl,
         bool Force,
+        SshProvisioningService.AuthOptions Auth,
+        bool TrustOnFirstUse,
+        string? ExpectedHostKeyFingerprint,
+        string? Actor,
+        string? ActorIp,
+        string RateLimitKey);
+
+    public sealed record UninstallRequest(
+        string ServerBaseUrl,
         SshProvisioningService.AuthOptions Auth,
         bool TrustOnFirstUse,
         string? ExpectedHostKeyFingerprint,
@@ -257,6 +277,203 @@ public sealed class OnboardingJobRunner
                     Actor = request.Actor,
                     ActorIp = request.ActorIp,
                     Action = "ssh.install.result",
+                    MachineId = machineId,
+                    Host = machine?.Host,
+                    Port = machine?.Port,
+                    Username = machine?.Username,
+                    HostKeyFingerprint = machine?.HostKeyFingerprint,
+                    Success = false,
+                    Error = ex.Message
+                });
+            }
+            catch
+            {
+                // Best effort; never block job completion on audit.
+            }
+
+            await PublishLogAsync(machineId, "Failed: " + ex.Message);
+            await PublishStatusAsync(machineId, OnboardingStatus.Failed, ex.Message);
+        }
+        finally
+        {
+            _running.TryRemove(machineId, out _);
+        }
+    }
+
+    private async Task RunUninstallAsync(Guid machineId, UninstallRequest request)
+    {
+        try
+        {
+            await PublishStatusAsync(machineId, OnboardingStatus.Running, null);
+            await PublishLogAsync(machineId, "Starting uninstall job...");
+
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+            var ssh = scope.ServiceProvider.GetRequiredService<SshProvisioningService>();
+            var audit = scope.ServiceProvider.GetRequiredService<ManLab.Server.Services.Ssh.SshAuditService>();
+            var rateLimit = scope.ServiceProvider.GetRequiredService<ManLab.Server.Services.Ssh.SshRateLimitService>();
+
+            var machine = await db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == machineId);
+            if (machine is null)
+            {
+                await PublishStatusAsync(machineId, OnboardingStatus.Failed, "Machine not found.");
+                return;
+            }
+
+            machine.Status = OnboardingStatus.Running;
+            machine.LastError = null;
+            machine.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            if (!Uri.TryCreate(request.ServerBaseUrl, UriKind.Absolute, out var serverUri))
+            {
+                await FailAsync(db, machine, "Invalid serverBaseUrl (must be an absolute URL).", machineId);
+                rateLimit.RecordFailure(request.RateLimitKey);
+
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.uninstall.result",
+                    MachineId = machineId,
+                    Host = machine.Host,
+                    Port = machine.Port,
+                    Username = machine.Username,
+                    HostKeyFingerprint = machine.HostKeyFingerprint,
+                    Success = false,
+                    Error = "Invalid serverBaseUrl"
+                });
+                return;
+            }
+
+            var expectedFingerprint = machine.HostKeyFingerprint ?? request.ExpectedHostKeyFingerprint;
+
+            var connOptions = new SshProvisioningService.ConnectionOptions(
+                Host: machine.Host,
+                Port: machine.Port,
+                Username: machine.Username,
+                Auth: request.Auth,
+                ExpectedHostKeyFingerprint: expectedFingerprint,
+                TrustOnFirstUse: request.TrustOnFirstUse);
+
+            var progress = new Progress<string>(msg => _ = PublishLogAsync(machineId, msg));
+
+            var (success, fingerprint, requiresTrust, logs) = await ssh.UninstallAgentAsync(
+                connOptions,
+                serverUri,
+                progress,
+                CancellationToken.None);
+
+            if (requiresTrust)
+            {
+                machine.HostKeyFingerprint ??= fingerprint;
+                machine.Status = OnboardingStatus.Failed;
+                machine.LastError = "SSH host key not trusted. Confirm fingerprint and retry.";
+                machine.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.uninstall.result",
+                    MachineId = machineId,
+                    Host = machine.Host,
+                    Port = machine.Port,
+                    Username = machine.Username,
+                    HostKeyFingerprint = fingerprint,
+                    Success = false,
+                    Error = "SSH host key not trusted"
+                });
+
+                await PublishLogAsync(machineId, $"Host key fingerprint: {fingerprint}");
+                await PublishStatusAsync(machineId, OnboardingStatus.Failed, machine.LastError);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(fingerprint) && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint))
+            {
+                machine.HostKeyFingerprint = fingerprint;
+            }
+
+            // Consider uninstall successful even if the remote target reported no installed agent (idempotent).
+            if (!success)
+            {
+                await FailAsync(db, machine, "Uninstall failed.", machineId);
+                rateLimit.RecordFailure(request.RateLimitKey);
+
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.uninstall.result",
+                    MachineId = machineId,
+                    Host = machine.Host,
+                    Port = machine.Port,
+                    Username = machine.Username,
+                    HostKeyFingerprint = fingerprint,
+                    Success = false,
+                    Error = "Uninstall failed"
+                });
+                return;
+            }
+
+            machine.LinkedNodeId = null;
+            machine.Status = OnboardingStatus.Pending;
+            machine.LastError = null;
+            machine.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            await PublishLogAsync(machineId, "Uninstall completed.");
+            await PublishStatusAsync(machineId, machine.Status, null);
+
+            rateLimit.RecordSuccess(request.RateLimitKey);
+            await audit.RecordAsync(new Data.Entities.SshAuditEvent
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Actor = request.Actor,
+                ActorIp = request.ActorIp,
+                Action = "ssh.uninstall.result",
+                MachineId = machineId,
+                Host = machine.Host,
+                Port = machine.Port,
+                Username = machine.Username,
+                HostKeyFingerprint = fingerprint,
+                Success = true,
+                Error = null
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Uninstall job failed for machine {MachineId}", machineId);
+
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+            var machine = await db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == machineId);
+            if (machine is not null)
+            {
+                machine.Status = OnboardingStatus.Failed;
+                machine.LastError = ex.Message;
+                machine.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+            }
+
+            try
+            {
+                var audit = scope.ServiceProvider.GetRequiredService<ManLab.Server.Services.Ssh.SshAuditService>();
+                var rateLimit = scope.ServiceProvider.GetRequiredService<ManLab.Server.Services.Ssh.SshRateLimitService>();
+
+                rateLimit.RecordFailure(request.RateLimitKey);
+
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.uninstall.result",
                     MachineId = machineId,
                     Host = machine?.Host,
                     Port = machine?.Port,

@@ -126,6 +126,11 @@ export interface StartInstallResponse {
   status: OnboardingStatus;
 }
 
+export interface StartUninstallResponse {
+  machineId: string;
+  status: OnboardingStatus;
+}
+
 export interface OnboardingLogEvent {
   machineId: string;
   timestamp: string;
