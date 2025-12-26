@@ -23,7 +23,7 @@ This repo includes simple installation scripts for the **ManLab Agent** that:
 
 Example:
 
-- `sudo ./install.sh --server http://localhost:5247 --token "YOUR_TOKEN"`
+- `sudo ./scripts/install.sh --server http://localhost:5247 --token "YOUR_TOKEN"`
 
 After install:
 
@@ -32,7 +32,7 @@ After install:
 
 Uninstall / cleanup (removes systemd unit, env file, and install directory):
 
-- `sudo ./install.sh --uninstall`
+- `sudo ./scripts/install.sh --uninstall`
 
 ## Windows (`install.ps1`)
 
@@ -42,7 +42,7 @@ Uninstall / cleanup (removes systemd unit, env file, and install directory):
 
 Example (elevated PowerShell):
 
-- `./install.ps1 -Server http://localhost:5247 -AuthToken "YOUR_TOKEN" -Force`
+- `./scripts/install.ps1 -Server http://localhost:5247 -AuthToken "YOUR_TOKEN" -Force`
 
 After install:
 
@@ -51,7 +51,7 @@ After install:
 
 Uninstall / cleanup (removes Scheduled Task and deletes install directory):
 
-- `./install.ps1 -Uninstall`
+- `./scripts/install.ps1 -Uninstall`
 
 ## SSH onboarding transport (server-side)
 

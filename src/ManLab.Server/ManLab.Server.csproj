@@ -19,8 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="..\..\install.sh" Link="Resources\install.sh" />
-    <EmbeddedResource Include="..\..\install.ps1" Link="Resources\install.ps1" />
+    <EmbeddedResource Include="..\..\scripts\install.sh" Link="Resources\install.sh" />
+    <EmbeddedResource Include="..\..\scripts\install.ps1" Link="Resources\install.ps1" />
   </ItemGroup>
 
   <ItemGroup>

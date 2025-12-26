@@ -10,7 +10,8 @@
   a true Windows service.
 
 .EXAMPLE
-  .\install.ps1 -Server http://localhost:5247 -AuthToken "..." -Force
+  # From the repo root:
+  .\scripts\install.ps1 -Server http://localhost:5247 -AuthToken "..." -Force
 
 .PARAMETER Server
   Base URL to ManLab Server (e.g. http://localhost:5247)

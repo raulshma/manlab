@@ -185,7 +185,7 @@ internal static class Program
         var repoRoot = FindRepoRoot(Directory.GetCurrentDirectory());
         var rids = new List<string>();
 
-        // Defaults mirror publish-agent.ps1
+        // Defaults mirror scripts/publish-agent.ps1
         rids.AddRange(new[] { "linux-x64", "linux-arm64", "win-x64" });
 
         string? agentProject = null;
