@@ -12,7 +12,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_HTTP_PORTS=8080
       - ASPNETCORE_HTTPS_PORTS=8081
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=manlab;Username=manlab;Password=${POSTGRES_PASSWORD:-manlab_secret}
+      - ConnectionStrings__manlab=Host=postgres;Port=5432;Database=manlab;Username=manlab;Password=${POSTGRES_PASSWORD:-manlab_secret}
     depends_on:
       postgres:
         condition: service_healthy
