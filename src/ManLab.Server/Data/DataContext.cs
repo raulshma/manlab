@@ -27,6 +27,9 @@ public class DataContext : DbContext
     /// <summary>Enrollment tokens used to bootstrap agent authentication.</summary>
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
 
+    /// <summary>Audit trail for SSH onboarding/provisioning.</summary>
+    public DbSet<SshAuditEvent> SshAuditEvents => Set<SshAuditEvent>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -78,6 +81,15 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.ExpiresAt);
             entity.HasIndex(e => e.UsedAt);
             entity.HasIndex(e => e.MachineId);
+        });
+
+        modelBuilder.Entity<SshAuditEvent>(entity =>
+        {
+            entity.HasIndex(e => e.TimestampUtc);
+            entity.HasIndex(e => e.Action);
+            entity.HasIndex(e => e.MachineId);
+            entity.HasIndex(e => e.Host);
+            entity.HasIndex(e => e.Success);
         });
     }
 }

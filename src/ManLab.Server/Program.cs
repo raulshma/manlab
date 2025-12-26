@@ -12,9 +12,16 @@ builder.Services.AddOpenApi();
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
 
+builder.Services.AddMemoryCache();
+
+builder.Services.AddOptions<ManLab.Server.Services.Ssh.SshProvisioningOptions>()
+    .Bind(builder.Configuration.GetSection(ManLab.Server.Services.Ssh.SshProvisioningOptions.SectionName));
+
 // Onboarding services
 builder.Services.AddScoped<EnrollmentTokenService>();
 builder.Services.AddScoped<ManLab.Server.Services.Ssh.SshProvisioningService>();
+builder.Services.AddScoped<ManLab.Server.Services.Ssh.SshAuditService>();
+builder.Services.AddSingleton<ManLab.Server.Services.Ssh.SshRateLimitService>();
 builder.Services.AddSingleton<OnboardingJobRunner>();
 
 builder.Services.AddHttpClient();

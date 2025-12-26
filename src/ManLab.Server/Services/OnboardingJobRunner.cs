@@ -43,7 +43,10 @@ public sealed class OnboardingJobRunner
         bool Force,
         SshProvisioningService.AuthOptions Auth,
         bool TrustOnFirstUse,
-        string? ExpectedHostKeyFingerprint);
+        string? ExpectedHostKeyFingerprint,
+        string? Actor,
+        string? ActorIp,
+        string RateLimitKey);
 
     private async Task RunInstallAsync(Guid machineId, InstallRequest request)
     {
@@ -56,6 +59,8 @@ public sealed class OnboardingJobRunner
             var db = scope.ServiceProvider.GetRequiredService<DataContext>();
             var tokenService = scope.ServiceProvider.GetRequiredService<EnrollmentTokenService>();
             var ssh = scope.ServiceProvider.GetRequiredService<SshProvisioningService>();
+            var audit = scope.ServiceProvider.GetRequiredService<ManLab.Server.Services.Ssh.SshAuditService>();
+            var rateLimit = scope.ServiceProvider.GetRequiredService<ManLab.Server.Services.Ssh.SshRateLimitService>();
 
             var machine = await db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == machineId);
             if (machine is null)
@@ -72,6 +77,21 @@ public sealed class OnboardingJobRunner
             if (!Uri.TryCreate(request.ServerBaseUrl, UriKind.Absolute, out var serverUri))
             {
                 await FailAsync(db, machine, "Invalid serverBaseUrl (must be an absolute URL).", machineId);
+                rateLimit.RecordFailure(request.RateLimitKey);
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.install.result",
+                    MachineId = machineId,
+                    Host = machine.Host,
+                    Port = machine.Port,
+                    Username = machine.Username,
+                    HostKeyFingerprint = machine.HostKeyFingerprint,
+                    Success = false,
+                    Error = "Invalid serverBaseUrl"
+                });
                 return;
             }
 
@@ -109,6 +129,22 @@ public sealed class OnboardingJobRunner
                 machine.LastError = "SSH host key not trusted. Confirm fingerprint and retry.";
                 machine.UpdatedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync();
+
+                // Not counted as a failure for lockout purposes (this is a safety gate, not a brute force signal).
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.install.result",
+                    MachineId = machineId,
+                    Host = machine.Host,
+                    Port = machine.Port,
+                    Username = machine.Username,
+                    HostKeyFingerprint = fingerprint,
+                    Success = false,
+                    Error = "SSH host key not trusted"
+                });
 
                 await PublishLogAsync(machineId, $"Host key fingerprint: {fingerprint}");
                 await PublishStatusAsync(machineId, OnboardingStatus.Failed, machine.LastError);
@@ -150,6 +186,21 @@ public sealed class OnboardingJobRunner
             if (nodeId is null)
             {
                 await FailAsync(db, machine, "Install ran, but agent did not register within the timeout.", machineId);
+                rateLimit.RecordSuccess(request.RateLimitKey);
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.install.result",
+                    MachineId = machineId,
+                    Host = machine.Host,
+                    Port = machine.Port,
+                    Username = machine.Username,
+                    HostKeyFingerprint = fingerprint,
+                    Success = false,
+                    Error = "Agent did not register within timeout"
+                });
                 return;
             }
 
@@ -161,6 +212,22 @@ public sealed class OnboardingJobRunner
 
             await PublishLogAsync(machineId, $"Agent registered successfully (nodeId={nodeId}).");
             await PublishStatusAsync(machineId, OnboardingStatus.Succeeded, null);
+
+            rateLimit.RecordSuccess(request.RateLimitKey);
+            await audit.RecordAsync(new Data.Entities.SshAuditEvent
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Actor = request.Actor,
+                ActorIp = request.ActorIp,
+                Action = "ssh.install.result",
+                MachineId = machineId,
+                Host = machine.Host,
+                Port = machine.Port,
+                Username = machine.Username,
+                HostKeyFingerprint = fingerprint,
+                Success = true,
+                Error = null
+            });
         }
         catch (Exception ex)
         {
@@ -175,6 +242,33 @@ public sealed class OnboardingJobRunner
                 machine.LastError = ex.Message;
                 machine.UpdatedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync();
+            }
+
+            try
+            {
+                var audit = scope.ServiceProvider.GetRequiredService<ManLab.Server.Services.Ssh.SshAuditService>();
+                var rateLimit = scope.ServiceProvider.GetRequiredService<ManLab.Server.Services.Ssh.SshRateLimitService>();
+
+                rateLimit.RecordFailure(request.RateLimitKey);
+
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.install.result",
+                    MachineId = machineId,
+                    Host = machine?.Host,
+                    Port = machine?.Port,
+                    Username = machine?.Username,
+                    HostKeyFingerprint = machine?.HostKeyFingerprint,
+                    Success = false,
+                    Error = ex.Message
+                });
+            }
+            catch
+            {
+                // Best effort; never block job completion on audit.
             }
 
             await PublishLogAsync(machineId, "Failed: " + ex.Message);

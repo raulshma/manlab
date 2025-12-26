@@ -5,6 +5,7 @@ using ManLab.Server.Services;
 using ManLab.Server.Services.Ssh;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace ManLab.Server.Controllers;
 
@@ -15,12 +16,24 @@ public sealed class OnboardingController : ControllerBase
     private readonly DataContext _db;
     private readonly OnboardingJobRunner _jobRunner;
     private readonly SshProvisioningService _ssh;
+    private readonly SshAuditService _audit;
+    private readonly SshRateLimitService _rateLimit;
+    private readonly SshProvisioningOptions _sshOptions;
 
-    public OnboardingController(DataContext db, OnboardingJobRunner jobRunner, SshProvisioningService ssh)
+    public OnboardingController(
+        DataContext db,
+        OnboardingJobRunner jobRunner,
+        SshProvisioningService ssh,
+        SshAuditService audit,
+        SshRateLimitService rateLimit,
+        IOptions<SshProvisioningOptions> sshOptions)
     {
         _db = db;
         _jobRunner = jobRunner;
         _ssh = ssh;
+        _audit = audit;
+        _rateLimit = rateLimit;
+        _sshOptions = sshOptions.Value;
     }
 
     [HttpGet("machines")]
@@ -93,14 +106,29 @@ public sealed class OnboardingController : ControllerBase
             return NotFound();
         }
 
+        var rateKey = BuildRateKey(machine.Id, machine.Host, HttpContext.Connection.RemoteIpAddress?.ToString());
+        try
+        {
+            _rateLimit.ThrowIfLockedOut(rateKey);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, ex.Message);
+        }
+
         var auth = BuildAuth(machine.AuthMode, request);
         if (auth is null)
         {
             return BadRequest("Missing SSH credentials for selected auth mode.");
         }
 
+        if (request.TrustHostKey && !_sshOptions.AllowTrustOnFirstUse)
+        {
+            return BadRequest("Trust-on-first-use is disabled by server policy. Provide an allowlisted fingerprint.");
+        }
+
         var expectedFingerprint = machine.HostKeyFingerprint;
-        var trustOnFirstUse = request.TrustHostKey && string.IsNullOrWhiteSpace(expectedFingerprint);
+        var trustOnFirstUse = request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(expectedFingerprint);
 
         var result = await _ssh.TestConnectionAsync(
             new SshProvisioningService.ConnectionOptions(
@@ -121,6 +149,25 @@ public sealed class OnboardingController : ControllerBase
                 machine.UpdatedAt = DateTime.UtcNow;
                 await _db.SaveChangesAsync(cancellationToken);
 
+                await _audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = User?.Identity?.Name,
+                    ActorIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    Action = "ssh.hostkey.trust",
+                    MachineId = machine.Id,
+                    Host = machine.Host,
+                    Port = machine.Port,
+                    Username = machine.Username,
+                    HostKeyFingerprint = result.HostKeyFingerprint,
+                    Success = true,
+                    Error = null,
+                    OsFamily = InferOsFamily(result.OsHint),
+                    CpuArch = null,
+                    OsDistro = null,
+                    OsVersion = null
+                }, cancellationToken);
+
                 // Retry once now that it's trusted.
                 result = await _ssh.TestConnectionAsync(
                     new SshProvisioningService.ConnectionOptions(
@@ -133,6 +180,34 @@ public sealed class OnboardingController : ControllerBase
                     cancellationToken);
             }
         }
+
+        if (result.Success)
+        {
+            _rateLimit.RecordSuccess(rateKey);
+        }
+        else
+        {
+            _rateLimit.RecordFailure(rateKey);
+        }
+
+        await _audit.RecordAsync(new Data.Entities.SshAuditEvent
+        {
+            TimestampUtc = DateTime.UtcNow,
+            Actor = User?.Identity?.Name,
+            ActorIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Action = "ssh.test",
+            MachineId = machine.Id,
+            Host = machine.Host,
+            Port = machine.Port,
+            Username = machine.Username,
+            HostKeyFingerprint = result.HostKeyFingerprint,
+            Success = result.Success,
+            Error = result.Error,
+            OsFamily = InferOsFamily(result.OsHint),
+            CpuArch = null,
+            OsDistro = null,
+            OsVersion = null
+        }, cancellationToken);
 
         return Ok(new SshTestResponse(
             result.Success,
@@ -152,6 +227,16 @@ public sealed class OnboardingController : ControllerBase
             return NotFound();
         }
 
+        var rateKey = BuildRateKey(machine.Id, machine.Host, HttpContext.Connection.RemoteIpAddress?.ToString());
+        try
+        {
+            _rateLimit.ThrowIfLockedOut(rateKey);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, ex.Message);
+        }
+
         if (_jobRunner.IsRunning(id))
         {
             return Conflict("An install is already running for this machine.");
@@ -163,8 +248,13 @@ public sealed class OnboardingController : ControllerBase
             return BadRequest("Missing SSH credentials for selected auth mode.");
         }
 
-        // If no fingerprint yet, require explicit TOFU approval for this call.
-        if (string.IsNullOrWhiteSpace(machine.HostKeyFingerprint) && !request.TrustHostKey)
+        if (request.TrustHostKey && !_sshOptions.AllowTrustOnFirstUse)
+        {
+            return BadRequest("Trust-on-first-use is disabled by server policy. Provide an allowlisted fingerprint.");
+        }
+
+        // If no fingerprint yet, require explicit TOFU approval for this call (if allowed).
+        if (string.IsNullOrWhiteSpace(machine.HostKeyFingerprint) && (!request.TrustHostKey || !_sshOptions.AllowTrustOnFirstUse))
         {
             return BadRequest("Host key not trusted yet. Run Test Connection and confirm fingerprint first.");
         }
@@ -173,8 +263,11 @@ public sealed class OnboardingController : ControllerBase
             ServerBaseUrl: request.ServerBaseUrl,
             Force: request.Force,
             Auth: auth,
-            TrustOnFirstUse: request.TrustHostKey && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
-            ExpectedHostKeyFingerprint: machine.HostKeyFingerprint));
+            TrustOnFirstUse: request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
+            ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
+            Actor: User?.Identity?.Name,
+            ActorIp: HttpContext.Connection.RemoteIpAddress?.ToString(),
+            RateLimitKey: rateKey));
 
         if (!started)
         {
@@ -185,6 +278,21 @@ public sealed class OnboardingController : ControllerBase
         machine.LastError = null;
         machine.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+
+        await _audit.RecordAsync(new Data.Entities.SshAuditEvent
+        {
+            TimestampUtc = DateTime.UtcNow,
+            Actor = User?.Identity?.Name,
+            ActorIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
+            Action = "ssh.install.start",
+            MachineId = machine.Id,
+            Host = machine.Host,
+            Port = machine.Port,
+            Username = machine.Username,
+            HostKeyFingerprint = machine.HostKeyFingerprint,
+            Success = true,
+            Error = null
+        });
 
         return Accepted(new StartInstallResponse(machine.Id, machine.Status.ToString()));
     }
@@ -264,4 +372,15 @@ public sealed class OnboardingController : ControllerBase
         string? PrivateKeyPassphrase) : ISshAuthRequest;
 
     public sealed record StartInstallResponse(Guid MachineId, string Status);
+
+    private static string BuildRateKey(Guid machineId, string host, string? actorIp)
+        => $"machine:{machineId}|host:{host}|ip:{actorIp ?? "?"}";
+
+    private static string? InferOsFamily(string? osHint)
+    {
+        if (string.IsNullOrWhiteSpace(osHint)) return null;
+        if (osHint.StartsWith("Linux", StringComparison.OrdinalIgnoreCase)) return "linux";
+        if (osHint.StartsWith("Windows", StringComparison.OrdinalIgnoreCase)) return "windows";
+        return null;
+    }
 }
