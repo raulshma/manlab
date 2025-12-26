@@ -6,6 +6,9 @@ using ManLab.Server.Services.Ssh;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 
 namespace ManLab.Server.Controllers;
 
@@ -36,6 +39,89 @@ public sealed class OnboardingController : ControllerBase
         _sshOptions = sshOptions.Value;
     }
 
+    /// <summary>
+    /// Returns the server base URL as observed by this API request (scheme + host + port).
+    /// This is used by the web UI to auto-fill the "Server base URL (reachable from target)" field.
+    ///
+    /// In development, when the UI runs on a different origin (e.g. Vite dev server), requests are
+    /// proxied to the backend and the backend can still report its own origin.
+    /// </summary>
+    [HttpGet("suggested-server-base-url")]
+    public ActionResult<SuggestedServerBaseUrlResponse> GetSuggestedServerBaseUrl()
+    {
+        // Example: http://192.168.1.10:5247
+        // If the backend is accessed as "localhost" (common in dev), that value is *not* reachable
+        // from an SSH target machine. In that case, try to suggest a LAN IP instead.
+
+        var scheme = Request.Scheme;
+        var host = Request.Host.Host;
+        var port = Request.Host.Port;
+
+        if (IsLoopbackHost(host) && TryGetLanIPv4(out var lanIp))
+        {
+            host = lanIp;
+        }
+
+        var serverBaseUrl = port is null
+            ? $"{scheme}://{host}"
+            : $"{scheme}://{host}:{port.Value}";
+
+        return Ok(new SuggestedServerBaseUrlResponse(serverBaseUrl));
+    }
+
+    private static bool IsLoopbackHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return true;
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
+        if (host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)) return true;
+        if (host.Equals("::1", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private static bool TryGetLanIPv4(out string ip)
+    {
+        ip = string.Empty;
+
+        try
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up) continue;
+                if (nic.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
+
+                var props = nic.GetIPProperties();
+                foreach (var unicast in props.UnicastAddresses)
+                {
+                    if (unicast.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                    if (IPAddress.IsLoopback(unicast.Address)) continue;
+
+                    var bytes = unicast.Address.GetAddressBytes();
+                    if (bytes.Length != 4) continue;
+
+                    // RFC1918 private ranges:
+                    // 10.0.0.0/8
+                    // 172.16.0.0/12
+                    // 192.168.0.0/16
+                    var isPrivate =
+                        bytes[0] == 10 ||
+                        (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                        (bytes[0] == 192 && bytes[1] == 168);
+
+                    if (!isPrivate) continue;
+
+                    ip = unicast.Address.ToString();
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Best effort only.
+        }
+
+        return false;
+    }
+
     [HttpGet("machines")]
     public async Task<ActionResult<IEnumerable<OnboardingMachineDto>>> ListMachines()
     {
@@ -57,6 +143,8 @@ public sealed class OnboardingController : ControllerBase
 
         return Ok(machines);
     }
+
+    public sealed record SuggestedServerBaseUrlResponse(string ServerBaseUrl);
 
     [HttpPost("machines")]
     public async Task<ActionResult<OnboardingMachineDto>> CreateMachine([FromBody] CreateMachineRequest request)

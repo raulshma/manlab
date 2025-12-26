@@ -9,6 +9,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
 } from 'react';
 import {
@@ -116,6 +117,9 @@ export function SignalRProvider({
     [queryClient]
   );
 
+  // Use ref to track if we've started connecting (to avoid synchronous setState in effect)
+  const isConnectingRef = useRef(false);
+
   useEffect(() => {
     // Build the connection
     const newConnection = new HubConnectionBuilder()
@@ -160,21 +164,29 @@ export function SignalRProvider({
     newConnection.on('NodeRegistered', handleNodeRegistered);
     newConnection.on('TelemetryReceived', handleTelemetryUpdate);
 
-    // Start the connection
-    setConnectionStatus('connecting');
-    newConnection
-      .start()
-      .then(() => {
+    // Start the connection asynchronously
+    // Wrap in an async IIFE to handle setState after the microtask
+    const startConnection = async () => {
+      // Mark as connecting before starting
+      isConnectingRef.current = true;
+      setConnectionStatus('connecting');
+      
+      try {
+        await newConnection.start();
         setConnectionStatus('connected');
         setError(null);
-      })
-      .catch((err) => {
+      } catch (err) {
         setConnectionStatus('disconnected');
-        setError(err);
+        setError(err instanceof Error ? err : new Error(String(err)));
         console.error('SignalR connection error:', err);
-      });
+      }
+    };
 
-    setConnection(newConnection);
+    // Use queueMicrotask to defer the initial status update (avoids synchronous setState in effect)
+    queueMicrotask(() => {
+      setConnection(newConnection);
+      startConnection();
+    });
 
     // Cleanup on unmount
     return () => {
@@ -193,6 +205,7 @@ export function SignalRProvider({
  * Hook to access the SignalR context.
  * Throws an error if used outside of SignalRProvider.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSignalR(): SignalRContextValue {
   const context = useContext(SignalRContext);
   if (!context) {

@@ -8,6 +8,21 @@ import type { Node, Telemetry, Command, OnboardingMachine, SshTestResponse, Star
 const API_BASE = '/api';
 
 /**
+ * Onboarding: suggests a server base URL that is reachable from the target machine.
+ *
+ * This is especially important in dev where the UI runs on a different origin (Vite dev server)
+ * and `window.location.origin` would point to the UI, not the backend server.
+ */
+export async function fetchSuggestedServerBaseUrl(): Promise<string> {
+  const response = await fetch(`${API_BASE}/onboarding/suggested-server-base-url`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch suggested server base URL: ${response.statusText}`);
+  }
+  const data = (await response.json()) as { serverBaseUrl?: string; ServerBaseUrl?: string };
+  return (data.serverBaseUrl ?? data.ServerBaseUrl ?? '').toString();
+}
+
+/**
  * Fetches all registered device nodes.
  */
 export async function fetchNodes(): Promise<Node[]> {

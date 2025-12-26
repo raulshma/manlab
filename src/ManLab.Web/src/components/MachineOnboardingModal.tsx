@@ -14,11 +14,12 @@ import {
   ListBox,
   ListBoxItem,
 } from 'react-aria-components';
-import { useMemo, useState, useEffect, type ReactNode } from 'react';
+import { useMemo, useState, useEffect, useRef, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createOnboardingMachine,
   fetchOnboardingMachines,
+  fetchSuggestedServerBaseUrl,
   installAgent,
   testSshConnection,
   uninstallAgent,
@@ -81,9 +82,9 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const [privateKeyPassphrase, setPrivateKeyPassphrase] = useState('');
   const [trustHostKey, setTrustHostKey] = useState(false);
   const [lastTest, setLastTest] = useState<SshTestResponse | null>(null);
-  const [serverBaseUrl, setServerBaseUrl] = useState(
-    import.meta.env.VITE_SERVER_BASE_URL ?? window.location.origin,
-  );
+  // Use a ref to track if user has manually edited the server base URL
+  const serverBaseUrlDirtyRef = useRef(false);
+  const [serverBaseUrlOverride, setServerBaseUrlOverride] = useState<string | null>(null);
   const [forceInstall, setForceInstall] = useState(true);
 
   const [logs, setLogs] = useState<Array<{ ts: string; msg: string }>>([]);
@@ -117,6 +118,35 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       connection.off('OnboardingStatusChanged', handleStatus);
     };
   }, [connection, queryClient, selected]);
+
+  const suggestedServerBaseUrlQuery = useQuery({
+    queryKey: ['onboardingSuggestedServerBaseUrl'],
+    queryFn: fetchSuggestedServerBaseUrl,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  // Compute serverBaseUrl as a derived value instead of using setState in useEffect.
+  // Priority: user override > env variable > suggested URL from backend > window origin
+  const serverBaseUrl = useMemo(() => {
+    if (serverBaseUrlOverride !== null) {
+      return serverBaseUrlOverride;
+    }
+    if (import.meta.env.VITE_SERVER_BASE_URL) {
+      return import.meta.env.VITE_SERVER_BASE_URL as string;
+    }
+    const suggested = suggestedServerBaseUrlQuery.data?.trim();
+    if (suggested) {
+      return suggested;
+    }
+    return import.meta.env.VITE_API_URL ?? window.location.origin;
+  }, [serverBaseUrlOverride, suggestedServerBaseUrlQuery.data]);
+
+  // Handler to update server base URL when user edits
+  const handleServerBaseUrlChange = (value: string) => {
+    serverBaseUrlDirtyRef.current = true;
+    setServerBaseUrlOverride(value);
+  };
 
   const selectMachine = (id: string) => {
     setSelectedId(id);
@@ -389,7 +419,10 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                           </div>
 
                           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <TextField value={serverBaseUrl} onChange={setServerBaseUrl}>
+                            <TextField
+                              value={serverBaseUrl}
+                              onChange={handleServerBaseUrlChange}
+                            >
                               <Label className="text-xs text-slate-300">Server base URL (reachable from target)</Label>
                               <Input className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white" placeholder="http://your-server:5247" />
                             </TextField>
