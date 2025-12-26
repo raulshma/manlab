@@ -60,12 +60,16 @@ await using var telemetryService = new TelemetryService(
     agentConfig,
     async data => await connectionManager.SendHeartbeatAsync(data));
 
-// Handle command execution (placeholder for future implementation)
+// Create command dispatcher for handling server commands
+var commandDispatcher = new ManLab.Agent.Commands.CommandDispatcher(
+    loggerFactory,
+    async (commandId, status, logs) => await connectionManager.UpdateCommandStatusAsync(commandId, status, logs));
+
+// Handle command execution via dispatcher
 connectionManager.OnCommandReceived += async (commandId, type, payload) =>
 {
     logger.LogInformation("Received command {CommandId}: {Type}", commandId, type);
-    // TODO: Implement command execution in phase 2.3
-    await connectionManager.UpdateCommandStatusAsync(commandId, "Success", "Command received (placeholder)");
+    await commandDispatcher.DispatchAsync(commandId, type, payload);
 };
 
 // Handle telemetry requests from server
