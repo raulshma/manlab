@@ -1,5 +1,17 @@
 # React + TypeScript + Vite
 
+## Running with the ManLab stack
+
+For local development, the recommended workflow is to run the full stack via **.NET Aspire**:
+
+- AppHost: `src/ManLab.AppHost`
+- Server: `src/ManLab.Server`
+- Postgres: container orchestrated by Aspire
+
+When orchestrated by Aspire, this Vite app proxies `/api` and `/hubs` to the backend using Aspire-injected environment variables (see `vite.config.ts`).
+
+See the repo root `README.md` for details.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

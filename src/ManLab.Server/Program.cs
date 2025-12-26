@@ -1,9 +1,11 @@
 using ManLab.Server.Data;
 using ManLab.Server.Hubs;
 using ManLab.Server.Services;
-using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Add Aspire ServiceDefaults for observability, service discovery, and default health endpoints.
+builder.AddServiceDefaults();
 
 // Add services to the container.
 builder.Services.AddOpenApi();
@@ -24,11 +26,14 @@ builder.Services.AddSingleton<INotificationService, DiscordWebhookNotificationSe
 // Background services
 builder.Services.AddHostedService<HealthMonitorService>();
 
-// Configure Entity Framework Core with PostgreSQL
-builder.Services.AddDbContext<DataContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+// Configure Entity Framework Core with PostgreSQL via Aspire integration.
+// The connection name ("manlab") must match the database resource name in the AppHost.
+builder.AddNpgsqlDbContext<DataContext>(connectionName: "manlab");
 
 var app = builder.Build();
+
+// Map Aspire ServiceDefaults endpoints (/health and /alive in development).
+app.MapDefaultEndpoints();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
