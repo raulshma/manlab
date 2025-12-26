@@ -3,7 +3,7 @@
  * Provides functions for fetching data from the server REST API.
  */
 
-import type { Node, Telemetry, Command, OnboardingMachine, SshTestResponse, StartInstallResponse, StartUninstallResponse, SshAuthMode } from './types';
+import type { Node, Telemetry, Command, OnboardingMachine, SshTestResponse, StartInstallResponse, StartUninstallResponse, SshAuthMode, LocalAgentStatus, LocalAgentInstallResponse } from './types';
 
 const API_BASE = '/api';
 
@@ -206,3 +206,47 @@ export async function uninstallAgent(machineId: string, input: {
   }
   return response.json();
 }
+
+/**
+ * Local Agent: Fetches the status of the local agent installation on the server.
+ */
+export async function fetchLocalAgentStatus(): Promise<LocalAgentStatus> {
+  const response = await fetch(`${API_BASE}/localagent/status`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch local agent status: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Local Agent: Triggers installation of the agent on the server machine.
+ */
+export async function installLocalAgent(force: boolean = false): Promise<LocalAgentInstallResponse> {
+  const response = await fetch(`${API_BASE}/localagent/install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: response.statusText }));
+    return { started: false, error: errorData.error ?? response.statusText };
+  }
+  return response.json();
+}
+
+/**
+ * Local Agent: Triggers uninstallation of the agent from the server machine.
+ */
+export async function uninstallLocalAgent(): Promise<LocalAgentInstallResponse> {
+  const response = await fetch(`${API_BASE}/localagent/uninstall`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: response.statusText }));
+    return { started: false, error: errorData.error ?? response.statusText };
+  }
+  return response.json();
+}
+

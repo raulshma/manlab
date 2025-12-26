@@ -7,7 +7,7 @@ namespace ManLab.Agent.Commands;
 /// <summary>
 /// Dispatches commands received from the server to appropriate handlers.
 /// </summary>
-public class CommandDispatcher
+public sealed class CommandDispatcher : IDisposable
 {
     private const int MaxPayloadChars = 32_768; // hard limit to reduce abuse/memory pressure
     private static readonly Regex ContainerIdOrNameRegex = new(
@@ -41,7 +41,7 @@ public class CommandDispatcher
 
         try
         {
-            await _updateStatusCallback(commandId, "InProgress", $"Executing command: {type}");
+            await _updateStatusCallback(commandId, "InProgress", $"Executing command: {type}").ConfigureAwait(false);
 
             var normalizedType = (type ?? string.Empty).Trim().ToLowerInvariant();
 
@@ -71,18 +71,18 @@ public class CommandDispatcher
 
                 var result = normalizedType switch
                 {
-                    "docker.list" => await HandleDockerListAsync(cancellationToken),
-                    "docker.restart" => await HandleDockerRestartAsync(payloadRoot, cancellationToken),
-                    "docker.stop" => await HandleDockerStopAsync(payloadRoot, cancellationToken),
-                    "docker.start" => await HandleDockerStartAsync(payloadRoot, cancellationToken),
-                    "system.update" => await HandleSystemUpdateAsync(commandId, cancellationToken),
+                    "docker.list" => await HandleDockerListAsync(cancellationToken).ConfigureAwait(false),
+                    "docker.restart" => await HandleDockerRestartAsync(payloadRoot, cancellationToken).ConfigureAwait(false),
+                    "docker.stop" => await HandleDockerStopAsync(payloadRoot, cancellationToken).ConfigureAwait(false),
+                    "docker.start" => await HandleDockerStartAsync(payloadRoot, cancellationToken).ConfigureAwait(false),
+                    "system.update" => await HandleSystemUpdateAsync(commandId, cancellationToken).ConfigureAwait(false),
                     _ => throw new NotSupportedException($"Unknown command type: {type}")
                 };
 
                 // For non-streaming commands, send the final status
                 if (!normalizedType.Equals("system.update", StringComparison.OrdinalIgnoreCase))
                 {
-                    await _updateStatusCallback(commandId, "Success", result);
+                    await _updateStatusCallback(commandId, "Success", result).ConfigureAwait(false);
                 }
             }
             finally
@@ -94,45 +94,45 @@ public class CommandDispatcher
         catch (NotSupportedException ex)
         {
             _logger.LogWarning(ex, "Unknown command type: {Type}", type);
-            await _updateStatusCallback(commandId, "Failed", $"Unknown command type: {type}");
+            await _updateStatusCallback(commandId, "Failed", $"Unknown command type: {type}").ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Command execution failed: {CommandId}", commandId);
-            await _updateStatusCallback(commandId, "Failed", $"Error: {ex.Message}");
+            await _updateStatusCallback(commandId, "Failed", $"Error: {ex.Message}").ConfigureAwait(false);
         }
     }
 
     private async Task<string> HandleDockerListAsync(CancellationToken cancellationToken)
     {
-        return await _dockerManager.ListContainersAsync(cancellationToken);
+        return await _dockerManager.ListContainersAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<string> HandleDockerRestartAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
         var containerId = ExtractContainerIdStrict(payloadRoot);
-        return await _dockerManager.RestartContainerAsync(containerId, cancellationToken);
+        return await _dockerManager.RestartContainerAsync(containerId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<string> HandleDockerStopAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
         var containerId = ExtractContainerIdStrict(payloadRoot);
-        return await _dockerManager.StopContainerAsync(containerId, cancellationToken);
+        return await _dockerManager.StopContainerAsync(containerId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<string> HandleDockerStartAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
         var containerId = ExtractContainerIdStrict(payloadRoot);
-        return await _dockerManager.StartContainerAsync(containerId, cancellationToken);
+        return await _dockerManager.StartContainerAsync(containerId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<string> HandleSystemUpdateAsync(Guid commandId, CancellationToken cancellationToken)
     {
         var executor = new UpdateExecutor(
             _loggerFactory.CreateLogger<UpdateExecutor>(),
-            async (status, logs) => await _updateStatusCallback(commandId, status, logs));
+            async (status, logs) => await _updateStatusCallback(commandId, status, logs).ConfigureAwait(false));
 
-        var (success, output) = await executor.ExecuteUpdateAsync(cancellationToken);
+        var (success, output) = await executor.ExecuteUpdateAsync(cancellationToken).ConfigureAwait(false);
         
         // Status is already updated by the executor, just return the result
         return output;

@@ -7,6 +7,7 @@ import { NodeGrid } from './components/NodeGrid'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { NodeDetailView } from './components/NodeDetailView'
 import { MachineOnboardingModal } from './components/MachineOnboardingModal'
+import { LocalAgentCard } from './components/LocalAgentCard'
 import { fetchNodes } from './api'
 
 // Create a client
@@ -120,6 +121,11 @@ function DashboardView({ onSelectNode }: DashboardViewProps) {
       <main className="max-w-7xl mx-auto px-6 py-8">
         {/* Stats Cards */}
         <StatsCards />
+
+        {/* Local Agent Card */}
+        <div className="mb-8">
+          <LocalAgentCard />
+        </div>
 
         {/* Node Grid Section */}
         <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">

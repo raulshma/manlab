@@ -8,13 +8,14 @@ namespace ManLab.Agent.Telemetry;
 /// <summary>
 /// Service that periodically collects telemetry data and sends it to the server.
 /// </summary>
-public class TelemetryService : IAsyncDisposable
+public sealed class TelemetryService : IAsyncDisposable
 {
     private readonly ILogger<TelemetryService> _logger;
     private readonly ITelemetryCollector _collector;
     private readonly AgentConfiguration _config;
     private readonly Func<TelemetryData, Task> _sendTelemetry;
     private readonly CancellationTokenSource _cts = new();
+    private PeriodicTimer? _timer;
     private Task? _runningTask;
 
     public TelemetryService(
@@ -27,24 +28,29 @@ public class TelemetryService : IAsyncDisposable
         _sendTelemetry = sendTelemetry;
 
         // Select the appropriate collector based on the current platform
-        _collector = CreateCollector(loggerFactory);
+        _collector = CreateCollector(loggerFactory, config);
         _logger.LogInformation("Telemetry collector initialized for {OS}", GetOSName());
     }
 
-    private ITelemetryCollector CreateCollector(ILoggerFactory loggerFactory)
+    private static ITelemetryCollector CreateCollector(ILoggerFactory loggerFactory, AgentConfiguration config)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            return new WindowsTelemetryCollector(loggerFactory.CreateLogger<WindowsTelemetryCollector>());
+            return new WindowsTelemetryCollector(
+                loggerFactory.CreateLogger<WindowsTelemetryCollector>(),
+                config.TelemetryCacheSeconds);
         }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
-            return new LinuxTelemetryCollector(loggerFactory.CreateLogger<LinuxTelemetryCollector>());
+            return new LinuxTelemetryCollector(
+                loggerFactory.CreateLogger<LinuxTelemetryCollector>(),
+                config.TelemetryCacheSeconds);
         }
         else
         {
-            _logger.LogWarning("Unsupported platform {OS}, using Linux collector as fallback", GetOSName());
-            return new LinuxTelemetryCollector(loggerFactory.CreateLogger<LinuxTelemetryCollector>());
+            return new LinuxTelemetryCollector(
+                loggerFactory.CreateLogger<LinuxTelemetryCollector>(),
+                config.TelemetryCacheSeconds);
         }
     }
 
@@ -67,6 +73,7 @@ public class TelemetryService : IAsyncDisposable
             return;
         }
 
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(_config.HeartbeatIntervalSeconds));
         _runningTask = RunAsync(_cts.Token);
         _logger.LogInformation("Telemetry service started (interval: {Interval}s)", _config.HeartbeatIntervalSeconds);
     }
@@ -81,17 +88,19 @@ public class TelemetryService : IAsyncDisposable
             return;
         }
 
-        _cts.Cancel();
+        await _cts.CancelAsync().ConfigureAwait(false);
 
         try
         {
-            await _runningTask;
+            await _runningTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             // Expected
         }
 
+        _timer?.Dispose();
+        _timer = null;
         _runningTask = null;
         _logger.LogInformation("Telemetry service stopped");
     }
@@ -109,36 +118,39 @@ public class TelemetryService : IAsyncDisposable
         // Initial collection to warm up the CPU usage calculation
         _ = _collector.Collect();
 
-        while (!cancellationToken.IsCancellationRequested)
+        if (_timer is null) return;
+
+        try
         {
-            try
+            while (await _timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
             {
-                await Task.Delay(TimeSpan.FromSeconds(_config.HeartbeatIntervalSeconds), cancellationToken);
+                try
+                {
+                    var data = _collector.Collect();
 
-                var data = _collector.Collect();
-                
-                _logger.LogDebug("Telemetry collected - CPU: {Cpu:F1}%, RAM: {Ram}/{Total} MB, Disks: {DiskCount}",
-                    data.CpuPercent,
-                    data.RamUsedBytes / 1024 / 1024,
-                    data.RamTotalBytes / 1024 / 1024,
-                    data.DiskUsage.Count);
+                    _logger.LogDebug("Telemetry collected - CPU: {Cpu:F1}%, RAM: {Ram}/{Total} MB, Disks: {DiskCount}",
+                        data.CpuPercent,
+                        data.RamUsedBytes / 1024 / 1024,
+                        data.RamTotalBytes / 1024 / 1024,
+                        data.DiskUsage.Count);
 
-                await _sendTelemetry(data);
+                    await _sendTelemetry(data).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Error in telemetry loop, will retry");
+                }
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Error in telemetry loop, will retry");
-            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on shutdown
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        await StopAsync();
+        await StopAsync().ConfigureAwait(false);
         _cts.Dispose();
     }
 }

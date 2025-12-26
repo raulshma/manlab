@@ -8,7 +8,7 @@ namespace ManLab.Agent.Services;
 /// <summary>
 /// Manages the SignalR connection to the ManLab server with exponential backoff reconnection.
 /// </summary>
-public class ConnectionManager : IAsyncDisposable
+public sealed class ConnectionManager : IAsyncDisposable
 {
     private readonly ILogger<ConnectionManager> _logger;
     private readonly AgentConfiguration _config;
@@ -18,6 +18,7 @@ public class ConnectionManager : IAsyncDisposable
     private Guid _nodeId;
     private int _reconnectAttempt;
     private bool _isConnected;
+    private NodeMetadata? _cachedMetadata;
 
     /// <summary>
     /// Event raised when a command is received from the server.
@@ -73,7 +74,7 @@ public class ConnectionManager : IAsyncDisposable
     {
         _logger.LogInformation("Starting connection to server: {ServerUrl}", _config.ServerUrl);
 
-        await ConnectWithRetryAsync(cancellationToken);
+        await ConnectWithRetryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ConnectWithRetryAsync(CancellationToken cancellationToken)
@@ -82,13 +83,13 @@ public class ConnectionManager : IAsyncDisposable
         {
             try
             {
-                await _connection.StartAsync(cancellationToken);
+                await _connection.StartAsync(cancellationToken).ConfigureAwait(false);
                 _isConnected = true;
                 _reconnectAttempt = 0;
                 _logger.LogInformation("Connected to server successfully");
 
                 // Register with the server
-                await RegisterAsync();
+                await RegisterAsync().ConfigureAwait(false);
                 return;
             }
             catch (Exception ex)
@@ -102,7 +103,7 @@ public class ConnectionManager : IAsyncDisposable
 
                 try
                 {
-                    await Task.Delay(delay, cancellationToken);
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -114,7 +115,8 @@ public class ConnectionManager : IAsyncDisposable
 
     private async Task RegisterAsync()
     {
-        var metadata = new NodeMetadata
+        // Cache metadata - hostname/IP/OS don't change during runtime
+        _cachedMetadata ??= new NodeMetadata
         {
             Hostname = Environment.MachineName,
             IpAddress = GetLocalIpAddress(),
@@ -122,11 +124,11 @@ public class ConnectionManager : IAsyncDisposable
             AgentVersion = GetAgentVersion()
         };
 
-        _logger.LogInformation("Registering with server as {Hostname}", metadata.Hostname);
+        _logger.LogInformation("Registering with server as {Hostname}", _cachedMetadata.Hostname);
 
         try
         {
-            _nodeId = await _connection.InvokeAsync<Guid>("Register", metadata);
+            _nodeId = await _connection.InvokeAsync<Guid>("Register", _cachedMetadata).ConfigureAwait(false);
             _logger.LogInformation("Registered successfully. Node ID: {NodeId}", _nodeId);
         }
         catch (Exception ex)
@@ -149,7 +151,7 @@ public class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("SendHeartbeat", _nodeId, data);
+            await _connection.InvokeAsync("SendHeartbeat", _nodeId, data).ConfigureAwait(false);
             _logger.LogDebug("Heartbeat sent successfully");
         }
         catch (Exception ex)
@@ -171,7 +173,7 @@ public class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, logs);
+            await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, logs).ConfigureAwait(false);
             _logger.LogDebug("Command status updated: {CommandId} -> {Status}", commandId, status);
         }
         catch (Exception ex)
@@ -186,7 +188,7 @@ public class ConnectionManager : IAsyncDisposable
 
         if (OnCommandReceived != null)
         {
-            await OnCommandReceived(commandId, type, payload);
+            await OnCommandReceived(commandId, type, payload).ConfigureAwait(false);
         }
     }
 
@@ -196,7 +198,7 @@ public class ConnectionManager : IAsyncDisposable
 
         if (OnTelemetryRequested != null)
         {
-            await OnTelemetryRequested();
+            await OnTelemetryRequested().ConfigureAwait(false);
         }
     }
 
@@ -230,7 +232,7 @@ public class ConnectionManager : IAsyncDisposable
         _logger.LogInformation("Reconnected to server. Connection ID: {ConnectionId}", connectionId);
 
         // Re-register after reconnection
-        await RegisterAsync();
+        await RegisterAsync().ConfigureAwait(false);
     }
 
     private TimeSpan CalculateBackoffDelay()
@@ -270,9 +272,10 @@ public class ConnectionManager : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _cts.Cancel();
-        await _connection.DisposeAsync();
+        await _cts.CancelAsync().ConfigureAwait(false);
+        await _connection.DisposeAsync().ConfigureAwait(false);
         _cts.Dispose();
+        GC.SuppressFinalize(this);
     }
 }
 

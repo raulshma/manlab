@@ -10,6 +10,7 @@ namespace ManLab.Agent.Telemetry;
 public partial class WindowsTelemetryCollector : ITelemetryCollector
 {
     private readonly ILogger<WindowsTelemetryCollector> _logger;
+    private readonly int _cacheSeconds;
     
     // Previous CPU times for calculating usage
     private long _prevIdleTime;
@@ -17,9 +18,14 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
     private long _prevUserTime;
     private bool _initialized;
 
-    public WindowsTelemetryCollector(ILogger<WindowsTelemetryCollector> logger)
+    // Drive info cache to reduce I/O overhead
+    private Dictionary<string, float>? _cachedDiskUsage;
+    private DateTime _lastDiskCheck = DateTime.MinValue;
+
+    public WindowsTelemetryCollector(ILogger<WindowsTelemetryCollector> logger, int cacheSeconds = 30)
     {
         _logger = logger;
+        _cacheSeconds = cacheSeconds;
     }
 
     public TelemetryData Collect()
@@ -100,6 +106,12 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
 
     private Dictionary<string, float> GetDiskUsage()
     {
+        // Return cached data if still valid
+        if (_cachedDiskUsage != null && (DateTime.UtcNow - _lastDiskCheck).TotalSeconds < _cacheSeconds)
+        {
+            return _cachedDiskUsage;
+        }
+
         var usage = new Dictionary<string, float>();
 
         try
@@ -112,6 +124,10 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
                     usage[drive.Name] = percent;
                 }
             }
+
+            // Cache the results
+            _cachedDiskUsage = usage;
+            _lastDiskCheck = DateTime.UtcNow;
         }
         catch (Exception ex)
         {
@@ -162,3 +178,4 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
 
     #endregion
 }
+

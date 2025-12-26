@@ -6,18 +6,24 @@ namespace ManLab.Agent.Telemetry;
 /// <summary>
 /// Linux-specific telemetry collector using /proc filesystem.
 /// </summary>
-public class LinuxTelemetryCollector : ITelemetryCollector
+public sealed class LinuxTelemetryCollector : ITelemetryCollector
 {
     private readonly ILogger<LinuxTelemetryCollector> _logger;
+    private readonly int _cacheSeconds;
     
     // Previous CPU times for calculating usage
     private long _prevTotal;
     private long _prevIdle;
     private bool _initialized;
 
-    public LinuxTelemetryCollector(ILogger<LinuxTelemetryCollector> logger)
+    // Drive info cache to reduce I/O overhead
+    private Dictionary<string, float>? _cachedDiskUsage;
+    private DateTime _lastDiskCheck = DateTime.MinValue;
+
+    public LinuxTelemetryCollector(ILogger<LinuxTelemetryCollector> logger, int cacheSeconds = 30)
     {
         _logger = logger;
+        _cacheSeconds = cacheSeconds;
     }
 
     public TelemetryData Collect()
@@ -155,6 +161,12 @@ public class LinuxTelemetryCollector : ITelemetryCollector
 
     private Dictionary<string, float> GetDiskUsage()
     {
+        // Return cached data if still valid
+        if (_cachedDiskUsage != null && (DateTime.UtcNow - _lastDiskCheck).TotalSeconds < _cacheSeconds)
+        {
+            return _cachedDiskUsage;
+        }
+
         var usage = new Dictionary<string, float>();
 
         try
@@ -180,6 +192,10 @@ public class LinuxTelemetryCollector : ITelemetryCollector
                     }
                 }
             }
+
+            // Cache the results
+            _cachedDiskUsage = usage;
+            _lastDiskCheck = DateTime.UtcNow;
         }
         catch (Exception ex)
         {
@@ -220,3 +236,4 @@ public class LinuxTelemetryCollector : ITelemetryCollector
         return null;
     }
 }
+

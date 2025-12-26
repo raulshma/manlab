@@ -58,18 +58,18 @@ await using var connectionManager = new ConnectionManager(
 await using var telemetryService = new TelemetryService(
     loggerFactory,
     agentConfig,
-    async data => await connectionManager.SendHeartbeatAsync(data));
+    async data => await connectionManager.SendHeartbeatAsync(data).ConfigureAwait(false));
 
 // Create command dispatcher for handling server commands
-var commandDispatcher = new ManLab.Agent.Commands.CommandDispatcher(
+using var commandDispatcher = new ManLab.Agent.Commands.CommandDispatcher(
     loggerFactory,
-    async (commandId, status, logs) => await connectionManager.UpdateCommandStatusAsync(commandId, status, logs));
+    async (commandId, status, logs) => await connectionManager.UpdateCommandStatusAsync(commandId, status, logs).ConfigureAwait(false));
 
 // Handle command execution via dispatcher
 connectionManager.OnCommandReceived += async (commandId, type, payload) =>
 {
     logger.LogInformation("Received command {CommandId}: {Type}", commandId, type);
-    await commandDispatcher.DispatchAsync(commandId, type, payload);
+    await commandDispatcher.DispatchAsync(commandId, type, payload).ConfigureAwait(false);
 };
 
 // Handle telemetry requests from server
@@ -77,7 +77,7 @@ connectionManager.OnTelemetryRequested += async () =>
 {
     logger.LogDebug("Telemetry requested by server");
     var data = telemetryService.CollectNow();
-    await connectionManager.SendHeartbeatAsync(data);
+    await connectionManager.SendHeartbeatAsync(data).ConfigureAwait(false);
 };
 
 try

@@ -24,4 +24,10 @@ public class AgentConfiguration
     /// Maximum reconnection delay in seconds. Default is 60 seconds.
     /// </summary>
     public int MaxReconnectDelaySeconds { get; set; } = 60;
+
+    /// <summary>
+    /// How long to cache drive/disk information in seconds. Default is 30 seconds.
+    /// This reduces I/O overhead since drives rarely change at runtime.
+    /// </summary>
+    public int TelemetryCacheSeconds { get; set; } = 30;
 }

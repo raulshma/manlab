@@ -137,3 +137,22 @@ export interface OnboardingLogEvent {
   message: string;
 }
 
+/**
+ * Local agent installation
+ */
+
+export interface LocalAgentStatus {
+  isSupported: boolean;
+  isInstalled: boolean;
+  isRunning: boolean;
+  linkedNodeId: string | null;
+  status: string;
+  currentOperation: string | null;
+}
+
+export interface LocalAgentInstallResponse {
+  started: boolean;
+  error: string | null;
+}
+
+
