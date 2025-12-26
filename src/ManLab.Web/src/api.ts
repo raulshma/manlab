@@ -3,7 +3,7 @@
  * Provides functions for fetching data from the server REST API.
  */
 
-import type { Node, Telemetry, Command } from './types';
+import type { Node, Telemetry, Command, OnboardingMachine, SshTestResponse, StartInstallResponse, SshAuthMode } from './types';
 
 const API_BASE = '/api';
 
@@ -108,4 +108,68 @@ export async function restartContainer(
  */
 export async function triggerSystemUpdate(nodeId: string): Promise<Command> {
   return createCommand(nodeId, 'Update');
+}
+
+/**
+ * Onboarding: list all machines.
+ */
+export async function fetchOnboardingMachines(): Promise<OnboardingMachine[]> {
+  const response = await fetch(`${API_BASE}/onboarding/machines`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch onboarding machines: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function createOnboardingMachine(input: {
+  host: string;
+  port: number;
+  username: string;
+  authMode: SshAuthMode;
+}): Promise<OnboardingMachine> {
+  const response = await fetch(`${API_BASE}/onboarding/machines`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to create onboarding machine: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function testSshConnection(machineId: string, input: {
+  password?: string;
+  privateKeyPem?: string;
+  privateKeyPassphrase?: string;
+  trustHostKey: boolean;
+}): Promise<SshTestResponse> {
+  const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}/ssh/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(`SSH test failed: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function installAgent(machineId: string, input: {
+  serverBaseUrl: string;
+  force: boolean;
+  trustHostKey: boolean;
+  password?: string;
+  privateKeyPem?: string;
+  privateKeyPassphrase?: string;
+}): Promise<StartInstallResponse> {
+  const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}/install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(`Install start failed: ${await response.text()}`);
+  }
+  return response.json();
 }

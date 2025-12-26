@@ -90,3 +90,45 @@ export interface Command {
   executedAt: string | null;
 }
 
+/**
+ * SSH onboarding
+ */
+
+export type SshAuthMode = 'Password' | 'PrivateKey';
+
+export type OnboardingStatus = 'Pending' | 'Running' | 'Succeeded' | 'Failed';
+
+export interface OnboardingMachine {
+  id: string;
+  host: string;
+  port: number;
+  username: string;
+  authMode: SshAuthMode;
+  hostKeyFingerprint: string | null;
+  status: OnboardingStatus;
+  lastError: string | null;
+  linkedNodeId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SshTestResponse {
+  success: boolean;
+  hostKeyFingerprint: string | null;
+  requiresHostKeyTrust: boolean;
+  whoAmI: string | null;
+  osHint: string | null;
+  error: string | null;
+}
+
+export interface StartInstallResponse {
+  machineId: string;
+  status: OnboardingStatus;
+}
+
+export interface OnboardingLogEvent {
+  machineId: string;
+  timestamp: string;
+  message: string;
+}
+

@@ -1,6 +1,7 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
+using ManLab.Server.Services.Security;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -50,38 +51,56 @@ public class AgentHub : Hub
     /// <returns>The node ID assigned to this agent.</returns>
     public async Task<Guid> Register(NodeMetadata metadata)
     {
+        if (!TryGetBearerToken(out var bearerToken))
+        {
+            throw new HubException("Unauthorized: missing bearer token.");
+        }
+
+        var tokenHash = TokenHasher.Sha256Hex(bearerToken);
+
         _logger.LogInformation("Agent registering: {Hostname}", metadata.Hostname);
 
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
 
-        // Check if node already exists by hostname
-        var existingNode = await dbContext.Nodes
-            .FirstOrDefaultAsync(n => n.Hostname == metadata.Hostname);
+        // Prefer binding by auth token hash.
+        var authedNode = await dbContext.Nodes
+            .FirstOrDefaultAsync(n => n.AuthKeyHash != null && n.AuthKeyHash == tokenHash);
 
-        if (existingNode != null)
+        if (authedNode is not null)
         {
-            var previousStatus = existingNode.Status;
+            var previousStatus = authedNode.Status;
 
-            // Update existing node
-            existingNode.IpAddress = metadata.IpAddress;
-            existingNode.OS = metadata.OS;
-            existingNode.AgentVersion = metadata.AgentVersion;
-            existingNode.LastSeen = DateTime.UtcNow;
-            existingNode.Status = NodeStatus.Online;
+            authedNode.Hostname = metadata.Hostname;
+            authedNode.IpAddress = metadata.IpAddress;
+            authedNode.OS = metadata.OS;
+            authedNode.AgentVersion = metadata.AgentVersion;
+            authedNode.LastSeen = DateTime.UtcNow;
+            authedNode.Status = NodeStatus.Online;
 
             await dbContext.SaveChangesAsync();
-            _logger.LogInformation("Updated existing node: {NodeId} ({Hostname})", existingNode.Id, metadata.Hostname);
 
-            if (previousStatus != existingNode.Status)
+            if (previousStatus != authedNode.Status)
             {
-                await Clients.All.SendAsync("NodeStatusChanged", existingNode.Id, existingNode.Status.ToString(), existingNode.LastSeen);
+                await Clients.All.SendAsync("NodeStatusChanged", authedNode.Id, authedNode.Status.ToString(), authedNode.LastSeen);
             }
 
-            return existingNode.Id;
+            return authedNode.Id;
         }
 
-        // Create new node
+        // If it's an unused enrollment token, bind it to the node we create.
+        var enrollment = await dbContext.EnrollmentTokens
+            .Where(t => t.TokenHash == tokenHash)
+            .Where(t => t.UsedAt == null)
+            .Where(t => t.ExpiresAt > DateTime.UtcNow)
+            .FirstOrDefaultAsync();
+
+        if (enrollment is null)
+        {
+            throw new HubException("Unauthorized: invalid or expired token.");
+        }
+
+        // Create new node bound to this token.
         var newNode = new Node
         {
             Id = Guid.NewGuid(),
@@ -91,10 +110,15 @@ public class AgentHub : Hub
             AgentVersion = metadata.AgentVersion,
             LastSeen = DateTime.UtcNow,
             Status = NodeStatus.Online,
+            AuthKeyHash = tokenHash,
             CreatedAt = DateTime.UtcNow
         };
 
         dbContext.Nodes.Add(newNode);
+
+        enrollment.UsedAt = DateTime.UtcNow;
+        enrollment.NodeId = newNode.Id;
+
         await dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Registered new node: {NodeId} ({Hostname})", newNode.Id, metadata.Hostname);
@@ -112,6 +136,13 @@ public class AgentHub : Hub
     /// <param name="data">Telemetry data from the agent.</param>
     public async Task SendHeartbeat(Guid nodeId, TelemetryData data)
     {
+        if (!TryGetBearerToken(out var bearerToken))
+        {
+            throw new HubException("Unauthorized: missing bearer token.");
+        }
+
+        var tokenHash = TokenHasher.Sha256Hex(bearerToken);
+
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
 
@@ -121,6 +152,13 @@ public class AgentHub : Hub
         {
             _logger.LogWarning("Heartbeat from unknown node: {NodeId}", nodeId);
             return;
+        }
+
+        // Security: ensure the caller token matches the node.
+        if (!string.Equals(node.AuthKeyHash, tokenHash, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Rejected heartbeat for node {NodeId}: auth token mismatch", nodeId);
+            throw new HubException("Unauthorized: token does not match node.");
         }
 
         var previousStatus = node.Status;
@@ -172,6 +210,13 @@ public class AgentHub : Hub
     /// <param name="logs">Output/logs from command execution.</param>
     public async Task UpdateCommandStatus(Guid commandId, string status, string? logs)
     {
+        if (!TryGetBearerToken(out var bearerToken))
+        {
+            throw new HubException("Unauthorized: missing bearer token.");
+        }
+
+        var tokenHash = TokenHasher.Sha256Hex(bearerToken);
+
         _logger.LogInformation("Command status update: {CommandId} -> {Status}", commandId, status);
 
         using var scope = _scopeFactory.CreateScope();
@@ -182,6 +227,14 @@ public class AgentHub : Hub
         {
             _logger.LogWarning("Status update for unknown command: {CommandId}", commandId);
             return;
+        }
+
+        // Security: ensure the command belongs to the node authenticated by this token.
+        var node = await dbContext.Nodes.FindAsync(command.NodeId);
+        if (node is null || !string.Equals(node.AuthKeyHash, tokenHash, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Rejected command status update {CommandId}: auth token mismatch", commandId);
+            throw new HubException("Unauthorized: token does not match node.");
         }
 
         // Parse status string to enum
@@ -210,6 +263,27 @@ public class AgentHub : Hub
         }
 
         await dbContext.SaveChangesAsync();
+    }
+
+    private bool TryGetBearerToken(out string token)
+    {
+        token = string.Empty;
+        var httpContext = Context.GetHttpContext();
+        var auth = httpContext?.Request.Headers.Authorization.ToString();
+
+        if (string.IsNullOrWhiteSpace(auth))
+        {
+            return false;
+        }
+
+        const string prefix = "Bearer ";
+        if (!auth.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        token = auth[prefix.Length..].Trim();
+        return !string.IsNullOrWhiteSpace(token);
     }
 
     #region Server-to-Agent Methods

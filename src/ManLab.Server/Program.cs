@@ -12,6 +12,11 @@ builder.Services.AddOpenApi();
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
 
+// Onboarding services
+builder.Services.AddScoped<EnrollmentTokenService>();
+builder.Services.AddScoped<ManLab.Server.Services.Ssh.SshProvisioningService>();
+builder.Services.AddSingleton<OnboardingJobRunner>();
+
 builder.Services.AddHttpClient();
 builder.Services.AddOptions<DiscordOptions>()
     .Bind(builder.Configuration.GetSection(DiscordOptions.SectionName))

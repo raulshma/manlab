@@ -21,6 +21,12 @@ public class DataContext : DbContext
     /// <summary>Command queue for async task tracking.</summary>
     public DbSet<CommandQueueItem> CommandQueue => Set<CommandQueueItem>();
 
+    /// <summary>Inventory of machines being onboarded via SSH.</summary>
+    public DbSet<OnboardingMachine> OnboardingMachines => Set<OnboardingMachine>();
+
+    /// <summary>Enrollment tokens used to bootstrap agent authentication.</summary>
+    public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -57,6 +63,21 @@ public class DataContext : DbContext
                 .WithMany(n => n.Commands)
                 .HasForeignKey(e => e.NodeId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<OnboardingMachine>(entity =>
+        {
+            entity.HasIndex(e => e.Host);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.UpdatedAt);
+        });
+
+        modelBuilder.Entity<EnrollmentToken>(entity =>
+        {
+            entity.HasIndex(e => e.TokenHash).IsUnique();
+            entity.HasIndex(e => e.ExpiresAt);
+            entity.HasIndex(e => e.UsedAt);
+            entity.HasIndex(e => e.MachineId);
         });
     }
 }
