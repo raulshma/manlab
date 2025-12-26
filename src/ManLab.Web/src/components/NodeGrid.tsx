@@ -1,9 +1,3 @@
-/**
- * NodeGrid component for displaying all nodes in a grid layout.
- * Uses React Aria GridList for accessibility and keyboard navigation.
- */
-
-import { GridList, type Selection } from 'react-aria-components';
 import { useQuery } from '@tanstack/react-query';
 import { fetchNodes } from '../api';
 import { NodeCard } from './NodeCard';
@@ -27,14 +21,6 @@ export function NodeGrid({ onSelectNode }: NodeGridProps) {
     refetchInterval: 30000, // Refetch every 30 seconds as backup
     staleTime: 10000, // Consider data stale after 10 seconds
   });
-
-  const handleSelectionChange = (selection: Selection) => {
-    if (selection === 'all') return;
-    const selectedId = [...selection][0];
-    if (selectedId && onSelectNode) {
-      onSelectNode(String(selectedId));
-    }
-  };
 
   // Loading state
   if (isLoading) {
@@ -113,16 +99,18 @@ export function NodeGrid({ onSelectNode }: NodeGridProps) {
 
   // Nodes grid
   return (
-    <GridList
+    <div
+      role="list"
       aria-label="Device nodes"
-      selectionMode="single"
-      onSelectionChange={handleSelectionChange}
       className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
     >
       {nodes.map((node) => (
-        <NodeCard key={node.id} node={node} />
+        <NodeCard
+          key={node.id}
+          node={node}
+          onClick={() => onSelectNode?.(node.id)}
+        />
       ))}
-    </GridList>
+    </div>
   );
 }
-

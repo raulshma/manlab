@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Button } from 'react-aria-components';
+import { Button } from '@/components/ui/button';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchLocalAgentStatus, installLocalAgent, uninstallLocalAgent } from '../api';
 import { useSignalR } from '../SignalRContext';
@@ -142,7 +142,7 @@ export function LocalAgentCard() {
               <Button
                 className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg 
                           transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                isDisabled={isOperationRunning || installMutation.isPending}
+                disabled={isOperationRunning || installMutation.isPending}
               >
                 {installMutation.isPending ? 'Installing...' : 'Install Agent'}
               </Button>
@@ -161,7 +161,7 @@ export function LocalAgentCard() {
                 <Button
                   className="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg 
                             transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  isDisabled={isOperationRunning || installMutation.isPending}
+                  disabled={isOperationRunning || installMutation.isPending}
                 >
                   Reinstall
                 </Button>
@@ -177,7 +177,7 @@ export function LocalAgentCard() {
                 <Button
                   className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg 
                             transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  isDisabled={isOperationRunning || uninstallMutation.isPending}
+                  disabled={isOperationRunning || uninstallMutation.isPending}
                 >
                   {uninstallMutation.isPending ? 'Removing...' : 'Uninstall'}
                 </Button>

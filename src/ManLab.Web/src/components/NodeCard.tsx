@@ -1,13 +1,8 @@
-/**
- * NodeCard component for displaying individual node information.
- * Uses React Aria GridListItem for accessibility.
- */
-
-import { GridListItem } from 'react-aria-components';
 import type { Node } from '../types';
 
 interface NodeCardProps {
   node: Node;
+  onClick?: () => void;
 }
 
 /**
@@ -72,13 +67,20 @@ function getStatusStyles(status: string): {
 /**
  * NodeCard component displaying node information with status indicators.
  */
-export function NodeCard({ node }: NodeCardProps) {
+export function NodeCard({ node, onClick }: NodeCardProps) {
   const statusStyles = getStatusStyles(node.status);
 
   return (
-    <GridListItem
-      id={node.id}
-      textValue={node.hostname}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
       className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 cursor-pointer
                  hover:bg-slate-800 hover:border-slate-600 hover:shadow-lg hover:shadow-slate-900/50
                  transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500
@@ -140,6 +142,6 @@ export function NodeCard({ node }: NodeCardProps) {
           </span>
         </div>
       </div>
-    </GridListItem>
+    </div>
   );
 }

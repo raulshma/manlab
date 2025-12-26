@@ -3,7 +3,7 @@
  * Shows container status with restart action buttons.
  */
 
-import { Button } from 'react-aria-components';
+import { Button } from '@/components/ui/button';
 import type { Container } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 

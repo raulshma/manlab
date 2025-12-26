@@ -3,7 +3,7 @@
  * Shows telemetry charts, Docker containers, and system actions.
  */
 
-import { Button } from 'react-aria-components';
+import { Button } from '@/components/ui/button';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import type { Container } from '../types';
 import { fetchNode, fetchNodeTelemetry, restartContainer, triggerSystemUpdate } from '../api';
@@ -158,7 +158,7 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
           <h2 className="text-xl font-semibold text-white mb-2">Node Not Found</h2>
           <p className="text-slate-400 mb-4">The requested node could not be found.</p>
           <Button
-            onPress={onBack}
+            onClick={onBack}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium
                      rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2
                      focus:ring-blue-500"
@@ -179,7 +179,7 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
             <Button
-              onPress={onBack}
+              onClick={onBack}
               className="p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg
                        transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
@@ -281,7 +281,7 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
                              rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2
                              focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-slate-800
                              disabled:opacity-50 disabled:cursor-not-allowed"
-                    isDisabled={node.status !== 'Online'}
+                    disabled={node.status !== 'Online'}
                   >
                     Update System
                   </Button>

@@ -1,6 +1,6 @@
 import './App.css'
 import { useState } from 'react'
-import { Button } from 'react-aria-components'
+import { Button } from '@/components/ui/button'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { SignalRProvider } from './SignalRContext'
 import { NodeGrid } from './components/NodeGrid'
