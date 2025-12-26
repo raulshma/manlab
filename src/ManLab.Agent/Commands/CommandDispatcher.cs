@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 
 namespace ManLab.Agent.Commands;
@@ -8,6 +9,11 @@ namespace ManLab.Agent.Commands;
 /// </summary>
 public class CommandDispatcher
 {
+    private const int MaxPayloadChars = 32_768; // hard limit to reduce abuse/memory pressure
+    private static readonly Regex ContainerIdOrNameRegex = new(
+        "^[a-zA-Z0-9_.-]{1,128}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<CommandDispatcher> _logger;
     private readonly Func<Guid, string, string?, Task> _updateStatusCallback;
@@ -37,21 +43,53 @@ public class CommandDispatcher
         {
             await _updateStatusCallback(commandId, "InProgress", $"Executing command: {type}");
 
-            var result = type.ToLowerInvariant() switch
-            {
-                "docker.list" => await HandleDockerListAsync(cancellationToken),
-                "docker.restart" => await HandleDockerRestartAsync(payload, cancellationToken),
-                "docker.stop" => await HandleDockerStopAsync(payload, cancellationToken),
-                "docker.start" => await HandleDockerStartAsync(payload, cancellationToken),
-                "system.update" => await HandleSystemUpdateAsync(commandId, cancellationToken),
-                _ => throw new NotSupportedException($"Unknown command type: {type}")
-            };
+            var normalizedType = (type ?? string.Empty).Trim().ToLowerInvariant();
 
-            // For non-streaming commands, send the final status
-            if (!type.Equals("system.update", StringComparison.OrdinalIgnoreCase))
+            // Strict JSON boundary: if payload is supplied, it must be valid JSON.
+            // We no longer accept non-JSON strings and try to "guess" what they mean.
+            JsonDocument? payloadDoc = null;
+            JsonElement? payloadRoot = null;
+            try
             {
-                await _updateStatusCallback(commandId, "Success", result);
+                if (!string.IsNullOrWhiteSpace(payload))
+                {
+                    if (payload.Length > MaxPayloadChars)
+                    {
+                        throw new ArgumentException($"Command payload too large (max {MaxPayloadChars} characters).", nameof(payload));
+                    }
+
+                    try
+                    {
+                        payloadDoc = JsonDocument.Parse(payload);
+                        payloadRoot = payloadDoc.RootElement;
+                    }
+                    catch (JsonException ex)
+                    {
+                        throw new ArgumentException("Command payload must be valid JSON.", nameof(payload), ex);
+                    }
+                }
+
+                var result = normalizedType switch
+                {
+                    "docker.list" => await HandleDockerListAsync(cancellationToken),
+                    "docker.restart" => await HandleDockerRestartAsync(payloadRoot, cancellationToken),
+                    "docker.stop" => await HandleDockerStopAsync(payloadRoot, cancellationToken),
+                    "docker.start" => await HandleDockerStartAsync(payloadRoot, cancellationToken),
+                    "system.update" => await HandleSystemUpdateAsync(commandId, cancellationToken),
+                    _ => throw new NotSupportedException($"Unknown command type: {type}")
+                };
+
+                // For non-streaming commands, send the final status
+                if (!normalizedType.Equals("system.update", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _updateStatusCallback(commandId, "Success", result);
+                }
             }
+            finally
+            {
+                payloadDoc?.Dispose();
+            }
+
         }
         catch (NotSupportedException ex)
         {
@@ -70,33 +108,21 @@ public class CommandDispatcher
         return await _dockerManager.ListContainersAsync(cancellationToken);
     }
 
-    private async Task<string> HandleDockerRestartAsync(string payload, CancellationToken cancellationToken)
+    private async Task<string> HandleDockerRestartAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
-        var containerId = ExtractContainerId(payload);
-        if (string.IsNullOrEmpty(containerId))
-        {
-            return JsonSerializer.Serialize(new { error = "Container ID is required" });
-        }
+        var containerId = ExtractContainerIdStrict(payloadRoot);
         return await _dockerManager.RestartContainerAsync(containerId, cancellationToken);
     }
 
-    private async Task<string> HandleDockerStopAsync(string payload, CancellationToken cancellationToken)
+    private async Task<string> HandleDockerStopAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
-        var containerId = ExtractContainerId(payload);
-        if (string.IsNullOrEmpty(containerId))
-        {
-            return JsonSerializer.Serialize(new { error = "Container ID is required" });
-        }
+        var containerId = ExtractContainerIdStrict(payloadRoot);
         return await _dockerManager.StopContainerAsync(containerId, cancellationToken);
     }
 
-    private async Task<string> HandleDockerStartAsync(string payload, CancellationToken cancellationToken)
+    private async Task<string> HandleDockerStartAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
-        var containerId = ExtractContainerId(payload);
-        if (string.IsNullOrEmpty(containerId))
-        {
-            return JsonSerializer.Serialize(new { error = "Container ID is required" });
-        }
+        var containerId = ExtractContainerIdStrict(payloadRoot);
         return await _dockerManager.StartContainerAsync(containerId, cancellationToken);
     }
 
@@ -112,30 +138,41 @@ public class CommandDispatcher
         return output;
     }
 
-    private static string? ExtractContainerId(string payload)
+    private static string ExtractContainerIdStrict(JsonElement? payloadRoot)
     {
-        if (string.IsNullOrWhiteSpace(payload))
-            return null;
-
-        try
+        if (payloadRoot is null)
         {
-            using var doc = JsonDocument.Parse(payload);
-            if (doc.RootElement.TryGetProperty("containerId", out var containerIdElement))
-            {
-                return containerIdElement.GetString();
-            }
-            if (doc.RootElement.TryGetProperty("ContainerId", out var containerIdCapElement))
-            {
-                return containerIdCapElement.GetString();
-            }
-        }
-        catch (JsonException)
-        {
-            // If payload is not JSON, treat it as the container ID directly
-            return payload.Trim();
+            throw new ArgumentException("Command payload is required and must be a JSON object with a 'containerId' property.");
         }
 
-        return null;
+        var root = payloadRoot.Value;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("Command payload must be a JSON object.");
+        }
+
+        string? containerId = null;
+        if (root.TryGetProperty("containerId", out var containerIdElement))
+        {
+            containerId = containerIdElement.GetString();
+        }
+        else if (root.TryGetProperty("ContainerId", out var containerIdCapElement))
+        {
+            containerId = containerIdCapElement.GetString();
+        }
+
+        containerId = containerId?.Trim();
+        if (string.IsNullOrWhiteSpace(containerId))
+        {
+            throw new ArgumentException("Command payload must include a non-empty 'containerId'.");
+        }
+
+        if (!ContainerIdOrNameRegex.IsMatch(containerId))
+        {
+            throw new ArgumentException("Invalid containerId format.");
+        }
+
+        return containerId;
     }
 
     public void Dispose()

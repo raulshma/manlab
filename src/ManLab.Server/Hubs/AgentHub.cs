@@ -61,6 +61,8 @@ public class AgentHub : Hub
 
         if (existingNode != null)
         {
+            var previousStatus = existingNode.Status;
+
             // Update existing node
             existingNode.IpAddress = metadata.IpAddress;
             existingNode.OS = metadata.OS;
@@ -70,6 +72,12 @@ public class AgentHub : Hub
 
             await dbContext.SaveChangesAsync();
             _logger.LogInformation("Updated existing node: {NodeId} ({Hostname})", existingNode.Id, metadata.Hostname);
+
+            if (previousStatus != existingNode.Status)
+            {
+                await Clients.All.SendAsync("NodeStatusChanged", existingNode.Id, existingNode.Status.ToString(), existingNode.LastSeen);
+            }
+
             return existingNode.Id;
         }
 
@@ -90,6 +98,9 @@ public class AgentHub : Hub
         await dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Registered new node: {NodeId} ({Hostname})", newNode.Id, metadata.Hostname);
+
+        await Clients.All.SendAsync("NodeStatusChanged", newNode.Id, newNode.Status.ToString(), newNode.LastSeen);
+
         return newNode.Id;
     }
 
@@ -111,6 +122,8 @@ public class AgentHub : Hub
             _logger.LogWarning("Heartbeat from unknown node: {NodeId}", nodeId);
             return;
         }
+
+        var previousStatus = node.Status;
 
         node.LastSeen = DateTime.UtcNow;
         node.Status = NodeStatus.Online;
@@ -140,6 +153,14 @@ public class AgentHub : Hub
         await dbContext.SaveChangesAsync();
 
         _logger.LogDebug("Heartbeat received from node: {NodeId}", nodeId);
+
+        if (previousStatus != node.Status)
+        {
+            await Clients.All.SendAsync("NodeStatusChanged", node.Id, node.Status.ToString(), node.LastSeen);
+        }
+
+        // Let the dashboard invalidate/refetch telemetry for this node.
+        await Clients.All.SendAsync("TelemetryReceived", node.Id);
     }
 
     /// <summary>

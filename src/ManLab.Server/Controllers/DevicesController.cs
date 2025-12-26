@@ -1,7 +1,9 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
+using ManLab.Server.Data.Enums;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace ManLab.Server.Controllers;
 
@@ -12,6 +14,8 @@ namespace ManLab.Server.Controllers;
 [Route("api/[controller]")]
 public class DevicesController : ControllerBase
 {
+    private const int MaxCommandPayloadChars = 32_768;
+
     private readonly DataContext _dbContext;
     private readonly ILogger<DevicesController> _logger;
 
@@ -156,9 +160,64 @@ public class DevicesController : ControllerBase
         }
 
         // Parse command type
-        if (!Enum.TryParse<Data.Enums.CommandType>(request.CommandType, true, out var commandType))
+        if (!Enum.TryParse<CommandType>(request.CommandType, true, out var commandType))
         {
             return BadRequest($"Invalid command type: {request.CommandType}");
+        }
+
+        // Security hardening: payload must be strict JSON if provided, and match basic schema.
+        var payload = request.Payload;
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            if (payload.Length > MaxCommandPayloadChars)
+            {
+                return BadRequest($"Payload too large (max {MaxCommandPayloadChars} characters).");
+            }
+
+            JsonDocument doc;
+            try
+            {
+                doc = JsonDocument.Parse(payload);
+            }
+            catch (JsonException)
+            {
+                return BadRequest("Payload must be valid JSON.");
+            }
+            using (doc)
+            {
+                // Minimal per-command validation. (Detailed validation belongs in a dedicated command subsystem.)
+                if (commandType is CommandType.DockerRestart)
+                {
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                        return BadRequest("Payload must be a JSON object.");
+
+                    if (!doc.RootElement.TryGetProperty("containerId", out var containerIdEl) &&
+                        !doc.RootElement.TryGetProperty("ContainerId", out containerIdEl))
+                    {
+                        return BadRequest("Payload must include 'containerId'.");
+                    }
+
+                    var containerId = containerIdEl.GetString()?.Trim();
+                    if (string.IsNullOrWhiteSpace(containerId))
+                        return BadRequest("Payload must include a non-empty 'containerId'.");
+                }
+
+                if (commandType is CommandType.Shell)
+                {
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                        return BadRequest("Payload must be a JSON object.");
+
+                    if (!doc.RootElement.TryGetProperty("command", out var commandEl) &&
+                        !doc.RootElement.TryGetProperty("Command", out commandEl))
+                    {
+                        return BadRequest("Payload must include 'command'.");
+                    }
+
+                    var command = commandEl.GetString();
+                    if (string.IsNullOrWhiteSpace(command))
+                        return BadRequest("Payload must include a non-empty 'command'.");
+                }
+            }
         }
 
         var command = new CommandQueueItem
@@ -166,7 +225,7 @@ public class DevicesController : ControllerBase
             Id = Guid.NewGuid(),
             NodeId = id,
             CommandType = commandType,
-            Payload = request.Payload,
+            Payload = payload,
             Status = Data.Enums.CommandStatus.Queued,
             CreatedAt = DateTime.UtcNow
         };
