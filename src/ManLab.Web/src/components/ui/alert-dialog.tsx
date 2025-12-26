@@ -23,14 +23,15 @@ function AlertDialogPortal({ ...props }: AlertDialogPrimitive.Portal.Props) {
 function AlertDialogOverlay({
   className,
   ...props
-}: AlertDialogPrimitive.Backdrop.Props) {
+}: React.ComponentProps<"div">) {
   return (
-    <AlertDialogPrimitive.Backdrop
+    <div
       data-slot="alert-dialog-overlay"
       className={cn(
-        "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 bg-black/80 duration-100 supports-backdrop-filter:backdrop-blur-xs fixed inset-0 isolate z-50",
+        "fixed inset-0 z-[500] bg-black/80 animate-in fade-in duration-150 peer-data-[state=closed]:animate-out peer-data-[state=closed]:fade-out-0",
         className
       )}
+      style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}
       {...props}
     />
   )
@@ -45,16 +46,16 @@ function AlertDialogContent({
 }) {
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
       <AlertDialogPrimitive.Popup
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 bg-background ring-foreground/5 gap-6 rounded-4xl p-6 ring-1 duration-100 data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-md group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 outline-none",
+          "peer data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 bg-background ring-foreground/5 gap-6 rounded-4xl p-6 ring-1 fixed top-1/2 left-1/2 z-[501] grid w-full -translate-x-1/2 -translate-y-1/2 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-md group/alert-dialog-content",
           className
         )}
         {...props}
       />
+      <AlertDialogOverlay />
     </AlertDialogPortal>
   )
 }
