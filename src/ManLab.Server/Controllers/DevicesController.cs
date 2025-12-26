@@ -213,8 +213,8 @@ public class DevicesController : ControllerBase
                         return BadRequest("Payload must include 'command'.");
                     }
 
-                    var command = commandEl.GetString();
-                    if (string.IsNullOrWhiteSpace(command))
+                    var shellCommand = commandEl.GetString();
+                    if (string.IsNullOrWhiteSpace(shellCommand))
                         return BadRequest("Payload must include a non-empty 'command'.");
                 }
             }

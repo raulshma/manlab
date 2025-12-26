@@ -3,6 +3,7 @@
     <Project Path="src/ManLab.Server/ManLab.Server.csproj" />
     <Project Path="src/ManLab.Shared/ManLab.Shared.csproj" />
     <Project Path="src/ManLab.Agent/ManLab.Agent.csproj" />
+    <Project Path="src/ManLab.Build/ManLab.Build.csproj" />
     <Project Path="src/ManLab.Agent.Tests/ManLab.Agent.Tests.csproj" />
   </Folder>
 </Solution>

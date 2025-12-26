@@ -16,6 +16,9 @@ builder.Services.AddOptions<DiscordOptions>()
     .Validate(o => string.IsNullOrWhiteSpace(o.WebhookUrl) || Uri.IsWellFormedUriString(o.WebhookUrl, UriKind.Absolute),
         "Discord:WebhookUrl must be a valid absolute URL when provided");
 
+builder.Services.AddOptions<BinaryDistributionOptions>()
+    .Bind(builder.Configuration.GetSection(BinaryDistributionOptions.SectionName));
+
 builder.Services.AddSingleton<INotificationService, DiscordWebhookNotificationService>();
 
 // Background services
@@ -37,3 +40,4 @@ app.MapControllers();
 app.MapHub<AgentHub>("/hubs/agent");
 
 app.Run();
+
