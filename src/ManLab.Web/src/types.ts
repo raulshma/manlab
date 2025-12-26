@@ -54,3 +54,39 @@ export interface NodeStatusChange {
   status: NodeStatus;
   lastSeen: string;
 }
+
+/**
+ * Docker container status.
+ */
+export type ContainerState = 'running' | 'exited' | 'created' | 'paused' | 'restarting' | 'dead';
+
+/**
+ * Docker container information.
+ */
+export interface Container {
+  id: string;
+  names: string[];
+  image: string;
+  state: ContainerState;
+  status: string;
+  created: string;
+}
+
+/**
+ * Command execution status.
+ */
+export type CommandExecutionStatus = 'Queued' | 'InProgress' | 'Success' | 'Failed';
+
+/**
+ * Command record from the server.
+ */
+export interface Command {
+  id: string;
+  commandType: string;
+  payload: string | null;
+  status: CommandExecutionStatus;
+  outputLog: string | null;
+  createdAt: string;
+  executedAt: string | null;
+}
+

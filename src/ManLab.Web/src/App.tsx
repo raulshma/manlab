@@ -1,9 +1,11 @@
 import './App.css'
+import { useState } from 'react'
 import { Button } from 'react-aria-components'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { SignalRProvider } from './SignalRContext'
 import { NodeGrid } from './components/NodeGrid'
 import { ConnectionStatus } from './components/ConnectionStatus'
+import { NodeDetailView } from './components/NodeDetailView'
 import { fetchNodes } from './api'
 
 // Create a client
@@ -77,10 +79,14 @@ function StatsCards() {
   )
 }
 
+interface DashboardViewProps {
+  onSelectNode: (nodeId: string) => void;
+}
+
 /**
- * Dashboard content component (wrapped with providers).
+ * Dashboard view component showing the main dashboard.
  */
-function DashboardContent() {
+function DashboardView({ onSelectNode }: DashboardViewProps) {
   return (
     <div className="min-h-screen bg-slate-900 text-white">
       {/* Header */}
@@ -124,11 +130,30 @@ function DashboardContent() {
           </div>
           
           {/* Node Grid */}
-          <NodeGrid />
+          <NodeGrid onSelectNode={onSelectNode} />
         </div>
       </main>
     </div>
   )
+}
+
+/**
+ * Dashboard content component (wrapped with providers).
+ * Manages navigation between dashboard and node detail views.
+ */
+function DashboardContent() {
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+
+  if (selectedNodeId) {
+    return (
+      <NodeDetailView 
+        nodeId={selectedNodeId} 
+        onBack={() => setSelectedNodeId(null)} 
+      />
+    )
+  }
+
+  return <DashboardView onSelectNode={setSelectedNodeId} />
 }
 
 /**

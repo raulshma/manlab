@@ -105,6 +105,89 @@ public class DevicesController : ControllerBase
 
         return Ok(telemetry);
     }
+
+    /// <summary>
+    /// Gets command history for a specific node.
+    /// </summary>
+    /// <param name="id">The node ID.</param>
+    /// <param name="count">Number of commands to retrieve (default: 20).</param>
+    /// <returns>List of recent commands.</returns>
+    [HttpGet("{id:guid}/commands")]
+    public async Task<ActionResult<IEnumerable<CommandDto>>> GetCommands(Guid id, [FromQuery] int count = 20)
+    {
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var commands = await _dbContext.CommandQueue
+            .Where(c => c.NodeId == id)
+            .OrderByDescending(c => c.CreatedAt)
+            .Take(count)
+            .Select(c => new CommandDto
+            {
+                Id = c.Id,
+                CommandType = c.CommandType.ToString(),
+                Payload = c.Payload,
+                Status = c.Status.ToString(),
+                OutputLog = c.OutputLog,
+                CreatedAt = c.CreatedAt,
+                ExecutedAt = c.ExecutedAt
+            })
+            .ToListAsync();
+
+        return Ok(commands);
+    }
+
+    /// <summary>
+    /// Queues a new command for a specific node.
+    /// </summary>
+    /// <param name="id">The node ID.</param>
+    /// <param name="request">The command request.</param>
+    /// <returns>The created command.</returns>
+    [HttpPost("{id:guid}/commands")]
+    public async Task<ActionResult<CommandDto>> CreateCommand(Guid id, [FromBody] CreateCommandRequest request)
+    {
+        var node = await _dbContext.Nodes.FindAsync(id);
+        if (node == null)
+        {
+            return NotFound();
+        }
+
+        // Parse command type
+        if (!Enum.TryParse<Data.Enums.CommandType>(request.CommandType, true, out var commandType))
+        {
+            return BadRequest($"Invalid command type: {request.CommandType}");
+        }
+
+        var command = new CommandQueueItem
+        {
+            Id = Guid.NewGuid(),
+            NodeId = id,
+            CommandType = commandType,
+            Payload = request.Payload,
+            Status = Data.Enums.CommandStatus.Queued,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _dbContext.CommandQueue.Add(command);
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation("Command queued: {CommandId} for node {NodeId}, type: {CommandType}", 
+            command.Id, id, commandType);
+
+        return CreatedAtAction(nameof(GetCommands), new { id }, new CommandDto
+        {
+            Id = command.Id,
+            CommandType = command.CommandType.ToString(),
+            Payload = command.Payload,
+            Status = command.Status.ToString(),
+            OutputLog = command.OutputLog,
+            CreatedAt = command.CreatedAt,
+            ExecutedAt = command.ExecutedAt
+        });
+    }
 }
 
 /// <summary>
@@ -132,4 +215,27 @@ public record TelemetryDto
     public float RamUsage { get; init; }
     public float DiskUsage { get; init; }
     public float? Temperature { get; init; }
+}
+
+/// <summary>
+/// DTO for command information returned by the API.
+/// </summary>
+public record CommandDto
+{
+    public Guid Id { get; init; }
+    public string CommandType { get; init; } = string.Empty;
+    public string? Payload { get; init; }
+    public string Status { get; init; } = string.Empty;
+    public string? OutputLog { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public DateTime? ExecutedAt { get; init; }
+}
+
+/// <summary>
+/// Request DTO for creating a new command.
+/// </summary>
+public record CreateCommandRequest
+{
+    public string CommandType { get; init; } = string.Empty;
+    public string? Payload { get; init; }
 }
