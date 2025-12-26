@@ -1,6 +1,7 @@
 using ManLab.Server.Data;
 using ManLab.Server.Hubs;
 using ManLab.Server.Services;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,6 +44,26 @@ builder.Services.AddHostedService<HealthMonitorService>();
 builder.AddNpgsqlDbContext<DataContext>(connectionName: "manlab");
 
 var app = builder.Build();
+
+// Ensure the database schema exists before hosted services start querying it.
+// This prevents runtime errors like: relation "Nodes" does not exist.
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    var logger = scope.ServiceProvider
+        .GetRequiredService<ILoggerFactory>()
+        .CreateLogger("ManLab.Server.DatabaseMigration");
+
+    try
+    {
+        var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
+        await dbContext.Database.MigrateAsync();
+    }
+    catch (Exception ex)
+    {
+        logger.LogCritical(ex, "Database migration failed");
+        throw;
+    }
+}
 
 // Map Aspire ServiceDefaults endpoints (/health and /alive in development).
 app.MapDefaultEndpoints();
