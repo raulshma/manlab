@@ -1,0 +1,222 @@
+using ManLab.Shared.Dtos;
+using Microsoft.Extensions.Logging;
+
+namespace ManLab.Agent.Telemetry;
+
+/// <summary>
+/// Linux-specific telemetry collector using /proc filesystem.
+/// </summary>
+public class LinuxTelemetryCollector : ITelemetryCollector
+{
+    private readonly ILogger<LinuxTelemetryCollector> _logger;
+    
+    // Previous CPU times for calculating usage
+    private long _prevTotal;
+    private long _prevIdle;
+    private bool _initialized;
+
+    public LinuxTelemetryCollector(ILogger<LinuxTelemetryCollector> logger)
+    {
+        _logger = logger;
+    }
+
+    public TelemetryData Collect()
+    {
+        var data = new TelemetryData();
+
+        try
+        {
+            data.CpuPercent = GetCpuUsage();
+            (data.RamUsedBytes, data.RamTotalBytes) = GetMemoryInfo();
+            data.DiskUsage = GetDiskUsage();
+            data.CpuTempCelsius = GetCpuTemperature();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error collecting telemetry data");
+        }
+
+        return data;
+    }
+
+    private float GetCpuUsage()
+    {
+        try
+        {
+            // Read /proc/stat - first line is aggregate CPU stats
+            var statLine = File.ReadLines("/proc/stat").FirstOrDefault();
+            if (statLine == null || !statLine.StartsWith("cpu "))
+            {
+                return 0;
+            }
+
+            // Parse: cpu user nice system idle iowait irq softirq steal guest guest_nice
+            var parts = statLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 5)
+            {
+                return 0;
+            }
+
+            // Sum all CPU times
+            long user = long.Parse(parts[1]);
+            long nice = long.Parse(parts[2]);
+            long system = long.Parse(parts[3]);
+            long idle = long.Parse(parts[4]);
+            long iowait = parts.Length > 5 ? long.Parse(parts[5]) : 0;
+            long irq = parts.Length > 6 ? long.Parse(parts[6]) : 0;
+            long softirq = parts.Length > 7 ? long.Parse(parts[7]) : 0;
+            long steal = parts.Length > 8 ? long.Parse(parts[8]) : 0;
+
+            long totalIdle = idle + iowait;
+            long total = user + nice + system + idle + iowait + irq + softirq + steal;
+
+            if (!_initialized)
+            {
+                _prevTotal = total;
+                _prevIdle = totalIdle;
+                _initialized = true;
+                return 0;
+            }
+
+            long totalDiff = total - _prevTotal;
+            long idleDiff = totalIdle - _prevIdle;
+
+            _prevTotal = total;
+            _prevIdle = totalIdle;
+
+            if (totalDiff == 0)
+            {
+                return 0;
+            }
+
+            return (float)(totalDiff - idleDiff) / totalDiff * 100f;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error reading CPU stats from /proc/stat");
+            return 0;
+        }
+    }
+
+    private (long used, long total) GetMemoryInfo()
+    {
+        try
+        {
+            long memTotal = 0;
+            long memAvailable = 0;
+            long memFree = 0;
+            long buffers = 0;
+            long cached = 0;
+
+            foreach (var line in File.ReadLines("/proc/meminfo"))
+            {
+                var parts = line.Split(':', StringSplitOptions.TrimEntries);
+                if (parts.Length < 2) continue;
+
+                var key = parts[0];
+                var valueParts = parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (valueParts.Length == 0) continue;
+
+                long value = long.Parse(valueParts[0]) * 1024; // Convert from kB to bytes
+
+                switch (key)
+                {
+                    case "MemTotal":
+                        memTotal = value;
+                        break;
+                    case "MemAvailable":
+                        memAvailable = value;
+                        break;
+                    case "MemFree":
+                        memFree = value;
+                        break;
+                    case "Buffers":
+                        buffers = value;
+                        break;
+                    case "Cached":
+                        cached = value;
+                        break;
+                }
+            }
+
+            // MemAvailable is the best metric if available (Linux 3.14+)
+            // Otherwise, use MemFree + Buffers + Cached as approximation
+            long available = memAvailable > 0 ? memAvailable : memFree + buffers + cached;
+            long used = memTotal - available;
+
+            return (used, memTotal);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error reading memory info from /proc/meminfo");
+            return (0, 0);
+        }
+    }
+
+    private Dictionary<string, float> GetDiskUsage()
+    {
+        var usage = new Dictionary<string, float>();
+
+        try
+        {
+            // Use DriveInfo which works on Linux too via .NET runtime
+            foreach (var drive in DriveInfo.GetDrives())
+            {
+                if (drive.IsReady && (drive.DriveType == DriveType.Fixed || drive.DriveType == DriveType.Network))
+                {
+                    // Skip pseudo filesystems
+                    if (drive.Name.StartsWith("/dev") || 
+                        drive.Name.StartsWith("/proc") || 
+                        drive.Name.StartsWith("/sys") ||
+                        drive.Name.StartsWith("/run"))
+                    {
+                        continue;
+                    }
+
+                    if (drive.TotalSize > 0)
+                    {
+                        float percent = (float)(drive.TotalSize - drive.AvailableFreeSpace) / drive.TotalSize * 100f;
+                        usage[drive.Name] = percent;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error getting disk usage");
+        }
+
+        return usage;
+    }
+
+    private float? GetCpuTemperature()
+    {
+        try
+        {
+            // Try common temperature sensor paths
+            string[] tempPaths = [
+                "/sys/class/thermal/thermal_zone0/temp",
+                "/sys/class/hwmon/hwmon0/temp1_input",
+                "/sys/class/hwmon/hwmon1/temp1_input"
+            ];
+
+            foreach (var path in tempPaths)
+            {
+                if (File.Exists(path))
+                {
+                    var content = File.ReadAllText(path).Trim();
+                    if (int.TryParse(content, out int tempMilliCelsius))
+                    {
+                        return tempMilliCelsius / 1000f;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read CPU temperature");
+        }
+
+        return null;
+    }
+}

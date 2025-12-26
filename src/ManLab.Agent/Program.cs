@@ -1,5 +1,6 @@
 using ManLab.Agent.Configuration;
 using ManLab.Agent.Services;
+using ManLab.Agent.Telemetry;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -53,6 +54,12 @@ await using var connectionManager = new ConnectionManager(
     loggerFactory.CreateLogger<ConnectionManager>(),
     agentConfig);
 
+// Create telemetry service
+await using var telemetryService = new TelemetryService(
+    loggerFactory,
+    agentConfig,
+    async data => await connectionManager.SendHeartbeatAsync(data));
+
 // Handle command execution (placeholder for future implementation)
 connectionManager.OnCommandReceived += async (commandId, type, payload) =>
 {
@@ -61,18 +68,21 @@ connectionManager.OnCommandReceived += async (commandId, type, payload) =>
     await connectionManager.UpdateCommandStatusAsync(commandId, "Success", "Command received (placeholder)");
 };
 
-// Handle telemetry requests (placeholder for future implementation)
+// Handle telemetry requests from server
 connectionManager.OnTelemetryRequested += async () =>
 {
     logger.LogDebug("Telemetry requested by server");
-    // TODO: Implement telemetry collection in phase 2.2
-    await Task.CompletedTask;
+    var data = telemetryService.CollectNow();
+    await connectionManager.SendHeartbeatAsync(data);
 };
 
 try
 {
     // Start the connection
     await connectionManager.StartAsync(cts.Token);
+
+    // Start telemetry collection loop
+    telemetryService.Start();
 
     // Keep running until cancelled
     logger.LogInformation("Agent running. Press Ctrl+C to stop.");
