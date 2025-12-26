@@ -27,6 +27,10 @@ var web = builder.AddViteApp("web", "../ManLab.Web")
     .WithExternalHttpEndpoints()
     .WithReference(server)
     .WaitFor(server)
+    .WithEndpoint("http", (endpointAnnotation) =>
+    {
+        endpointAnnotation.Port = 5173;
+    })
     // Ensure the dev server binds to an address reachable from the orchestrator.
     .WithArgs("--host", "0.0.0.0");
 

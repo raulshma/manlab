@@ -3,40 +3,27 @@
  */
 
 import { useSignalR, type ConnectionStatus as Status } from '../SignalRContext';
+import { Badge } from '@/components/ui/badge';
 
 /**
- * Returns styles and label for the connection status.
+ * Returns badge variant and label for the connection status.
  */
-function getConnectionStyles(status: Status): {
-  dotClass: string;
+function getConnectionInfo(status: Status): {
+  variant: 'default' | 'secondary' | 'destructive' | 'outline';
   label: string;
+  animate?: boolean;
 } {
   switch (status) {
     case 'connected':
-      return {
-        dotClass: 'bg-emerald-500',
-        label: 'Connected',
-      };
+      return { variant: 'default', label: 'Connected' };
     case 'connecting':
-      return {
-        dotClass: 'bg-blue-500 animate-pulse',
-        label: 'Connecting...',
-      };
+      return { variant: 'secondary', label: 'Connecting...', animate: true };
     case 'reconnecting':
-      return {
-        dotClass: 'bg-amber-500 animate-pulse',
-        label: 'Reconnecting...',
-      };
+      return { variant: 'secondary', label: 'Reconnecting...', animate: true };
     case 'disconnected':
-      return {
-        dotClass: 'bg-red-500',
-        label: 'Disconnected',
-      };
+      return { variant: 'destructive', label: 'Disconnected' };
     default:
-      return {
-        dotClass: 'bg-slate-500',
-        label: 'Unknown',
-      };
+      return { variant: 'outline', label: 'Unknown' };
   }
 }
 
@@ -45,12 +32,14 @@ function getConnectionStyles(status: Status): {
  */
 export function ConnectionStatus() {
   const { connectionStatus } = useSignalR();
-  const styles = getConnectionStyles(connectionStatus);
+  const info = getConnectionInfo(connectionStatus);
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/50 border border-slate-700 rounded-lg">
-      <div className={`w-2 h-2 rounded-full ${styles.dotClass}`} />
-      <span className="text-xs text-slate-400">{styles.label}</span>
-    </div>
+    <Badge 
+      variant={info.variant}
+      className={info.animate ? 'animate-pulse' : undefined}
+    >
+      {info.label}
+    </Badge>
   );
 }

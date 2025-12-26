@@ -68,36 +68,20 @@ export function ConfirmationModal({
       <AlertDialogTrigger>
         {trigger}
       </AlertDialogTrigger>
-      <AlertDialogContent className="bg-slate-800 border border-slate-700">
+      <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle className="text-lg font-semibold text-white">
-            {title}
-          </AlertDialogTitle>
-          <AlertDialogDescription className="text-slate-300 text-sm">
-            {message}
-          </AlertDialogDescription>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel
-            disabled={loading}
-            className="px-4 py-2 text-sm font-medium text-slate-300 bg-slate-700/50
-                     hover:bg-slate-700 rounded-lg transition-colors cursor-pointer
-                     focus:outline-none focus:ring-2 focus:ring-slate-500
-                     disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+          <AlertDialogCancel disabled={loading}>
             {cancelText}
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
             disabled={loading}
             variant={isDestructive ? 'destructive' : 'default'}
-            className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors cursor-pointer
-                      focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800
-                      disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2
-                      ${isDestructive
-                        ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
-                        : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
-                      }`}
+            className="flex items-center gap-2"
           >
             {loading && (
               <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">

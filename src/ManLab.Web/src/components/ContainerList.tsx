@@ -4,6 +4,10 @@
  */
 
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Box } from 'lucide-react';
 import type { Container } from '../types';
 import { ConfirmationModal } from './ConfirmationModal';
 
@@ -14,50 +18,22 @@ interface ContainerListProps {
 }
 
 /**
- * Returns status indicator styles based on container state.
+ * Returns badge variant based on container state.
  */
-function getContainerStateStyles(state: string): {
-  dotClass: string;
-  badgeClass: string;
-  label: string;
-} {
+function getContainerStateVariant(state: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   switch (state.toLowerCase()) {
     case 'running':
-      return {
-        dotClass: 'bg-emerald-500 animate-pulse',
-        badgeClass: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-        label: 'Running',
-      };
+      return 'default';
     case 'exited':
-      return {
-        dotClass: 'bg-slate-500',
-        badgeClass: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
-        label: 'Exited',
-      };
+      return 'outline';
     case 'paused':
-      return {
-        dotClass: 'bg-amber-500',
-        badgeClass: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-        label: 'Paused',
-      };
+      return 'secondary';
     case 'restarting':
-      return {
-        dotClass: 'bg-blue-500 animate-pulse',
-        badgeClass: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-        label: 'Restarting',
-      };
+      return 'secondary';
     case 'dead':
-      return {
-        dotClass: 'bg-red-500',
-        badgeClass: 'bg-red-500/20 text-red-400 border-red-500/30',
-        label: 'Dead',
-      };
+      return 'destructive';
     default:
-      return {
-        dotClass: 'bg-slate-500',
-        badgeClass: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
-        label: state,
-      };
+      return 'outline';
   }
 }
 
@@ -78,18 +54,17 @@ export function ContainerList({ containers, isLoading, onRestart }: ContainerLis
     return (
       <div className="space-y-3">
         {[1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="bg-slate-800/50 border border-slate-700 rounded-lg p-4 animate-pulse"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-2.5 h-2.5 rounded-full bg-slate-600" />
-                <div className="h-4 w-32 bg-slate-600 rounded" />
+          <Card key={i}>
+            <CardContent className="py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="w-2.5 h-2.5 rounded-full" />
+                  <Skeleton className="h-4 w-32" />
+                </div>
+                <Skeleton className="h-6 w-16" />
               </div>
-              <div className="h-6 w-16 bg-slate-600 rounded" />
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         ))}
       </div>
     );
@@ -97,83 +72,67 @@ export function ContainerList({ containers, isLoading, onRestart }: ContainerLis
 
   if (containers.length === 0) {
     return (
-      <div className="bg-slate-800/30 border border-slate-700/50 rounded-lg p-8 text-center">
-        <svg
-          className="w-12 h-12 mx-auto mb-4 text-slate-500"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-          />
-        </svg>
-        <p className="text-slate-400 text-sm">No containers found</p>
-        <p className="text-slate-500 text-xs mt-1">
-          Docker containers will appear here when available
-        </p>
-      </div>
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-8">
+          <Box className="w-12 h-12 text-muted-foreground mb-4" />
+          <p className="text-muted-foreground text-sm">No containers found</p>
+          <p className="text-muted-foreground/70 text-xs mt-1">
+            Docker containers will appear here when available
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
     <div className="space-y-3">
       {containers.map((container) => {
-        const stateStyles = getContainerStateStyles(container.state);
+        const stateVariant = getContainerStateVariant(container.state);
         const name = getPrimaryName(container.names);
 
         return (
-          <div
-            key={container.id}
-            className="bg-slate-800/50 border border-slate-700 rounded-lg p-4
-                       hover:bg-slate-800 hover:border-slate-600 transition-colors"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3 mb-1">
-                  <div className={`w-2.5 h-2.5 rounded-full ${stateStyles.dotClass}`} />
-                  <h4 className="text-sm font-medium text-white truncate">
-                    {name}
-                  </h4>
-                  <span
-                    className={`px-2 py-0.5 text-xs font-medium rounded-full border ${stateStyles.badgeClass}`}
-                  >
-                    {stateStyles.label}
-                  </span>
+          <Card key={container.id} className="hover:ring-1 hover:ring-ring transition-all">
+            <CardContent className="py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-3 mb-1">
+                    <div className={`w-2.5 h-2.5 rounded-full ${
+                      container.state.toLowerCase() === 'running' ? 'bg-primary animate-pulse' :
+                      container.state.toLowerCase() === 'dead' ? 'bg-destructive' : 'bg-muted'
+                    }`} />
+                    <h4 className="text-sm font-medium text-foreground truncate">
+                      {name}
+                    </h4>
+                    <Badge variant={stateVariant}>
+                      {container.state}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground ml-5">
+                    <span className="truncate" title={container.image}>
+                      {container.image}
+                    </span>
+                    <span className="text-muted-foreground/70">
+                      {container.status}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-4 text-xs text-slate-400 ml-5">
-                  <span className="truncate" title={container.image}>
-                    {container.image}
-                  </span>
-                  <span className="text-slate-500">
-                    {container.status}
-                  </span>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-2 ml-4">
-                <ConfirmationModal
-                  trigger={
-                    <Button
-                      className="px-3 py-1.5 text-xs font-medium text-blue-400 bg-blue-500/10
-                               hover:bg-blue-500/20 border border-blue-500/30 rounded-lg
-                               transition-colors cursor-pointer focus:outline-none focus:ring-2
-                               focus:ring-blue-500"
-                    >
-                      Restart
-                    </Button>
-                  }
-                  title="Restart Container"
-                  message={`Are you sure you want to restart the container "${name}"? This may cause temporary service interruption.`}
-                  confirmText="Restart"
-                  onConfirm={() => onRestart(container.id)}
-                />
+                <div className="flex items-center gap-2 ml-4">
+                  <ConfirmationModal
+                    trigger={
+                      <Button variant="outline" size="sm">
+                        Restart
+                      </Button>
+                    }
+                    title="Restart Container"
+                    message={`Are you sure you want to restart the container "${name}"? This may cause temporary service interruption.`}
+                    confirmText="Restart"
+                    onConfirm={() => onRestart(container.id)}
+                  />
+                </div>
               </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         );
       })}
     </div>

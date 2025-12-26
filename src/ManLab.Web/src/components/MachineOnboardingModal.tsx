@@ -7,6 +7,7 @@ import {
   installAgent,
   testSshConnection,
   uninstallAgent,
+  deleteOnboardingMachine,
 } from '../api';
 import type {
   OnboardingMachine,
@@ -19,11 +20,12 @@ import { ConfirmationModal } from './ConfirmationModal';
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
   DialogTrigger,
   DialogClose,
 } from '@/components/ui/dialog';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,24 +37,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from '@/components/ui/alert';
+import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
+import { AlertCircle, Terminal, Trash2 } from 'lucide-react';
 
 const EMPTY_MACHINES: OnboardingMachine[] = [];
 
-function StatusBadge({ status }: { status: OnboardingStatus }) {
-  const style =
-    status === 'Succeeded'
-      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-      : status === 'Failed'
-        ? 'bg-red-500/20 text-red-300 border-red-500/30'
-        : status === 'Running'
-          ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
-          : 'bg-slate-500/20 text-slate-300 border-slate-500/30';
-
-  return (
-    <span className={`inline-flex items-center px-2 py-1 text-xs border rounded-md ${style}`}>
-      {status}
-    </span>
-  );
+function getStatusVariant(status: OnboardingStatus): 'default' | 'destructive' | 'secondary' | 'outline' {
+  switch (status) {
+    case 'Succeeded':
+      return 'default';
+    case 'Failed':
+      return 'destructive';
+    case 'Running':
+      return 'secondary';
+    default:
+      return 'outline';
+  }
 }
 
 export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
@@ -156,7 +163,14 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     setLogs([]);
     setLastTest(null);
     setTrustHostKey(false);
+    setCredErrors({});
   };
+
+  // Auto-scroll logs
+  const logsEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
 
   const createMachineMutation = useMutation({
     mutationFn: createOnboardingMachine,
@@ -167,7 +181,14 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       setPort('22');
       setUsername('');
       setAuthMode('PrivateKey');
+      setAddMachineErrors({});
+      toast.success(`Machine ${m.host} added to inventory`);
     },
+    onError: (err) => {
+        toast.error('Failed to add machine', {
+            description: err instanceof Error ? err.message : 'Unknown error'
+        });
+    }
   });
 
   const testMutation = useMutation({
@@ -183,7 +204,15 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     onSuccess: async (res) => {
       setLastTest(res);
       await queryClient.invalidateQueries({ queryKey: ['onboardingMachines'] });
+      if (res.success) {
+        toast.success('SSH Connection Verified', { description: `Connected as ${res.whoAmI} on ${res.osHint}` });
+      } else {
+        toast.error('SSH Connection Failed', { description: res.error });
+      }
     },
+    onError: (err) => {
+        toast.error('Test connection request failed', { description: err instanceof Error ? err.message : 'Unknown error' });
+    }
   });
 
   const installMutation = useMutation({
@@ -200,7 +229,11 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['onboardingMachines'] });
+      toast.info('Installation started', { description: 'Check the logs console for matching progress.' });
     },
+    onError: (err) => {
+         toast.error('Failed to start installation', { description: err instanceof Error ? err.message : 'Unknown error' });
+    }
   });
 
   const uninstallMutation = useMutation({
@@ -216,376 +249,482 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['onboardingMachines'] });
+      toast.info('Uninstall started');
     },
+    onError: (err) => {
+        toast.error('Failed to start uninstall', { description: err instanceof Error ? err.message : 'Unknown error' });
+    }
+  });
+
+  // Machine to delete is now managed by the ConfirmationModal's open state per machine.
+
+  const deleteMachineMutation = useMutation({
+    mutationFn: (id: string) => deleteOnboardingMachine(id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['onboardingMachines'] });
+      toast.success('Machine removed from inventory');
+    },
+    onError: (err) => {
+        toast.error('Failed to delete machine', { description: err instanceof Error ? err.message : 'Unknown error' });
+    }
   });
 
   const isBusy =
     createMachineMutation.isPending ||
+    deleteMachineMutation.isPending ||
     testMutation.isPending ||
     installMutation.isPending ||
     uninstallMutation.isPending;
 
+  // Form Validation State for "Add Machine"
+  const [addMachineErrors, setAddMachineErrors] = useState<{host?: string, username?: string}>({});
+
+  const validateAddMachine = () => {
+      const errors: {host?: string, username?: string} = {};
+      if (!host.trim()) errors.host = "Host is required";
+      if (!username.trim()) errors.username = "Username is required";
+      
+      setAddMachineErrors(errors);
+      return Object.keys(errors).length === 0;
+  };
+
+  // Credentials validation state (Right Pane)
+  const [credErrors, setCredErrors] = useState<{password?: string, privateKey?: string}>({});
+  
+  const validateCredentials = () => {
+    if(!selected) return false;
+    const errors: {password?: string, privateKey?: string} = {};
+    if(selected.authMode === 'Password' && !password) {
+        errors.password = "Password is required";
+    }
+    if(selected.authMode === 'PrivateKey' && !privateKeyPem) {
+        errors.privateKey = "Private key is required";
+    }
+    setCredErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+
+    
   return (
     <Dialog>
       <DialogTrigger>
         {trigger}
       </DialogTrigger>
       <DialogContent
-        className="w-full max-w-5xl bg-slate-900 border border-slate-700 p-0"
+        className="w-[95vw] sm:max-w-[95vw] h-[95vh] p-0 gap-0 overflow-hidden flex flex-col md:flex-row"
         showCloseButton={false}
       >
-        <div className="flex flex-col max-h-[85vh]">
-          <DialogHeader className="flex-row items-center justify-between px-6 py-4 border-b border-slate-700">
-            <DialogTitle className="text-lg font-semibold text-white">
-              Machine Onboarding (SSH)
-            </DialogTitle>
+        <DialogTitle className="sr-only">Machine Onboarding</DialogTitle>
+        {/* Left Sidebar: Add Machine & Inventory */}
+        <div className="w-full md:w-80 shrink-0 flex flex-col border-r bg-muted/10">
+          <div className="p-4 border-b flex items-center justify-between bg-background">
+            <h2 className="font-semibold text-sm tracking-tight">Machines</h2>
             <DialogClose>
-              <Button
-                variant="ghost"
-                className="px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-              >
-                Close
+              <Button variant="ghost" size="icon" className="md:hidden h-8 w-8">
+                <span className="sr-only">Close</span>
+                ✕
               </Button>
             </DialogClose>
-          </DialogHeader>
+          </div>
 
-          <div className="p-6 overflow-auto">
-            {/* Add machine */}
-            <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-4 mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-white">Add machine</h3>
+          <div className="p-4 border-b space-y-3 bg-background/50">
+            <div className="flex items-center justify-between">
+              <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">New Connection</Label>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2">
+                <Input
+                  value={host}
+                  onChange={(e) => {
+                      setHost(e.target.value);
+                      if(addMachineErrors.host) setAddMachineErrors({...addMachineErrors, host: undefined});
+                  }}
+                  className={cn("h-8 text-xs font-mono", addMachineErrors.host && "border-destructive")}
+                  placeholder="Host (192.168.1.10)"
+                />
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div>
-                  <Label className="text-xs text-slate-300">Host</Label>
-                  <Input
-                    value={host}
-                    onChange={(e) => setHost(e.target.value)}
-                    className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white"
-                    placeholder="192.168.1.10"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-xs text-slate-300">Port</Label>
-                  <Input
-                    value={port}
-                    onChange={(e) => setPort(e.target.value)}
-                    className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white"
-                    placeholder="22"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-xs text-slate-300">Username</Label>
-                  <Input
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white"
-                    placeholder="root"
-                  />
-                </div>
-
-                <div>
-                  <Label className="text-xs text-slate-300">Auth mode</Label>
-                  <Select
-                    value={authMode}
-                    onValueChange={(value) => setAuthMode(value as SshAuthMode)}
-                  >
-                    <SelectTrigger className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
-                      <SelectValue>{authMode}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent className="bg-slate-900 border border-slate-700">
-                      <SelectItem value="PrivateKey" className="text-sm text-white cursor-pointer hover:bg-slate-800">
-                        PrivateKey
-                      </SelectItem>
-                      <SelectItem value="Password" className="text-sm text-white cursor-pointer hover:bg-slate-800">
-                        Password
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="col-span-1">
+                <Input
+                  value={port}
+                  onChange={(e) => setPort(e.target.value)}
+                  className="h-8 text-xs font-mono"
+                  placeholder="22"
+                />
               </div>
+            </div>
+            {addMachineErrors.host && <p className="text-[10px] text-destructive mt-0.5">{addMachineErrors.host}</p>}
+            
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                value={username}
+                onChange={(e) => {
+                    setUsername(e.target.value);
+                    if(addMachineErrors.username) setAddMachineErrors({...addMachineErrors, username: undefined});
+                }}
+                className={cn("h-8 text-xs font-mono", addMachineErrors.username && "border-destructive")}
+                placeholder="root"
+              />
+              <Select
+                value={authMode}
+                onValueChange={(value) => setAuthMode(value as SshAuthMode)}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue>{authMode}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PrivateKey">PrivateKey</SelectItem>
+                  <SelectItem value="Password">Password</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+             {addMachineErrors.username && <p className="text-[10px] text-destructive mt-0.5">{addMachineErrors.username}</p>}
 
-              <div className="flex justify-end mt-3">
-                <Button
-                  disabled={isBusy}
-                  onClick={() =>
-                    createMachineMutation.mutate({
-                      host,
-                      port: Number(port || '22'),
-                      username,
-                      authMode,
-                    })
-                  }
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            {createMachineMutation.isError && (
+                <Alert variant="destructive" className="py-2 px-3 text-xs">
+                    <AlertCircle className="h-3 w-3" />
+                    <AlertTitle className="text-xs font-semibold ml-1 inline">Error</AlertTitle>
+                    <AlertDescription className="ml-1 inline">
+                        {createMachineMutation.error instanceof Error ? createMachineMutation.error.message : 'Failed'}
+                    </AlertDescription>
+                </Alert>
+            )}
+
+            <Button
+              size="sm"
+              className="w-full h-8 text-xs font-medium"
+              disabled={isBusy}
+              onClick={() => {
+                if(!validateAddMachine()) return;
+                createMachineMutation.mutate({
+                  host: host.trim(),
+                  port: Number(port || '22'),
+                  username: username.trim(),
+                  authMode,
+                })
+              }}
+            >
+              Add to Inventory
+            </Button>
+          </div>
+
+          <ScrollArea className="flex-1">
+            <div className="p-2 space-y-1">
+              {machinesQuery.isLoading && (
+                <div className="p-4 text-xs text-center text-muted-foreground">Loading inventory...</div>
+              )}
+              {machines.map((m) => (
+                <div 
+                    key={m.id}
+                    className="relative group"
                 >
-                  Add
-                </Button>
-              </div>
-
-              {createMachineMutation.isError && (
-                <p className="text-sm text-red-300 mt-2">
-                  {createMachineMutation.error instanceof Error
-                    ? createMachineMutation.error.message
-                    : 'Failed to add machine'}
-                </p>
+                    <button
+                    onClick={() => selectMachine(m.id)}
+                    className={cn(
+                        "w-full text-left p-3 rounded-md border transition-all hover:bg-muted/50 flex flex-col gap-1 pr-8",
+                        selected?.id === m.id
+                        ? "bg-background border-primary shadow-sm"
+                        : "bg-transparent border-transparent hover:border-border"
+                    )}
+                    >
+                    <div className="flex items-center justify-between w-full">
+                        <span className="font-mono text-xs font-semibold truncate">{m.host}</span>
+                        <Badge 
+                            variant={getStatusVariant(m.status)} 
+                            className={cn("text-[10px] h-4 px-1.5", 
+                                m.status === 'Failed' && "animate-pulse"
+                            )}
+                        >
+                        {m.status}
+                        </Badge>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                        <span>{m.username}@{m.port}</span>
+                        <span>{m.authMode}</span>
+                    </div>
+                    </button>
+                    {/* Delete Button with ConfirmationModal */}
+                    <ConfirmationModal
+                        trigger={
+                            <Button
+                                variant="ghost" 
+                                size="icon"
+                                className="absolute right-1 top-2 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                            >
+                                <Trash2 className="h-3 w-3" />
+                            </Button>
+                        }
+                        title="Remove Machine"
+                        message={`Are you sure you want to remove ${m.host} from the inventory?`}
+                        confirmText="Remove"
+                        isDestructive
+                        isLoading={deleteMachineMutation.isPending}
+                        onConfirm={async () => {
+                            await deleteMachineMutation.mutateAsync(m.id);
+                            if (selectedId === m.id) {
+                                setSelectedId(null);
+                            }
+                        }}
+                    />
+                </div>
+              ))}
+              {machines.length === 0 && !machinesQuery.isLoading && (
+                <div className="p-8 text-center">
+                   <p className="text-xs text-muted-foreground">No machines added yet.</p>
+                </div>
               )}
             </div>
+          </ScrollArea>
+        </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Machine list */}
-              <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-white mb-3">Inventory</h3>
-
-                {machinesQuery.isLoading && (
-                  <p className="text-sm text-slate-400">Loading…</p>
-                )}
-
-                {machinesQuery.isError && (
-                  <p className="text-sm text-red-300">
-                    {machinesQuery.error instanceof Error
-                      ? machinesQuery.error.message
-                      : 'Failed to load machines'}
-                  </p>
-                )}
-
-                {machines.length === 0 ? (
-                  <p className="text-sm text-slate-400">No machines yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {machines.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => selectMachine(m.id)}
-                        className={`w-full text-left px-3 py-3 rounded-lg border transition-colors ${
-                          selected?.id === m.id
-                            ? 'border-blue-500/50 bg-blue-500/10'
-                            : 'border-slate-700 hover:bg-slate-800'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <div className="text-sm text-white font-medium">
-                              {m.host}:{m.port}
-                            </div>
-                            <div className="text-xs text-slate-400">
-                              {m.username} • {m.authMode}
-                            </div>
-                          </div>
-                          <StatusBadge status={m.status} />
-                        </div>
-                        {m.lastError && (
-                          <div className="text-xs text-red-300 mt-1 truncate">
-                            {m.lastError}
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Selected machine actions */}
-              <div className="lg:col-span-2 bg-slate-800/40 border border-slate-700 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-white">Connection & Install</h3>
-                  {selected && <StatusBadge status={selected.status} />}
-                </div>
-
-                {!selected ? (
-                  <p className="text-sm text-slate-400">Select a machine to begin.</p>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {selected.authMode === 'Password' ? (
-                        <div>
-                          <Label className="text-xs text-slate-300">SSH password</Label>
-                          <Input
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white"
-                          />
-                        </div>
-                      ) : (
-                        <>
-                          <div>
-                            <Label className="text-xs text-slate-300">Key passphrase (optional)</Label>
-                            <Input
-                              type="password"
-                              value={privateKeyPassphrase}
-                              onChange={(e) => setPrivateKeyPassphrase(e.target.value)}
-                              className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white"
-                            />
-                          </div>
-                          <div className="md:col-span-2">
-                            <Label className="text-xs text-slate-300">Private key (PEM/OpenSSH)</Label>
-                            <Textarea
-                              value={privateKeyPem}
-                              onChange={(e) => setPrivateKeyPem(e.target.value)}
-                              className="mt-1 w-full min-h-32 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white font-mono"
-                              placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
-                            />
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="mt-3">
-                      <div className="text-xs text-slate-300">Host key fingerprint</div>
-                      <div className="text-sm text-slate-100 font-mono mt-1 break-all">
-                        {selected.hostKeyFingerprint ?? 'Not trusted yet'}
-                      </div>
-                      <label className="flex items-center gap-2 mt-2 text-sm text-slate-300">
-                        <input
-                          type="checkbox"
-                          checked={trustHostKey}
-                          onChange={(e) => setTrustHostKey(e.target.checked)}
-                        />
-                        Trust host key (TOFU) for this machine
-                      </label>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <Label className="text-xs text-slate-300">Server base URL (reachable from target)</Label>
-                        <Input
-                          value={serverBaseUrl}
-                          onChange={(e) => handleServerBaseUrlChange(e.target.value)}
-                          className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white"
-                          placeholder="http://your-server:5247"
-                        />
-                      </div>
-
-                      <div className="flex items-end">
-                        <label className="flex items-center gap-2 text-sm text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={forceInstall}
-                            onChange={(e) => setForceInstall(e.target.checked)}
-                          />
-                          Force reinstall
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3 mt-4">
-                      <Button
-                        disabled={isBusy}
-                        onClick={() => testMutation.mutate()}
-                        className="px-4 py-2 bg-slate-700/60 hover:bg-slate-700 text-white text-sm rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Test connection
-                      </Button>
-
-                      <ConfirmationModal
-                        trigger={
-                          <Button
-                            disabled={isBusy || !lastTest?.success}
-                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Install agent
-                          </Button>
-                        }
-                        title="Install ManLab Agent"
-                        message={`This will connect to ${selected.host}:${selected.port} over SSH and run the installer. The target must be root or have passwordless sudo (Linux), or elevated PowerShell (Windows). Continue?`}
-                        confirmText="Install"
-                        isLoading={installMutation.isPending}
-                        onConfirm={async () => {
-                          setLogs([]);
-                          await installMutation.mutateAsync();
-                        }}
-                      />
-
-                      <ConfirmationModal
-                        trigger={
-                          <Button
-                            disabled={isBusy || !lastTest?.success}
-                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Uninstall agent
-                          </Button>
-                        }
-                        title="Uninstall ManLab Agent"
-                        message={`This will connect to ${selected.host}:${selected.port} over SSH and remove the ManLab agent service/task and installed files. Continue?`}
-                        confirmText="Uninstall"
-                        isLoading={uninstallMutation.isPending}
-                        onConfirm={async () => {
-                          setLogs([]);
-                          await uninstallMutation.mutateAsync();
-                        }}
-                      />
-
-                      {!lastTest?.success && (
-                        <span className="text-sm text-slate-400">
-                          Run <span className="font-medium text-slate-200">Test connection</span> before installing.
-                        </span>
-                      )}
-
-                      {lastTest?.requiresHostKeyTrust && (
-                        <span className="text-sm text-amber-300">
-                          Host key trust required. Fingerprint: {lastTest.hostKeyFingerprint}
-                        </span>
-                      )}
-                    </div>
-
-                    {testMutation.isError && (
-                      <p className="text-sm text-red-300 mt-2">
-                        {testMutation.error instanceof Error
-                          ? testMutation.error.message
-                          : 'SSH test failed'}
-                      </p>
-                    )}
-
-                    {lastTest && (
-                      <div className="mt-4 bg-slate-900/60 border border-slate-700 rounded-lg p-3">
-                        <div className="text-xs text-slate-400 mb-1">Test result</div>
-                        <div className="text-sm text-white">
-                          {lastTest.success ? 'Connected' : 'Failed'}
-                        </div>
-                        <div className="text-xs text-slate-300 mt-1">
-                          whoami: <span className="font-mono">{lastTest.whoAmI ?? '—'}</span>
-                        </div>
-                        <div className="text-xs text-slate-300 mt-1">
-                          os: <span className="font-mono">{lastTest.osHint ?? '—'}</span>
-                        </div>
-                        {lastTest.error && (
-                          <div className="text-xs text-red-300 mt-2">
-                            {lastTest.error}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="mt-4">
-                      <div className="text-xs text-slate-400 mb-2">Job logs (live)</div>
-                      <div className="bg-black/30 border border-slate-700 rounded-lg p-3 max-h-64 overflow-auto">
-                        {logs.length === 0 ? (
-                          <div className="text-sm text-slate-500">
-                            No logs yet. Start a job to see progress.
-                          </div>
-                        ) : (
-                          <pre className="text-xs text-slate-200 whitespace-pre-wrap">
-                            {logs
-                              .map((l) => `[${new Date(l.ts).toLocaleTimeString()}] ${l.msg}`)
-                              .join('\n')}
-                          </pre>
-                        )}
-                      </div>
-                    </div>
-
-                    {selected.linkedNodeId && (
-                      <div className="mt-4 text-sm text-emerald-300">
-                        Linked node: <span className="font-mono">{selected.linkedNodeId}</span>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
+        {/* Right Content: Selected Machine Details */}
+        <div className="flex-1 flex flex-col h-full bg-background relative">
+            <div className="hidden md:flex absolute top-4 right-4 z-10">
+                 <DialogClose>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
+                        <span className="sr-only">Close</span>
+                        ✕
+                    </Button>
+                </DialogClose>
             </div>
-          </div>
+          
+          {!selected ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-10">
+                <div className="w-16 h-16 rounded-full bg-muted/30 flex items-center justify-center mb-4 text-2xl">⚡</div>
+                <h3 className="font-medium text-sm">Select a machine to configure</h3>
+                <p className="text-xs mt-1 text-center max-w-xs opacity-70">
+                    Choose a machine from the inventory on the left to view connection details and install the agent.
+                </p>
+            </div>
+          ) : (
+            <>
+              {/* Header */}
+              <div className="px-6 py-4 border-b flex items-center gap-4 bg-background">
+                <div>
+                  <h2 className="text-lg font-bold tracking-tight">{selected.host}</h2>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono mt-0.5">
+                    <span>ID: {selected.id.split('-')[0]}...</span>
+                    <span>•</span>
+                    <span className={cn(selected.status === 'Succeeded' ? "text-green-500" : "")}>{selected.status}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Content Scroll */}
+              <ScrollArea className="flex-1">
+                <div className="p-6 space-y-8 max-w-4xl mx-auto">
+                    {/* Configuration Section */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {/* Auth Credentials */}
+                        <div className="space-y-4">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                                🔒 Credentials
+                            </h3>
+                            <Card className="border-dashed shadow-none bg-muted/5">
+                                <CardContent className="pt-4 space-y-3">
+                                    {selected.authMode === 'Password' ? (
+                                        <div>
+                                            <Label className="text-xs mb-1.5 block">SSH Password</Label>
+                                            <Input
+                                                type="password"
+                                                value={password}
+                                                onChange={(e) => {
+                                                    setPassword(e.target.value);
+                                                    if(credErrors.password) setCredErrors({...credErrors, password: undefined});
+                                                }}
+                                                placeholder="••••••••"
+                                                className={cn("bg-background", credErrors.password && "border-destructive")}
+                                            />
+                                            {credErrors.password && <p className="text-[10px] text-destructive mt-1">{credErrors.password}</p>}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div>
+                                                <Label className="text-xs mb-1.5 block">Private Key (PEM)</Label>
+                                                <Textarea
+                                                    value={privateKeyPem}
+                                                    onChange={(e) => {
+                                                        setPrivateKeyPem(e.target.value);
+                                                        if(credErrors.privateKey) setCredErrors({...credErrors, privateKey: undefined});
+                                                    }}
+                                                    className={cn("font-mono text-[10px] min-h-[120px] bg-background resize-none leading-tight", credErrors.privateKey && "border-destructive")}
+                                                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                                                />
+                                                {credErrors.privateKey && <p className="text-[10px] text-destructive mt-1">{credErrors.privateKey}</p>}
+                                            </div>
+                                            <div>
+                                                <Label className="text-xs mb-1.5 block">Passphrase (Optional)</Label>
+                                                <Input
+                                                    type="password"
+                                                    value={privateKeyPassphrase}
+                                                    onChange={(e) => setPrivateKeyPassphrase(e.target.value)}
+                                                    placeholder="••••••••"
+                                                    className="bg-background"
+                                                />
+                                            </div>
+                                        </>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </div>
+
+                         {/* Connection Settings */}
+                         <div className="space-y-4">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                                ⚙️ Installation Settings
+                            </h3>
+                             <Card className="border-dashed shadow-none bg-muted/5">
+                                <CardContent className="pt-4 space-y-4">
+                                     <div>
+                                        <Label className="text-xs mb-1.5 block">Agent Server URL</Label>
+                                        <Input
+                                            value={serverBaseUrl}
+                                            onChange={(e) => handleServerBaseUrlChange(e.target.value)}
+                                            className="font-mono text-xs bg-background"
+                                            placeholder="http://..."
+                                        />
+                                        <p className="text-[10px] text-muted-foreground mt-1.5">
+                                            The address the agent will use to call back home.
+                                        </p>
+                                    </div>
+
+                                    <div className="flex flex-col gap-3 py-1">
+                                         <label className="flex items-start gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer transition-colors border border-transparent hover:border-border">
+                                            <input
+                                                type="checkbox"
+                                                className="mt-1"
+                                                checked={trustHostKey}
+                                                onChange={(e) => setTrustHostKey(e.target.checked)}
+                                            />
+                                            <div className="space-y-0.5">
+                                                <span className="text-sm font-medium leading-none">Trust Host Key (TOFU)</span>
+                                                <p className="text-xs text-muted-foreground">Automatically accept the SSH fingerprint.</p>
+                                                {selected.hostKeyFingerprint && (
+                                                    <div className="inline-block mt-1 px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono break-all text-muted-foreground border">
+                                                        {selected.hostKeyFingerprint}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </label>
+
+                                        <label className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer transition-colors border border-transparent hover:border-border">
+                                            <input
+                                                type="checkbox"
+                                                checked={forceInstall}
+                                                onChange={(e) => setForceInstall(e.target.checked)}
+                                            />
+                                            <span className="text-sm font-medium leading-none">Force Re-install</span>
+                                        </label>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                    </div>
+
+                    {/* Actions Toolbar */}
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Button
+                            variant="secondary"
+                            disabled={isBusy}
+                            onClick={() => {
+                                if(validateCredentials()) testMutation.mutate();
+                            }}
+                            className="min-w-[120px]"
+                        >
+                            {testMutation.isPending ? "Testing..." : "Test Connection"}
+                        </Button>
+
+                        <div className="h-6 w-px bg-border mx-1" />
+
+                        <ConfirmationModal
+                            trigger={
+                            <Button disabled={isBusy || !lastTest?.success} onClick={(e) => {
+                                if(!validateCredentials()) {
+                                    e.preventDefault();
+                                    e.stopPropagation(); 
+                                }
+                            }} className="min-w-[100px]">
+                              Install Agent
+                            </Button>
+                          }
+                          title="Install ManLab Agent"
+                          message={`Connect to ${selected.host} and install agent? Target must have root/sudo access.`}
+                          confirmText="Install"
+                          isLoading={installMutation.isPending}
+                          onConfirm={async () => {
+                            if(!validateCredentials()) return;
+                            setLogs([]);
+                            await installMutation.mutateAsync();
+                          }}
+                        />
+
+                        <ConfirmationModal
+                            trigger={
+                                <Button variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10" disabled={isBusy || !lastTest?.success}>
+                                    Uninstall
+                                </Button>
+                            }
+                            title="Uninstall Agent"
+                             message={`Remove ManLab agent from ${selected.host}?`}
+                            confirmText="Uninstall"
+                            isLoading={uninstallMutation.isPending}
+                            onConfirm={async () => {
+                                setLogs([]);
+                                await uninstallMutation.mutateAsync();
+                            }}
+                        />
+
+                        {lastTest?.error && (
+                            <span className="text-xs font-mono text-destructive ml-auto max-w-xs truncate" title={lastTest.error}>
+                                Error: {lastTest.error}
+                            </span>
+                        )}
+                        {lastTest?.success && (
+                            <span className="text-xs font-mono text-green-600 ml-auto flex items-center gap-1.5">
+                                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                                 Connection Verified (OS: {lastTest.osHint})
+                            </span>
+                        )}
+                    </div>
+                </div>
+              </ScrollArea>
+
+              {/* Log Console Footer */}
+              <div className="border-t bg-black text-white h-64 flex flex-col shrink-0">
+                <div className="flex items-center justify-between px-3 py-1.5 bg-neutral-900 border-b border-neutral-800">
+                    <span className="text-[10px] font-mono tracking-wider text-neutral-400 uppercase">Terminal Output</span>
+                    <button 
+                        onClick={() => setLogs([])}
+                        className="text-[10px] text-neutral-500 hover:text-neutral-300 transition-colors"
+                    >
+                        Clear
+                    </button>
+                </div>
+                <ScrollArea className="flex-1 font-mono text-xs p-3">
+                    {logs.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-full text-neutral-600 space-y-2 select-none">
+                            <Terminal className="h-8 w-8 opacity-20" />
+                            <span className="italic">Waiting for job output...</span>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col">
+                            {logs.map((l, i) => (
+                                <div key={i} className="flex gap-2 hover:bg-neutral-900/50 -mx-1 px-1 rounded-sm">
+                                    <span className="text-neutral-600 select-none w-16 shrink-0">{new Date(l.ts).toLocaleTimeString([], { hour12: false, hour:'2-digit', minute:'2-digit', second:'2-digit' })}</span>
+                                    <span className={cn(
+                                        "break-all whitespace-pre-wrap flex-1",
+                                        l.msg.toLowerCase().includes('error') || l.msg.toLowerCase().includes('failed') ? "text-red-400 font-semibold" : 
+                                        l.msg.toLowerCase().includes('success') ? "text-green-400" : "text-neutral-300"
+                                    )}>{l.msg}</span>
+                                </div>
+                            ))}
+                            <div ref={logsEndRef} />
+                        </div>
+                    )}
+                </ScrollArea>
+              </div>
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>

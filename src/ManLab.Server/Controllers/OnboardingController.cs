@@ -185,6 +185,27 @@ public sealed class OnboardingController : ControllerBase
         return CreatedAtAction(nameof(ListMachines), new { }, ToDto(machine));
     }
 
+    [HttpDelete("machines/{id:guid}")]
+    public async Task<IActionResult> DeleteMachine(Guid id)
+    {
+        var machine = await _db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == id);
+        if (machine is null)
+        {
+            return NotFound();
+        }
+
+        // Prevent deletion if a job is currently running for this machine.
+        if (_jobRunner.IsRunning(id))
+        {
+            return Conflict("Cannot delete machine while an onboarding job is in progress.");
+        }
+
+        _db.OnboardingMachines.Remove(machine);
+        await _db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
     [HttpPost("machines/{id:guid}/ssh/test")]
     public async Task<ActionResult<SshTestResponse>> TestSsh(Guid id, [FromBody] SshTestRequest request, CancellationToken cancellationToken)
     {

@@ -153,6 +153,15 @@ export async function createOnboardingMachine(input: {
   return response.json();
 }
 
+export async function deleteOnboardingMachine(machineId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to delete onboarding machine: ${await response.text()}`);
+  }
+}
+
 export async function testSshConnection(machineId: string, input: {
   password?: string;
   privateKeyPem?: string;

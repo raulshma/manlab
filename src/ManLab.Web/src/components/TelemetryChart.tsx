@@ -3,6 +3,7 @@
  * Uses a simple SVG-based line chart for CPU, RAM, and Disk usage.
  */
 
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Telemetry } from '../types';
 
 interface TelemetryChartProps {
@@ -57,108 +58,115 @@ export function TelemetryChart({ data, metric, label, color }: TelemetryChartPro
 
   if (data.length === 0) {
     return (
-      <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-sm font-medium text-slate-300">{label}</h4>
-          <span className="text-lg font-bold" style={{ color }}>--</span>
-        </div>
-        <div className="flex items-center justify-center h-20 text-slate-500 text-sm">
-          No data available
-        </div>
-      </div>
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-medium">{label}</CardTitle>
+            <span className="text-lg font-bold" style={{ color }}>--</span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center h-20 text-muted-foreground text-sm">
+            No data available
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-      <div className="flex items-center justify-between mb-2">
-        <h4 className="text-sm font-medium text-slate-300">{label}</h4>
-        <span className="text-lg font-bold" style={{ color }}>
-          {currentValue.toFixed(1)}%
-        </span>
-      </div>
-      
-      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
-        <defs>
-          <linearGradient id={`gradient-${metric}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        
-        {/* Grid lines */}
-        {[0, 25, 50, 75, 100].map((value) => {
-          const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
-          return (
-            <g key={value}>
-              <line
-                x1={padding.left}
-                y1={y}
-                x2={width - padding.right}
-                y2={y}
-                stroke="#334155"
-                strokeWidth="1"
-                strokeDasharray="4,4"
-              />
-              <text
-                x={padding.left - 5}
-                y={y + 4}
-                textAnchor="end"
-                className="fill-slate-500 text-[10px]"
-              >
-                {value}
-              </text>
-            </g>
-          );
-        })}
-        
-        {/* Area fill */}
-        <path d={areaPath} fill={`url(#gradient-${metric})`} />
-        
-        {/* Line */}
-        <path
-          d={linePath}
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        
-        {/* Data points */}
-        {points.map((point, index) => (
-          <circle
-            key={index}
-            cx={point.x}
-            cy={point.y}
-            r="3"
-            fill={color}
-            className="opacity-0 hover:opacity-100 transition-opacity"
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-medium">{label}</CardTitle>
+          <span className="text-lg font-bold" style={{ color }}>
+            {currentValue.toFixed(1)}%
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <linearGradient id={`gradient-${metric}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          
+          {/* Grid lines */}
+          {[0, 25, 50, 75, 100].map((value) => {
+            const y = padding.top + chartHeight - (value / maxValue) * chartHeight;
+            return (
+              <g key={value}>
+                <line
+                  x1={padding.left}
+                  y1={y}
+                  x2={width - padding.right}
+                  y2={y}
+                  className="stroke-border"
+                  strokeWidth="1"
+                  strokeDasharray="4,4"
+                />
+                <text
+                  x={padding.left - 5}
+                  y={y + 4}
+                  textAnchor="end"
+                  className="fill-muted-foreground text-[10px]"
+                >
+                  {value}
+                </text>
+              </g>
+            );
+          })}
+          
+          {/* Area fill */}
+          <path d={areaPath} fill={`url(#gradient-${metric})`} />
+          
+          {/* Line */}
+          <path
+            d={linePath}
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           />
-        ))}
-        
-        {/* Time labels */}
-        {sortedData.length > 0 && (
-          <>
-            <text
-              x={padding.left}
-              y={height - 5}
-              textAnchor="start"
-              className="fill-slate-500 text-[10px]"
-            >
-              {formatTime(sortedData[0].timestamp)}
-            </text>
-            <text
-              x={width - padding.right}
-              y={height - 5}
-              textAnchor="end"
-              className="fill-slate-500 text-[10px]"
-            >
-              {formatTime(sortedData[sortedData.length - 1].timestamp)}
-            </text>
-          </>
-        )}
-      </svg>
-    </div>
+          
+          {/* Data points */}
+          {points.map((point, index) => (
+            <circle
+              key={index}
+              cx={point.x}
+              cy={point.y}
+              r="3"
+              fill={color}
+              className="opacity-0 hover:opacity-100 transition-opacity"
+            />
+          ))}
+          
+          {/* Time labels */}
+          {sortedData.length > 0 && (
+            <>
+              <text
+                x={padding.left}
+                y={height - 5}
+                textAnchor="start"
+                className="fill-muted-foreground text-[10px]"
+              >
+                {formatTime(sortedData[0].timestamp)}
+              </text>
+              <text
+                x={width - padding.right}
+                y={height - 5}
+                textAnchor="end"
+                className="fill-muted-foreground text-[10px]"
+              >
+                {formatTime(sortedData[sortedData.length - 1].timestamp)}
+              </text>
+            </>
+          )}
+        </svg>
+      </CardContent>
+    </Card>
   );
 }

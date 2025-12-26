@@ -4,7 +4,12 @@
  */
 
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Spinner } from '@/components/ui/spinner';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { useQuery, useMutation } from '@tanstack/react-query';
+import { ArrowLeft, AlertCircle } from 'lucide-react';
 import type { Container } from '../types';
 import { fetchNode, fetchNodeTelemetry, restartContainer, triggerSystemUpdate } from '../api';
 import { TelemetryChart } from './TelemetryChart';
@@ -17,38 +22,18 @@ interface NodeDetailViewProps {
 }
 
 /**
- * Returns status indicator styles based on node status.
+ * Returns badge variant based on node status.
  */
-function getStatusStyles(status: string): {
-  dotClass: string;
-  badgeClass: string;
-  label: string;
-} {
+function getStatusVariant(status: string): 'default' | 'destructive' | 'secondary' | 'outline' {
   switch (status) {
     case 'Online':
-      return {
-        dotClass: 'bg-emerald-500 animate-pulse',
-        badgeClass: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-        label: 'Online',
-      };
+      return 'default';
     case 'Offline':
-      return {
-        dotClass: 'bg-red-500',
-        badgeClass: 'bg-red-500/20 text-red-400 border-red-500/30',
-        label: 'Offline',
-      };
+      return 'destructive';
     case 'Maintenance':
-      return {
-        dotClass: 'bg-amber-500 animate-pulse',
-        badgeClass: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-        label: 'Maintenance',
-      };
+      return 'secondary';
     default:
-      return {
-        dotClass: 'bg-slate-500',
-        badgeClass: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
-        label: 'Unknown',
-      };
+      return 'outline';
   }
 }
 
@@ -114,25 +99,10 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
 
   if (nodeLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
         <div className="flex items-center gap-3">
-          <svg className="animate-spin h-6 w-6 text-blue-500" viewBox="0 0 24 24">
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-              fill="none"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            />
-          </svg>
-          <span className="text-slate-300">Loading node details...</span>
+          <Spinner className="h-6 w-6" />
+          <span className="text-muted-foreground">Loading node details...</span>
         </div>
       </div>
     );
@@ -140,29 +110,14 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
 
   if (nodeError || !node) {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
-        <div className="text-center">
-          <svg
-            className="w-16 h-16 mx-auto mb-4 text-red-500"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            />
-          </svg>
-          <h2 className="text-xl font-semibold text-white mb-2">Node Not Found</h2>
-          <p className="text-slate-400 mb-4">The requested node could not be found.</p>
-          <Button
-            onClick={onBack}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium
-                     rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2
-                     focus:ring-blue-500"
-          >
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Node Not Found</AlertTitle>
+            <AlertDescription>The requested node could not be found.</AlertDescription>
+          </Alert>
+          <Button onClick={onBack}>
             Back to Dashboard
           </Button>
         </div>
@@ -170,34 +125,30 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
     );
   }
 
-  const statusStyles = getStatusStyles(node.status);
+  const statusVariant = getStatusVariant(node.status);
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
+    <div className="min-h-screen bg-background text-foreground">
       {/* Header */}
-      <header className="bg-slate-800/50 border-b border-slate-700 px-6 py-4">
+      <header className="bg-card border-b border-border px-6 py-4">
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
-            <Button
-              onClick={onBack}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg
-                       transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
+            <Button variant="ghost" size="icon" onClick={onBack}>
+              <ArrowLeft className="w-5 h-5" />
             </Button>
             <div className="flex-1">
               <div className="flex items-center gap-3">
-                <div className={`w-3 h-3 rounded-full ${statusStyles.dotClass}`} />
+                <div className={`w-3 h-3 rounded-full ${
+                  node.status === 'Online' ? 'bg-primary animate-pulse' :
+                  node.status === 'Offline' ? 'bg-destructive' :
+                  node.status === 'Maintenance' ? 'bg-secondary animate-pulse' : 'bg-muted'
+                }`} />
                 <h1 className="text-xl font-semibold">{node.hostname}</h1>
-                <span
-                  className={`px-2.5 py-1 text-xs font-medium rounded-full border ${statusStyles.badgeClass}`}
-                >
-                  {statusStyles.label}
-                </span>
+                <Badge variant={statusVariant}>
+                  {node.status}
+                </Badge>
               </div>
-              <p className="text-sm text-slate-400 mt-1">
+              <p className="text-sm text-muted-foreground mt-1">
                 Last seen: {formatRelativeTime(node.lastSeen)}
               </p>
             </div>
@@ -209,45 +160,53 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
       <main className="max-w-7xl mx-auto px-6 py-8">
         {/* Node Info Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            <dt className="text-xs text-slate-400 uppercase tracking-wider">IP Address</dt>
-            <dd className="text-sm font-mono text-white mt-1">{node.ipAddress || 'N/A'}</dd>
-          </div>
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            <dt className="text-xs text-slate-400 uppercase tracking-wider">Operating System</dt>
-            <dd className="text-sm text-white mt-1 truncate">{node.os || 'N/A'}</dd>
-          </div>
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            <dt className="text-xs text-slate-400 uppercase tracking-wider">Agent Version</dt>
-            <dd className="text-sm text-white mt-1">{node.agentVersion ? `v${node.agentVersion}` : 'N/A'}</dd>
-          </div>
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            <dt className="text-xs text-slate-400 uppercase tracking-wider">Registered</dt>
-            <dd className="text-sm text-white mt-1">{new Date(node.createdAt).toLocaleDateString()}</dd>
-          </div>
+          <Card>
+            <CardContent className="pt-4">
+              <dt className="text-xs text-muted-foreground uppercase tracking-wider">IP Address</dt>
+              <dd className="text-sm font-mono text-foreground mt-1">{node.ipAddress || 'N/A'}</dd>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4">
+              <dt className="text-xs text-muted-foreground uppercase tracking-wider">Operating System</dt>
+              <dd className="text-sm text-foreground mt-1 truncate">{node.os || 'N/A'}</dd>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4">
+              <dt className="text-xs text-muted-foreground uppercase tracking-wider">Agent Version</dt>
+              <dd className="text-sm text-foreground mt-1">{node.agentVersion ? `v${node.agentVersion}` : 'N/A'}</dd>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-4">
+              <dt className="text-xs text-muted-foreground uppercase tracking-wider">Registered</dt>
+              <dd className="text-sm text-foreground mt-1">{new Date(node.createdAt).toLocaleDateString()}</dd>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Telemetry Charts */}
         <section className="mb-8">
-          <h2 className="text-lg font-semibold text-white mb-4">System Telemetry</h2>
+          <h2 className="text-lg font-semibold text-foreground mb-4">System Telemetry</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <TelemetryChart
               data={telemetry || []}
               metric="cpuUsage"
               label="CPU Usage"
-              color="#3b82f6"
+              color="hsl(var(--chart-1))"
             />
             <TelemetryChart
               data={telemetry || []}
               metric="ramUsage"
               label="RAM Usage"
-              color="#10b981"
+              color="hsl(var(--chart-2))"
             />
             <TelemetryChart
               data={telemetry || []}
               metric="diskUsage"
               label="Disk Usage"
-              color="#f59e0b"
+              color="hsl(var(--chart-3))"
             />
           </div>
         </section>
@@ -255,7 +214,7 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
         {/* Docker Containers */}
         <section className="mb-8">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">Docker Containers</h2>
+            <h2 className="text-lg font-semibold text-foreground">Docker Containers</h2>
           </div>
           <ContainerList
             containers={mockContainers}
@@ -265,41 +224,40 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
 
         {/* System Actions */}
         <section>
-          <h2 className="text-lg font-semibold text-white mb-4">System Actions</h2>
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-medium text-white">System Update</h3>
-                <p className="text-sm text-slate-400 mt-1">
-                  Run system package updates on this node. This will update all installed packages.
-                </p>
+          <h2 className="text-lg font-semibold text-foreground mb-4">System Actions</h2>
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm">System Update</CardTitle>
+                  <CardDescription>
+                    Run system package updates on this node. This will update all installed packages.
+                  </CardDescription>
+                </div>
+                <ConfirmationModal
+                  trigger={
+                    <Button
+                      variant="secondary"
+                      disabled={node.status !== 'Online'}
+                    >
+                      Update System
+                    </Button>
+                  }
+                  title="Confirm System Update"
+                  message={`Are you sure you want to run a system update on "${node.hostname}"? This may require a reboot and could cause temporary service interruption.`}
+                  confirmText="Run Update"
+                  isDestructive
+                  isLoading={updateMutation.isPending}
+                  onConfirm={async () => { await updateMutation.mutateAsync(); }}
+                />
               </div>
-              <ConfirmationModal
-                trigger={
-                  <Button
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium
-                             rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2
-                             focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-slate-800
-                             disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={node.status !== 'Online'}
-                  >
-                    Update System
-                  </Button>
-                }
-                title="Confirm System Update"
-                message={`Are you sure you want to run a system update on "${node.hostname}"? This may require a reboot and could cause temporary service interruption.`}
-                confirmText="Run Update"
-                isDestructive
-                isLoading={updateMutation.isPending}
-                onConfirm={async () => { await updateMutation.mutateAsync(); }}
-              />
-            </div>
-            {node.status !== 'Online' && (
-              <p className="text-xs text-amber-400 mt-3">
-                ⚠️ System actions are only available when the node is online.
-              </p>
-            )}
-          </div>
+              {node.status !== 'Online' && (
+                <p className="text-xs text-muted-foreground mt-3">
+                  ⚠️ System actions are only available when the node is online.
+                </p>
+              )}
+            </CardHeader>
+          </Card>
         </section>
       </main>
     </div>
