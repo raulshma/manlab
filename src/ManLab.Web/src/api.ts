@@ -7,6 +7,7 @@ import type {
   Node,
   Telemetry,
   Command,
+  NodeSetting,
   OnboardingMachine,
   SshTestResponse,
   StartInstallResponse,
@@ -158,6 +159,49 @@ export async function fetchNodeCommands(
     throw new Error(`Failed to fetch commands: ${response.statusText}`);
   }
   return response.json();
+}
+
+/**
+ * Fetches per-node settings.
+ */
+export async function fetchNodeSettings(id: string): Promise<NodeSetting[]> {
+  const response = await fetch(`${API_BASE}/devices/${id}/settings`);
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("Node not found");
+    }
+    throw new Error(`Failed to fetch node settings: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Upserts one or more per-node settings.
+ */
+export async function upsertNodeSettings(
+  nodeId: string,
+  settings: Array<{ key: string; value: string | null; category?: string; description?: string | null }>
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/settings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(
+      settings.map((s) => ({
+        key: s.key,
+        value: s.value,
+        category: s.category,
+        description: s.description,
+      }))
+    ),
+  });
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("Node not found");
+    }
+    throw new Error(`Failed to update node settings: ${await response.text()}`);
+  }
 }
 
 /**

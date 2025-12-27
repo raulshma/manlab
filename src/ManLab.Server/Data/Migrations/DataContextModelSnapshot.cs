@@ -147,6 +147,37 @@ namespace ManLab.Server.Data.Migrations
                     b.ToTable("Nodes");
                 });
 
+            modelBuilder.Entity("ManLab.Server.Data.Entities.NodeSetting", b =>
+                {
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Key")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Value")
+                        .HasColumnType("text");
+
+                    b.HasKey("NodeId", "Key");
+
+                    b.HasIndex("NodeId");
+
+                    b.ToTable("NodeSettings");
+                });
+
             modelBuilder.Entity("ManLab.Server.Data.Entities.OnboardingMachine", b =>
                 {
                     b.Property<Guid>("Id")
@@ -339,6 +370,17 @@ namespace ManLab.Server.Data.Migrations
                 {
                     b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
                         .WithMany("Commands")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.NodeSetting", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany()
                         .HasForeignKey("NodeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

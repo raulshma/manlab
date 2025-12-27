@@ -109,6 +109,17 @@ export interface Command {
 }
 
 /**
+ * Per-node setting record.
+ */
+export interface NodeSetting {
+  key: string;
+  value: string | null;
+  category: string;
+  description: string | null;
+  updatedAt: string;
+}
+
+/**
  * SSH onboarding
  */
 

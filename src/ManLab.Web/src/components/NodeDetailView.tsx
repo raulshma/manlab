@@ -14,6 +14,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, AlertCircle, Trash2, RefreshCw, Clock, Power, Play, Square } from "lucide-react";
 import type { Container } from "../types";
@@ -22,6 +29,8 @@ import {
   fetchNode,
   fetchNodeTelemetry,
   fetchNodeCommands,
+  fetchNodeSettings,
+  upsertNodeSettings,
   requestDockerContainerList,
   restartContainer,
   triggerSystemUpdate,
@@ -143,6 +152,17 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
     refetchInterval: 5000,
   });
 
+  // Fetch per-node settings (used for update channel and future update policies)
+  const { data: nodeSettings } = useQuery({
+    queryKey: ["nodeSettings", nodeId],
+    queryFn: () => fetchNodeSettings(nodeId),
+    refetchInterval: 30000,
+  });
+
+  const currentChannel =
+    nodeSettings?.find((s) => s.key === "agent.update.channel")?.value ??
+    "stable";
+
   const dockerListCommand = (commands ?? []).find(
     (c) => c.commandType === "DockerList" && c.status !== "Failed"
   );
@@ -246,6 +266,21 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
 
   const disableTaskMutation = useMutation({
     mutationFn: () => disableAgentTask(nodeId),
+  });
+
+  const updateChannelMutation = useMutation({
+    mutationFn: (channel: string) =>
+      upsertNodeSettings(nodeId, [
+        {
+          key: "agent.update.channel",
+          value: channel,
+          category: "Updates",
+          description: "Distribution channel used for agent updates (stable/beta).",
+        },
+      ]),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["nodeSettings", nodeId] });
+    },
   });
 
   if (nodeLoading) {
@@ -478,6 +513,55 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
           <h2 className="text-lg font-semibold text-foreground mb-4">
             System Actions
           </h2>
+
+          {/* Update Settings */}
+          <Card className="mb-4">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="text-sm">Update Channel</CardTitle>
+                  <CardDescription>
+                    Controls which agent update track this node follows.
+                  </CardDescription>
+                </div>
+                <div className="min-w-[180px]">
+                  <Select
+                    value={currentChannel}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      updateChannelMutation.mutate(value);
+                    }}
+                    disabled={updateChannelMutation.isPending}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="stable">stable</SelectItem>
+                      <SelectItem value="beta">beta</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {updateChannelMutation.isError && (
+                <Alert variant="destructive" className="mt-3">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {updateChannelMutation.error instanceof Error
+                      ? updateChannelMutation.error.message
+                      : "Failed to update channel"}
+                  </AlertDescription>
+                </Alert>
+              )}
+              {updateChannelMutation.isSuccess && (
+                <Alert className="mt-3">
+                  <AlertDescription>Update channel saved.</AlertDescription>
+                </Alert>
+              )}
+            </CardHeader>
+          </Card>
+
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">

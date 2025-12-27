@@ -161,6 +161,105 @@ public class DevicesController : ControllerBase
     }
 
     /// <summary>
+    /// Gets per-node settings for a specific node.
+    /// </summary>
+    [HttpGet("{id:guid}/settings")]
+    public async Task<ActionResult<IEnumerable<NodeSettingDto>>> GetNodeSettings(Guid id)
+    {
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var settings = await _dbContext.NodeSettings
+            .AsNoTracking()
+            .Where(s => s.NodeId == id)
+            .OrderBy(s => s.Category)
+            .ThenBy(s => s.Key)
+            .Select(s => new NodeSettingDto
+            {
+                Key = s.Key,
+                Value = s.Value,
+                Category = s.Category,
+                Description = s.Description,
+                UpdatedAt = s.UpdatedAt
+            })
+            .ToListAsync();
+
+        return Ok(settings);
+    }
+
+    /// <summary>
+    /// Upserts one or more per-node settings.
+    /// </summary>
+    [HttpPost("{id:guid}/settings")]
+    public async Task<IActionResult> UpsertNodeSettings(Guid id, [FromBody] List<UpsertNodeSettingRequest> settings)
+    {
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        if (settings is null || settings.Count == 0)
+        {
+            return Ok();
+        }
+
+        // Simple guardrails.
+        if (settings.Count > 100)
+        {
+            return BadRequest("Too many settings in one request.");
+        }
+
+        foreach (var s in settings)
+        {
+            var key = (s.Key ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(key) || key.Length > 256)
+            {
+                return BadRequest("Each setting must have a non-empty key (max 256 chars).");
+            }
+
+            var category = string.IsNullOrWhiteSpace(s.Category) ? "Agent" : s.Category.Trim();
+            if (category.Length > 64)
+            {
+                return BadRequest("Setting category is too long (max 64 chars).");
+            }
+
+            var description = s.Description?.Trim();
+            if (description is not null && description.Length > 1024)
+            {
+                return BadRequest("Setting description is too long (max 1024 chars).");
+            }
+
+            var existing = await _dbContext.NodeSettings.FindAsync(id, key);
+            if (existing is null)
+            {
+                _dbContext.NodeSettings.Add(new NodeSetting
+                {
+                    NodeId = id,
+                    Key = key,
+                    Value = s.Value,
+                    Category = category,
+                    Description = description,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                existing.Value = s.Value;
+                existing.Category = category;
+                existing.Description = description;
+                existing.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        await _dbContext.SaveChangesAsync();
+        return Ok();
+    }
+
+    /// <summary>
     /// Queues a new command for a specific node.
     /// </summary>
     /// <param name="id">The node ID.</param>
@@ -395,4 +494,21 @@ public record CreateCommandRequest
 {
     public string CommandType { get; init; } = string.Empty;
     public string? Payload { get; init; }
+}
+
+public record NodeSettingDto
+{
+    public string Key { get; init; } = string.Empty;
+    public string? Value { get; init; }
+    public string Category { get; init; } = string.Empty;
+    public string? Description { get; init; }
+    public DateTime UpdatedAt { get; init; }
+}
+
+public record UpsertNodeSettingRequest
+{
+    public string Key { get; init; } = string.Empty;
+    public string? Value { get; init; }
+    public string? Category { get; init; }
+    public string? Description { get; init; }
 }

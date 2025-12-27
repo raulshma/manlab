@@ -33,6 +33,9 @@ public class DataContext : DbContext
     /// <summary>System-wide configuration settings.</summary>
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
 
+    /// <summary>Per-node configuration settings.</summary>
+    public DbSet<NodeSetting> NodeSettings => Set<NodeSetting>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -93,6 +96,21 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.MachineId);
             entity.HasIndex(e => e.Host);
             entity.HasIndex(e => e.Success);
+        });
+
+        modelBuilder.Entity<NodeSetting>(entity =>
+        {
+            entity.HasKey(e => new { e.NodeId, e.Key });
+            entity.HasIndex(e => e.NodeId);
+
+            entity.Property(e => e.Key).HasMaxLength(256);
+            entity.Property(e => e.Category).HasMaxLength(64);
+            entity.Property(e => e.Description).HasMaxLength(1024);
+
+            entity.HasOne(e => e.Node)
+                .WithMany()
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
