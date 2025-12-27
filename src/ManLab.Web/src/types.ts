@@ -217,6 +217,32 @@ export interface LocalAgentInstallResponse {
 export interface AgentConfiguration {
   heartbeatIntervalSeconds: number;
   maxReconnectDelaySeconds: number;
+
+  telemetryCacheSeconds: number;
+  primaryInterfaceName: string | null;
+
+  enableNetworkTelemetry: boolean;
+  enablePingTelemetry: boolean;
+  enableGpuTelemetry: boolean;
+  enableUpsTelemetry: boolean;
+
+  pingTarget: string | null;
+  pingTimeoutMs: number;
+  pingWindowSize: number;
+
+  enableLogViewer: boolean;
+  enableScripts: boolean;
+  enableTerminal: boolean;
+
+  logMaxBytes: number;
+  logMinSecondsBetweenRequests: number;
+
+  scriptMaxOutputBytes: number;
+  scriptMaxDurationSeconds: number;
+  scriptMinSecondsBetweenRuns: number;
+
+  terminalMaxOutputBytes: number;
+  terminalMaxDurationSeconds: number;
 }
 
 /**

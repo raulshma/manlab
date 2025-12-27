@@ -80,10 +80,30 @@ public sealed class LocalAgentController : ControllerBase
     [HttpGet("default-config")]
     public ActionResult<AgentConfigurationResponse> GetDefaultConfig()
     {
-        // Return default values from AgentConfiguration class
+        // Return default values aligned with ManLab.Agent.Configuration.AgentConfiguration.
+        // NOTE: The server does not reference the agent project directly, so defaults are mirrored here.
         return Ok(new AgentConfigurationResponse(
-            HeartbeatIntervalSeconds: 10,
-            MaxReconnectDelaySeconds: 120));
+            HeartbeatIntervalSeconds: 15,
+            MaxReconnectDelaySeconds: 60,
+            TelemetryCacheSeconds: 30,
+            PrimaryInterfaceName: null,
+            EnableNetworkTelemetry: true,
+            EnablePingTelemetry: true,
+            EnableGpuTelemetry: true,
+            EnableUpsTelemetry: true,
+            PingTarget: null,
+            PingTimeoutMs: 800,
+            PingWindowSize: 10,
+            EnableLogViewer: false,
+            EnableScripts: false,
+            EnableTerminal: false,
+            LogMaxBytes: 64 * 1024,
+            LogMinSecondsBetweenRequests: 1,
+            ScriptMaxOutputBytes: 64 * 1024,
+            ScriptMaxDurationSeconds: 60,
+            ScriptMinSecondsBetweenRuns: 1,
+            TerminalMaxOutputBytes: 64 * 1024,
+            TerminalMaxDurationSeconds: 10 * 60));
     }
 
     /// <summary>
@@ -289,5 +309,24 @@ public sealed class LocalAgentController : ControllerBase
     /// </summary>
     public sealed record AgentConfigurationResponse(
         int HeartbeatIntervalSeconds,
-        int MaxReconnectDelaySeconds);
+        int MaxReconnectDelaySeconds,
+        int TelemetryCacheSeconds,
+        string? PrimaryInterfaceName,
+        bool EnableNetworkTelemetry,
+        bool EnablePingTelemetry,
+        bool EnableGpuTelemetry,
+        bool EnableUpsTelemetry,
+        string? PingTarget,
+        int PingTimeoutMs,
+        int PingWindowSize,
+        bool EnableLogViewer,
+        bool EnableScripts,
+        bool EnableTerminal,
+        int LogMaxBytes,
+        int LogMinSecondsBetweenRequests,
+        int ScriptMaxOutputBytes,
+        int ScriptMaxDurationSeconds,
+        int ScriptMinSecondsBetweenRuns,
+        int TerminalMaxOutputBytes,
+        int TerminalMaxDurationSeconds);
 }
