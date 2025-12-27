@@ -1,11 +1,14 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
+using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Services.Security;
 using ManLab.Server.Services.Agents;
+using ManLab.Server.Services.Enhancements;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace ManLab.Server.Hubs;
 
@@ -15,8 +18,23 @@ namespace ManLab.Server.Hubs;
 /// </summary>
 public class AgentHub : Hub
 {
+    private const int MaxServiceNameChars = 256;
+    private const int MaxServiceDetailChars = 2048;
+    private const int MaxDeviceNameChars = 128;
+    private const int MaxPingTargetChars = 255;
+    private const int MaxRawJsonChars = 65_536;
+    private const int MaxGpuEntriesPerMessage = 16;
+
+    // Defense-in-depth bounds for hub messages and persisted command logs.
+    // Keep these comfortably below HubOptions.MaximumReceiveMessageSize (currently 128KB).
+    private const int MaxTerminalOutputChunkChars = 16 * 1024;
+    private const int MaxCommandLogChunkChars = 32 * 1024;
+    private const int MaxCommandOutputLogBytesUtf8 = 128 * 1024;
+
     private const string ContextNodeIdKey = "manlab.nodeId";
     private const string ContextTokenHashKey = "manlab.tokenHash";
+
+    private const string CommandOutputGroupPrefix = "command-output";
 
     private readonly ILogger<AgentHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -91,6 +109,8 @@ public class AgentHub : Hub
             authedNode.IpAddress = metadata.IpAddress;
             authedNode.OS = metadata.OS;
             authedNode.AgentVersion = metadata.AgentVersion;
+            authedNode.CapabilitiesJson = NormalizeJsonOrNull(metadata.CapabilitiesJson);
+            authedNode.PrimaryInterface = NormalizeTrimmedOrNull(metadata.PrimaryInterface, 128);
             authedNode.LastSeen = DateTime.UtcNow;
             authedNode.Status = NodeStatus.Online;
 
@@ -132,6 +152,8 @@ public class AgentHub : Hub
             IpAddress = metadata.IpAddress,
             OS = metadata.OS,
             AgentVersion = metadata.AgentVersion,
+            CapabilitiesJson = NormalizeJsonOrNull(metadata.CapabilitiesJson),
+            PrimaryInterface = NormalizeTrimmedOrNull(metadata.PrimaryInterface, 128),
             LastSeen = DateTime.UtcNow,
             Status = NodeStatus.Online,
             AuthKeyHash = tokenHash,
@@ -243,8 +265,49 @@ public class AgentHub : Hub
             CpuUsage = data.CpuPercent,
             RamUsage = ramUsage,
             DiskUsage = diskUsage,
-            Temperature = data.CpuTempCelsius
+            Temperature = data.CpuTempCelsius,
+
+            NetRxBytesPerSec = data.NetRxBytesPerSec,
+            NetTxBytesPerSec = data.NetTxBytesPerSec,
+            PingTarget = NormalizeTrimmedOrNull(data.PingTarget, MaxPingTargetChars),
+            PingRttMs = data.PingRttMs,
+            PingPacketLossPercent = data.PingPacketLossPercent
         };
+
+        // Optional: persist GPU snapshots when provided in heartbeat.
+        if (data.Gpus is { Count: > 0 })
+        {
+            foreach (var gpu in data.Gpus.Take(MaxGpuEntriesPerMessage))
+            {
+                dbContext.GpuSnapshots.Add(new GpuSnapshot
+                {
+                    NodeId = nodeId,
+                    Timestamp = now,
+                    GpuIndex = gpu.Index,
+                    Vendor = ParseGpuVendor(gpu.Vendor),
+                    Name = NormalizeTrimmedOrNull(gpu.Name, 255),
+                    UtilizationPercent = gpu.UtilizationPercent,
+                    MemoryUsedBytes = gpu.MemoryUsedBytes,
+                    MemoryTotalBytes = gpu.MemoryTotalBytes,
+                    TemperatureC = gpu.TemperatureC
+                });
+            }
+        }
+
+        // Optional: persist UPS snapshot when provided in heartbeat.
+        if (data.Ups is not null)
+        {
+            dbContext.UpsSnapshots.Add(new UpsSnapshot
+            {
+                NodeId = nodeId,
+                Timestamp = now,
+                Backend = ParseUpsBackend(data.Ups.Backend),
+                BatteryPercent = data.Ups.BatteryPercent,
+                LoadPercent = data.Ups.LoadPercent,
+                OnBattery = data.Ups.OnBattery,
+                EstimatedRuntimeSeconds = data.Ups.EstimatedRuntimeSeconds
+            });
+        }
 
         dbContext.TelemetrySnapshots.Add(snapshot);
         await dbContext.SaveChangesAsync();
@@ -256,6 +319,357 @@ public class AgentHub : Hub
 
         // Let the dashboard invalidate/refetch telemetry for this node.
         await Clients.All.SendAsync("TelemetryReceived", nodeId);
+    }
+
+    /// <summary>
+    /// Receives service status snapshots from an agent and persists them.
+    /// </summary>
+    public async Task SendServiceStatusSnapshots(Guid nodeId, List<ServiceStatusSnapshotIngest> snapshots)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before sending snapshots.");
+        }
+
+        if (registeredNodeId != nodeId)
+        {
+            throw new HubException("Unauthorized: nodeId does not match registered connection.");
+        }
+
+        if (snapshots is null || snapshots.Count == 0)
+        {
+            return;
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var now = DateTime.UtcNow;
+        foreach (var s in snapshots)
+        {
+            var serviceName = (s.ServiceName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(serviceName))
+            {
+                continue;
+            }
+
+            if (serviceName.Length > MaxServiceNameChars)
+            {
+                serviceName = serviceName[..MaxServiceNameChars];
+            }
+
+            db.ServiceStatusSnapshots.Add(new ServiceStatusSnapshot
+            {
+                NodeId = nodeId,
+                Timestamp = s.Timestamp ?? now,
+                ServiceName = serviceName,
+                State = ParseServiceState(s.State),
+                Detail = Truncate(s.Detail, MaxServiceDetailChars)
+            });
+        }
+
+        await db.SaveChangesAsync();
+        await Clients.All.SendAsync("ServiceStatusSnapshotsReceived", nodeId);
+    }
+
+    /// <summary>
+    /// Receives SMART drive snapshots from an agent and persists them.
+    /// </summary>
+    public async Task SendSmartDriveSnapshots(Guid nodeId, List<SmartDriveSnapshotIngest> snapshots)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before sending snapshots.");
+        }
+
+        if (registeredNodeId != nodeId)
+        {
+            throw new HubException("Unauthorized: nodeId does not match registered connection.");
+        }
+
+        if (snapshots is null || snapshots.Count == 0)
+        {
+            return;
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var now = DateTime.UtcNow;
+        foreach (var s in snapshots)
+        {
+            var device = (s.Device ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(device))
+            {
+                continue;
+            }
+
+            if (device.Length > MaxDeviceNameChars)
+            {
+                device = device[..MaxDeviceNameChars];
+            }
+
+            db.SmartDriveSnapshots.Add(new SmartDriveSnapshot
+            {
+                NodeId = nodeId,
+                Timestamp = s.Timestamp ?? now,
+                Device = device,
+                Health = ParseSmartDriveHealth(s.Health),
+                TemperatureC = s.TemperatureC,
+                PowerOnHours = s.PowerOnHours,
+                Raw = Truncate(NormalizeJsonOrNull(s.RawJson), MaxRawJsonChars)
+            });
+        }
+
+        await db.SaveChangesAsync();
+        await Clients.All.SendAsync("SmartDriveSnapshotsReceived", nodeId);
+    }
+
+    /// <summary>
+    /// Receives GPU snapshots from an agent and persists them.
+    /// </summary>
+    public async Task SendGpuSnapshots(Guid nodeId, List<GpuSnapshotIngest> snapshots)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before sending snapshots.");
+        }
+
+        if (registeredNodeId != nodeId)
+        {
+            throw new HubException("Unauthorized: nodeId does not match registered connection.");
+        }
+
+        if (snapshots is null || snapshots.Count == 0)
+        {
+            return;
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var now = DateTime.UtcNow;
+        foreach (var s in snapshots.Take(MaxGpuEntriesPerMessage))
+        {
+            db.GpuSnapshots.Add(new GpuSnapshot
+            {
+                NodeId = nodeId,
+                Timestamp = s.Timestamp ?? now,
+                GpuIndex = s.GpuIndex,
+                Vendor = ParseGpuVendor(s.Vendor),
+                Name = NormalizeTrimmedOrNull(s.Name, 255),
+                UtilizationPercent = s.UtilizationPercent,
+                MemoryUsedBytes = s.MemoryUsedBytes,
+                MemoryTotalBytes = s.MemoryTotalBytes,
+                TemperatureC = s.TemperatureC
+            });
+        }
+
+        await db.SaveChangesAsync();
+        await Clients.All.SendAsync("GpuSnapshotsReceived", nodeId);
+    }
+
+    /// <summary>
+    /// Receives UPS snapshots from an agent and persists them.
+    /// </summary>
+    public async Task SendUpsSnapshots(Guid nodeId, List<UpsSnapshotIngest> snapshots)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before sending snapshots.");
+        }
+
+        if (registeredNodeId != nodeId)
+        {
+            throw new HubException("Unauthorized: nodeId does not match registered connection.");
+        }
+
+        if (snapshots is null || snapshots.Count == 0)
+        {
+            return;
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var now = DateTime.UtcNow;
+        foreach (var s in snapshots)
+        {
+            db.UpsSnapshots.Add(new UpsSnapshot
+            {
+                NodeId = nodeId,
+                Timestamp = s.Timestamp ?? now,
+                Backend = ParseUpsBackend(s.Backend),
+                BatteryPercent = s.BatteryPercent,
+                LoadPercent = s.LoadPercent,
+                OnBattery = s.OnBattery,
+                EstimatedRuntimeSeconds = s.EstimatedRuntimeSeconds
+            });
+        }
+
+        await db.SaveChangesAsync();
+        await Clients.All.SendAsync("UpsSnapshotsReceived", nodeId);
+    }
+
+    /// <summary>
+    /// Receives terminal output from an agent and broadcasts to subscribed clients.
+    /// </summary>
+    /// <param name="sessionId">The terminal session ID.</param>
+    /// <param name="output">The output chunk from the terminal.</param>
+    /// <param name="isClosed">True if the session has ended.</param>
+    public async Task SendTerminalOutput(Guid sessionId, string output, bool isClosed)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before sending terminal output.");
+        }
+
+        // Verify session belongs to the registered node
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var session = await db.TerminalSessions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == sessionId);
+
+        if (session is null)
+        {
+            _logger.LogWarning("Terminal output received for unknown session {SessionId}", sessionId);
+            return;
+        }
+
+        if (session.NodeId != registeredNodeId)
+        {
+            _logger.LogWarning(
+                "Rejected terminal output for session {SessionId}: session belongs to node {SessionNodeId} but connection is bound to {RegisteredNodeId}",
+                sessionId, session.NodeId, registeredNodeId);
+            throw new HubException("Unauthorized: session does not belong to this agent.");
+        }
+
+        // Update session status if closed
+        if (isClosed && session.Status == TerminalSessionStatus.Open)
+        {
+            var sessionService = scope.ServiceProvider.GetRequiredService<TerminalSessionService>();
+            await sessionService.MarkExpiredAsync(sessionId);
+        }
+
+        // Bound the per-message output chunk to reduce memory pressure and avoid oversize broadcasts.
+        output ??= string.Empty;
+        if (output.Length > MaxTerminalOutputChunkChars)
+        {
+            output = output[..MaxTerminalOutputChunkChars] + "\n[...output truncated by server...]\n";
+        }
+
+        _logger.LogDebug("Terminal output received for session {SessionId}: {Length} chars, closed={IsClosed}",
+            sessionId, output.Length, isClosed);
+
+        // Broadcast to subscribed dashboard clients
+        await Clients.Group(GetTerminalOutputGroup(sessionId))
+            .SendAsync("TerminalOutput", sessionId, output ?? string.Empty, isClosed);
+    }
+
+    /// <summary>
+    /// Allows dashboard clients to subscribe to terminal output for a session.
+    /// </summary>
+    public async Task SubscribeTerminalOutput(Guid sessionId)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, GetTerminalOutputGroup(sessionId));
+        _logger.LogDebug("Client {ConnectionId} subscribed to terminal session {SessionId}", Context.ConnectionId, sessionId);
+    }
+
+    /// <summary>
+    /// Allows dashboard clients to unsubscribe from terminal output.
+    /// </summary>
+    public async Task UnsubscribeTerminalOutput(Guid sessionId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetTerminalOutputGroup(sessionId));
+    }
+
+    private static string GetTerminalOutputGroup(Guid sessionId)
+        => $"terminal-output.{sessionId:N}";
+
+    private static string? NormalizeTrimmedOrNull(string? s, int maxLen)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        s = s.Trim();
+        if (s.Length == 0) return null;
+        return s.Length <= maxLen ? s : s[..maxLen];
+    }
+
+    private static string? Truncate(string? s, int maxLen)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        if (s.Length <= maxLen) return s;
+        return s[..maxLen];
+    }
+
+    private static string? NormalizeJsonOrNull(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+
+        // We store as jsonb; Postgres will validate/parse, but we'd rather reject obvious junk.
+        // Keep validation lightweight to avoid expensive work in hot paths.
+        json = json.Trim();
+        if (json.Length == 0) return null;
+
+        // Basic sanity check: must look like JSON object/array.
+        var c = json[0];
+        if (c is not '{' and not '[')
+        {
+            return null;
+        }
+
+        return json;
+    }
+
+    private static ServiceState ParseServiceState(string? state)
+    {
+        var s = (state ?? string.Empty).Trim().ToLowerInvariant();
+        return s switch
+        {
+            "active" => ServiceState.Active,
+            "inactive" => ServiceState.Inactive,
+            "failed" => ServiceState.Failed,
+            "unknown" or "" => ServiceState.Unknown,
+            _ => ServiceState.Unknown
+        };
+    }
+
+    private static SmartDriveHealth ParseSmartDriveHealth(string? health)
+    {
+        var s = (health ?? string.Empty).Trim().ToLowerInvariant();
+        return s switch
+        {
+            "pass" => SmartDriveHealth.Pass,
+            "fail" => SmartDriveHealth.Fail,
+            "unknown" or "" => SmartDriveHealth.Unknown,
+            _ => SmartDriveHealth.Unknown
+        };
+    }
+
+    private static GpuVendor ParseGpuVendor(string? vendor)
+    {
+        var s = (vendor ?? string.Empty).Trim().ToLowerInvariant();
+        return s switch
+        {
+            "nvidia" => GpuVendor.Nvidia,
+            "intel" => GpuVendor.Intel,
+            "amd" => GpuVendor.AMD,
+            "unknown" or "" => GpuVendor.Unknown,
+            _ => GpuVendor.Unknown
+        };
+    }
+
+    private static UpsBackend ParseUpsBackend(string? backend)
+    {
+        var s = (backend ?? string.Empty).Trim().ToLowerInvariant();
+        return s switch
+        {
+            "nut" => UpsBackend.Nut,
+            "apcupsd" => UpsBackend.Apcupsd,
+            "unknown" or "" => UpsBackend.Unknown,
+            _ => UpsBackend.Unknown
+        };
     }
 
     /// <summary>
@@ -306,12 +720,26 @@ public class AgentHub : Hub
             return;
         }
 
-        // Append logs
+        // For enhancements: keep ScriptRuns table in sync with command lifecycle and persist bounded output tails.
+        if (command.CommandType == CommandType.ScriptRun)
+        {
+            await TryUpdateScriptRunFromCommandAsync(dbContext, command, parsedStatus, logs).ConfigureAwait(false);
+        }
+
+        // Bound inbound log chunk size to protect hub and DB.
+        if (!string.IsNullOrEmpty(logs) && logs.Length > MaxCommandLogChunkChars)
+        {
+            logs = logs[..MaxCommandLogChunkChars] + "\n[...log chunk truncated by server...]\n";
+        }
+
+        // Append logs (bounded tail).
         if (!string.IsNullOrEmpty(logs))
         {
             command.OutputLog = string.IsNullOrEmpty(command.OutputLog)
                 ? logs
                 : command.OutputLog + "\n" + logs;
+
+            command.OutputLog = ManLab.Server.Services.Persistence.TextBounds.TruncateTailUtf8(command.OutputLog, MaxCommandOutputLogBytesUtf8);
         }
 
         // Set executed time for terminal states
@@ -322,9 +750,208 @@ public class AgentHub : Hub
 
         await dbContext.SaveChangesAsync();
 
+        // Optional real-time output streaming for dashboards.
+        // Dashboards can opt-in by subscribing to a command output group.
+        if (!string.IsNullOrEmpty(logs))
+        {
+            await Clients.Group(GetCommandOutputGroup(commandId))
+                .SendAsync("CommandOutputAppended", command.NodeId, command.Id, command.Status.ToString(), logs);
+        }
+
         // Notify connected dashboard clients that commands for this node changed.
         await Clients.All.SendAsync("CommandUpdated", command.NodeId, command.Id, command.Status.ToString());
     }
+
+    private static async Task TryUpdateScriptRunFromCommandAsync(DataContext dbContext, CommandQueueItem command, CommandStatus parsedStatus, string? logs)
+    {
+        // Command payload should include runId.
+        var runId = TryExtractGuidFromPayload(command.Payload, "runId");
+        if (runId == Guid.Empty)
+        {
+            return;
+        }
+
+        var run = await dbContext.ScriptRuns.FirstOrDefaultAsync(r => r.Id == runId).ConfigureAwait(false);
+        if (run is null)
+        {
+            return;
+        }
+
+        // Defense-in-depth: ensure the run belongs to this command's node.
+        if (run.NodeId != command.NodeId)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+
+        // Lifecycle mapping.
+        run.Status = parsedStatus switch
+        {
+            CommandStatus.Sent => ScriptRunStatus.Sent,
+            CommandStatus.InProgress => ScriptRunStatus.InProgress,
+            CommandStatus.Success => ScriptRunStatus.Success,
+            CommandStatus.Failed => ScriptRunStatus.Failed,
+            _ => run.Status
+        };
+
+        if (parsedStatus == CommandStatus.InProgress && run.StartedAt is null)
+        {
+            run.StartedAt = now;
+        }
+
+        if (parsedStatus is CommandStatus.Success or CommandStatus.Failed)
+        {
+            run.FinishedAt ??= now;
+        }
+
+        if (string.IsNullOrWhiteSpace(logs))
+        {
+            return;
+        }
+
+        // Parse structured output chunks from agent.
+        if (TryParseScriptOutputChunk(logs, out var stream, out var chunk))
+        {
+            if (string.Equals(stream, "stderr", StringComparison.OrdinalIgnoreCase))
+            {
+                run.StderrTail = AppendTail(run.StderrTail, chunk);
+            }
+            else
+            {
+                run.StdoutTail = AppendTail(run.StdoutTail, chunk);
+            }
+
+            return;
+        }
+
+        // Fallback: treat as stdout-ish.
+        run.StdoutTail = AppendTail(run.StdoutTail, logs);
+    }
+
+    private static Guid TryExtractGuidFromPayload(string? payloadJson, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return Guid.Empty;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return Guid.Empty;
+            }
+
+            if (!root.TryGetProperty(propertyName, out var el))
+            {
+                return Guid.Empty;
+            }
+
+            if (el.ValueKind == JsonValueKind.String && Guid.TryParse(el.GetString(), out var g))
+            {
+                return g;
+            }
+        }
+        catch
+        {
+            // Ignore payload parsing errors.
+        }
+
+        return Guid.Empty;
+    }
+
+    private static bool TryParseScriptOutputChunk(string logs, out string stream, out string chunk)
+    {
+        stream = "stdout";
+        chunk = logs;
+
+        if (string.IsNullOrWhiteSpace(logs))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(logs);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (!root.TryGetProperty("kind", out var kindEl) || kindEl.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+
+            var kind = kindEl.GetString();
+            if (!string.Equals(kind, "script.output", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (root.TryGetProperty("stream", out var streamEl) && streamEl.ValueKind == JsonValueKind.String)
+            {
+                stream = streamEl.GetString() ?? "stdout";
+            }
+
+            if (root.TryGetProperty("chunk", out var chunkEl) && chunkEl.ValueKind == JsonValueKind.String)
+            {
+                chunk = chunkEl.GetString() ?? string.Empty;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string AppendTail(string? existing, string toAppend)
+    {
+        if (string.IsNullOrEmpty(toAppend))
+        {
+            return existing ?? string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(existing))
+        {
+            return toAppend;
+        }
+
+        // Avoid unbounded growth (bounded by interceptor), but keep readability.
+        return existing + "\n" + toAppend;
+    }
+
+    /// <summary>
+    /// Allows dashboard clients to subscribe to incremental output chunks for a specific command.
+    /// This is useful for streaming outputs like log.tail.
+    /// </summary>
+    public async Task SubscribeCommandOutput(Guid commandId)
+    {
+        // Best-effort validation: command must exist.
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+        var exists = await db.CommandQueue.AsNoTracking().AnyAsync(c => c.Id == commandId);
+        if (!exists)
+        {
+            throw new HubException("Command not found.");
+        }
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, GetCommandOutputGroup(commandId));
+    }
+
+    public async Task UnsubscribeCommandOutput(Guid commandId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetCommandOutputGroup(commandId));
+    }
+
+    private static string GetCommandOutputGroup(Guid commandId)
+        => $"{CommandOutputGroupPrefix}.{commandId:N}";
 
     private bool TryGetBearerToken(out string token)
     {

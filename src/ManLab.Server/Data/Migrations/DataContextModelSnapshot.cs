@@ -34,7 +34,13 @@ namespace ManLab.Server.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("DispatchAttempts")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime?>("ExecutedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastDispatchAttemptAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("NodeId")
@@ -45,6 +51,9 @@ namespace ManLab.Server.Data.Migrations
 
                     b.Property<string>("Payload")
                         .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
@@ -58,6 +67,464 @@ namespace ManLab.Server.Data.Migrations
                     b.HasIndex("Status");
 
                     b.ToTable("CommandQueue");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.AlertEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AlertRuleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(8192)
+                        .HasColumnType("character varying(8192)");
+
+                    b.Property<Guid?>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AlertRuleId");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("StartedAt");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("AlertRuleId", "Status", "StartedAt");
+
+                    b.ToTable("AlertEvents");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.AlertRule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Condition")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid?>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Scope")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Severity")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Enabled");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("Scope");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("AlertRules");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.GpuSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("GpuIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<long?>("MemoryTotalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("MemoryUsedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<float?>("TemperatureC")
+                        .HasColumnType("real");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<float?>("UtilizationPercent")
+                        .HasColumnType("real");
+
+                    b.Property<int>("Vendor")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("Timestamp");
+
+                    b.HasIndex("NodeId", "Timestamp");
+
+                    b.HasIndex("NodeId", "GpuIndex", "Timestamp");
+
+                    b.ToTable("GpuSnapshots");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.LogViewerPolicy", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int>("MaxBytesPerRequest")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("NodeId", "Path")
+                        .IsUnique();
+
+                    b.ToTable("LogViewerPolicies");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.Script", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(100000)
+                        .HasColumnType("character varying(100000)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<bool>("IsReadOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int>("Shell")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("Scripts");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.ScriptRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("ScriptId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("StderrTail")
+                        .HasColumnType("text");
+
+                    b.Property<string>("StdoutTail")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("ScriptId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("NodeId", "CreatedAt");
+
+                    b.ToTable("ScriptRuns");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.ServiceMonitorConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ServiceName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("NodeId", "ServiceName")
+                        .IsUnique();
+
+                    b.ToTable("ServiceMonitorConfigs");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.ServiceStatusSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ServiceName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("Timestamp");
+
+                    b.HasIndex("NodeId", "Timestamp");
+
+                    b.HasIndex("NodeId", "ServiceName", "Timestamp");
+
+                    b.ToTable("ServiceStatusSnapshots");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.SmartDriveSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Device")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("Health")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("PowerOnHours")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Raw")
+                        .HasColumnType("jsonb");
+
+                    b.Property<float?>("TemperatureC")
+                        .HasColumnType("real");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("Timestamp");
+
+                    b.HasIndex("NodeId", "Timestamp");
+
+                    b.HasIndex("NodeId", "Device", "Timestamp");
+
+                    b.ToTable("SmartDriveSnapshots");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.TerminalSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ClosedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("NodeId", "CreatedAt");
+
+                    b.ToTable("TerminalSessions");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.UpsSnapshot", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Backend")
+                        .HasColumnType("integer");
+
+                    b.Property<float?>("BatteryPercent")
+                        .HasColumnType("real");
+
+                    b.Property<int?>("EstimatedRuntimeSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<float?>("LoadPercent")
+                        .HasColumnType("real");
+
+                    b.Property<Guid>("NodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool?>("OnBattery")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("Timestamp");
+
+                    b.HasIndex("NodeId", "Timestamp");
+
+                    b.ToTable("UpsSnapshots");
                 });
 
             modelBuilder.Entity("ManLab.Server.Data.Entities.EnrollmentToken", b =>
@@ -114,6 +581,9 @@ namespace ManLab.Server.Data.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
+                    b.Property<string>("CapabilitiesJson")
+                        .HasColumnType("jsonb");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -132,6 +602,10 @@ namespace ManLab.Server.Data.Migrations
                     b.Property<string>("OS")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<string>("PrimaryInterface")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
@@ -343,8 +817,24 @@ namespace ManLab.Server.Data.Migrations
                     b.Property<float>("DiskUsage")
                         .HasColumnType("real");
 
+                    b.Property<long?>("NetRxBytesPerSec")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("NetTxBytesPerSec")
+                        .HasColumnType("bigint");
+
                     b.Property<Guid>("NodeId")
                         .HasColumnType("uuid");
+
+                    b.Property<float?>("PingPacketLossPercent")
+                        .HasColumnType("real");
+
+                    b.Property<float?>("PingRttMs")
+                        .HasColumnType("real");
+
+                    b.Property<string>("PingTarget")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.Property<float>("RamUsage")
                         .HasColumnType("real");
@@ -377,6 +867,130 @@ namespace ManLab.Server.Data.Migrations
                     b.Navigation("Node");
                 });
 
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.AlertEvent", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Enhancements.AlertRule", "AlertRule")
+                        .WithMany("Events")
+                        .HasForeignKey("AlertRuleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("AlertEvents")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("AlertRule");
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.AlertRule", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("AlertRules")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.GpuSnapshot", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("GpuSnapshots")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.LogViewerPolicy", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("LogViewerPolicies")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.ScriptRun", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("ScriptRuns")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ManLab.Server.Data.Entities.Enhancements.Script", "Script")
+                        .WithMany("Runs")
+                        .HasForeignKey("ScriptId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+
+                    b.Navigation("Script");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.ServiceMonitorConfig", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("ServiceMonitorConfigs")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.ServiceStatusSnapshot", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("ServiceStatusSnapshots")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.SmartDriveSnapshot", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("SmartDriveSnapshots")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.TerminalSession", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("TerminalSessions")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.UpsSnapshot", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
+                        .WithMany("UpsSnapshots")
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
             modelBuilder.Entity("ManLab.Server.Data.Entities.NodeSetting", b =>
                 {
                     b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
@@ -399,11 +1013,41 @@ namespace ManLab.Server.Data.Migrations
                     b.Navigation("Node");
                 });
 
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.AlertRule", b =>
+                {
+                    b.Navigation("Events");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.Script", b =>
+                {
+                    b.Navigation("Runs");
+                });
+
             modelBuilder.Entity("ManLab.Server.Data.Entities.Node", b =>
                 {
+                    b.Navigation("AlertEvents");
+
+                    b.Navigation("AlertRules");
+
                     b.Navigation("Commands");
 
+                    b.Navigation("GpuSnapshots");
+
+                    b.Navigation("LogViewerPolicies");
+
+                    b.Navigation("ScriptRuns");
+
+                    b.Navigation("ServiceMonitorConfigs");
+
+                    b.Navigation("ServiceStatusSnapshots");
+
+                    b.Navigation("SmartDriveSnapshots");
+
                     b.Navigation("TelemetrySnapshots");
+
+                    b.Navigation("TerminalSessions");
+
+                    b.Navigation("UpsSnapshots");
                 });
 #pragma warning restore 612, 618
         }

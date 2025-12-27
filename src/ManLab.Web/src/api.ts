@@ -8,6 +8,19 @@ import type {
   Telemetry,
   Command,
   NodeSetting,
+  ServiceMonitorConfig,
+  LogViewerPolicy,
+  LogViewerSession,
+  ScriptSummary,
+  Script,
+  ScriptRun,
+  CreateScriptRunResponse,
+  NetworkTelemetryPoint,
+  PingTelemetryPoint,
+  ServiceStatusSnapshot,
+  SmartDriveSnapshot,
+  GpuSnapshot,
+  UpsSnapshot,
   OnboardingMachine,
   SshTestResponse,
   StartInstallResponse,
@@ -16,6 +29,13 @@ import type {
   LocalAgentStatus,
   LocalAgentInstallResponse,
   AgentConfiguration,
+  LogReadResponse,
+  LogTailResponse,
+  TerminalOpenResponse,
+  TerminalInputResponse,
+  TerminalCloseResponse,
+  TerminalSessionResponse,
+  CancelScriptRunResponse,
 } from "./types";
 
 const API_BASE = "/api";
@@ -143,6 +163,96 @@ export async function fetchNodeTelemetry(
 }
 
 /**
+ * Fetches network telemetry history for a node.
+ */
+export async function fetchNodeNetworkTelemetry(
+  id: string,
+  count: number = 120
+): Promise<NetworkTelemetryPoint[]> {
+  const response = await fetch(
+    `${API_BASE}/devices/${id}/telemetry/network?count=${count}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch network telemetry: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Fetches ping telemetry history for a node.
+ */
+export async function fetchNodePingTelemetry(
+  id: string,
+  count: number = 120
+): Promise<PingTelemetryPoint[]> {
+  const response = await fetch(
+    `${API_BASE}/devices/${id}/telemetry/ping?count=${count}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch ping telemetry: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchServiceStatusHistory(
+  nodeId: string,
+  count: number = 200
+): Promise<ServiceStatusSnapshot[]> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/service-status?count=${count}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch service status: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchSmartHistory(
+  nodeId: string,
+  count: number = 200
+): Promise<SmartDriveSnapshot[]> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/telemetry/smart?count=${count}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch SMART history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchGpuHistory(
+  nodeId: string,
+  count: number = 500
+): Promise<GpuSnapshot[]> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/telemetry/gpus?count=${count}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch GPU history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchUpsHistory(
+  nodeId: string,
+  count: number = 500
+): Promise<UpsSnapshot[]> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/telemetry/ups?count=${count}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch UPS history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
  * Fetches command history for a specific node.
  */
 export async function fetchNodeCommands(
@@ -171,6 +281,221 @@ export async function fetchNodeSettings(id: string): Promise<NodeSetting[]> {
       throw new Error("Node not found");
     }
     throw new Error(`Failed to fetch node settings: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Service monitor config APIs
+ */
+export async function fetchServiceMonitorConfigs(nodeId: string): Promise<ServiceMonitorConfig[]> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/service-monitor-configs`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch service monitor configs: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function upsertServiceMonitorConfig(
+  nodeId: string,
+  configId: string | null,
+  body: { serviceName?: string; enabled?: boolean }
+): Promise<ServiceMonitorConfig> {
+  const url = configId
+    ? `${API_BASE}/devices/${nodeId}/service-monitor-configs/${configId}`
+    : `${API_BASE}/devices/${nodeId}/service-monitor-configs`;
+  const method = configId ? "PUT" : "POST";
+  const response = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to save service monitor config: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function deleteServiceMonitorConfig(nodeId: string, configId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/service-monitor-configs/${configId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Not found");
+    throw new Error(`Failed to delete service monitor config: ${response.statusText}`);
+  }
+}
+
+export async function requestServiceStatusRefresh(nodeId: string): Promise<{ commandId: string }> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/service-monitor-configs/refresh`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to request refresh: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Log viewer policies + session
+ */
+export async function fetchLogViewerPolicies(nodeId: string): Promise<LogViewerPolicy[]> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/log-viewer-policies`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch log viewer policies: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function upsertLogViewerPolicy(
+  nodeId: string,
+  policyId: string | null,
+  body: { displayName?: string; path?: string; maxBytesPerRequest?: number }
+): Promise<LogViewerPolicy> {
+  const url = policyId
+    ? `${API_BASE}/devices/${nodeId}/log-viewer-policies/${policyId}`
+    : `${API_BASE}/devices/${nodeId}/log-viewer-policies`;
+  const method = policyId ? "PUT" : "POST";
+  const response = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Not found");
+    throw new Error(`Failed to save log viewer policy: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function deleteLogViewerPolicy(nodeId: string, policyId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/log-viewer-policies/${policyId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Not found");
+    throw new Error(`Failed to delete log viewer policy: ${response.statusText}`);
+  }
+}
+
+export async function createLogViewerSession(
+  nodeId: string,
+  policyId: string,
+  ttlSeconds?: number
+): Promise<LogViewerSession> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/log-viewer-sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ policyId, ttlSeconds }),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Not found");
+    throw new Error(`Failed to create log viewer session: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Scripts + runs
+ */
+export async function fetchScripts(): Promise<ScriptSummary[]> {
+  const response = await fetch(`${API_BASE}/scripts`);
+  if (!response.ok) throw new Error(`Failed to fetch scripts: ${response.statusText}`);
+  return response.json();
+}
+
+export async function fetchScript(id: string): Promise<Script> {
+  const response = await fetch(`${API_BASE}/scripts/${id}`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Script not found");
+    throw new Error(`Failed to fetch script: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function createScript(body: {
+  name: string;
+  description?: string | null;
+  shell: "Bash" | "PowerShell";
+  content: string;
+  isReadOnly?: boolean;
+}): Promise<Script> {
+  const response = await fetch(`${API_BASE}/scripts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`Failed to create script: ${await response.text()}`);
+  return response.json();
+}
+
+export async function updateScript(id: string, body: Partial<{
+  name: string;
+  description: string | null;
+  shell: "Bash" | "PowerShell";
+  content: string;
+  isReadOnly: boolean;
+}>): Promise<Script> {
+  const response = await fetch(`${API_BASE}/scripts/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`Failed to update script: ${await response.text()}`);
+  return response.json();
+}
+
+export async function deleteScript(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/scripts/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw new Error(`Failed to delete script: ${await response.text()}`);
+}
+
+export async function createScriptRun(nodeId: string, scriptId: string): Promise<CreateScriptRunResponse> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/script-runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scriptId }),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to create script run: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function cancelScriptRun(runId: string): Promise<CancelScriptRunResponse> {
+  const response = await fetch(`${API_BASE}/script-runs/${runId}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Script run not found");
+    throw new Error(`Failed to cancel script run: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function fetchScriptRuns(nodeId: string, count: number = 50): Promise<ScriptRun[]> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/script-runs?count=${count}`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch script runs: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchScriptRun(runId: string): Promise<ScriptRun> {
+  const response = await fetch(`${API_BASE}/script-runs/${runId}`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Script run not found");
+    throw new Error(`Failed to fetch script run: ${response.statusText}`);
   }
   return response.json();
 }
@@ -238,14 +563,14 @@ export async function restartContainer(
   nodeId: string,
   containerId: string
 ): Promise<Command> {
-  return createCommand(nodeId, "DockerRestart", { containerId });
+  return createCommand(nodeId, "docker.restart", { containerId });
 }
 
 /**
  * Triggers a system update on a node.
  */
 export async function triggerSystemUpdate(nodeId: string): Promise<Command> {
-  return createCommand(nodeId, "Update");
+  return createCommand(nodeId, "system.update");
 }
 
 /**
@@ -255,7 +580,7 @@ export async function triggerSystemUpdate(nodeId: string): Promise<Command> {
 export async function requestDockerContainerList(
   nodeId: string
 ): Promise<Command> {
-  return createCommand(nodeId, "DockerList");
+  return createCommand(nodeId, "docker.list");
 }
 
 /**
@@ -263,21 +588,21 @@ export async function requestDockerContainerList(
  * The agent will terminate and restart via its scheduled task.
  */
 export async function shutdownAgent(nodeId: string): Promise<Command> {
-  return createCommand(nodeId, "Shutdown");
+  return createCommand(nodeId, "agent.shutdown");
 }
 
 /**
  * Enables the agent's scheduled task (starts the agent on next trigger).
  */
 export async function enableAgentTask(nodeId: string): Promise<Command> {
-  return createCommand(nodeId, "EnableTask");
+  return createCommand(nodeId, "agent.enabletask");
 }
 
 /**
  * Disables the agent's scheduled task (prevents the agent from auto-starting).
  */
 export async function disableAgentTask(nodeId: string): Promise<Command> {
-  return createCommand(nodeId, "DisableTask");
+  return createCommand(nodeId, "agent.disabletask");
 }
 
 /**
@@ -485,6 +810,136 @@ export async function clearLocalAgentFiles(): Promise<LocalAgentInstallResponse>
       .json()
       .catch(() => ({ error: response.statusText }));
     return { started: false, error: errorData.error ?? response.statusText };
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Log viewer - Read log content via session
+ */
+export async function readLogContent(
+  nodeId: string,
+  sessionId: string,
+  offsetBytes?: number,
+  maxBytes?: number
+): Promise<LogReadResponse> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/log-viewer-sessions/${sessionId}/read`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offsetBytes, maxBytes }),
+    }
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Session not found or expired");
+    if (response.status === 504) throw new Error("Timed out waiting for agent response");
+    throw new Error(`Failed to read log: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Log viewer - Tail log content via session
+ */
+export async function tailLogContent(
+  nodeId: string,
+  sessionId: string,
+  maxBytes?: number,
+  durationSeconds?: number
+): Promise<LogTailResponse> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/log-viewer-sessions/${sessionId}/tail`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxBytes, durationSeconds }),
+    }
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Session not found or expired");
+    if (response.status === 504) throw new Error("Timed out waiting for agent response");
+    throw new Error(`Failed to tail log: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Terminal - Open a new terminal session
+ */
+export async function openTerminalSession(
+  nodeId: string,
+  ttlSeconds?: number
+): Promise<TerminalOpenResponse> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/terminal/open`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ttlSeconds }),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to open terminal: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Terminal - Send input to a terminal session
+ */
+export async function sendTerminalInput(
+  nodeId: string,
+  sessionId: string,
+  input: string
+): Promise<TerminalInputResponse> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/terminal/${sessionId}/input`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input }),
+    }
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Session not found or expired");
+    throw new Error(`Failed to send input: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Terminal - Close a terminal session
+ */
+export async function closeTerminalSession(
+  nodeId: string,
+  sessionId: string
+): Promise<TerminalCloseResponse> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/terminal/${sessionId}/close`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Session not found or expired");
+    throw new Error(`Failed to close terminal: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: Terminal - Get terminal session status
+ */
+export async function getTerminalSession(
+  nodeId: string,
+  sessionId: string
+): Promise<TerminalSessionResponse> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/terminal/${sessionId}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Session not found or expired");
+    throw new Error(`Failed to get terminal session: ${response.statusText}`);
   }
   return response.json();
 }

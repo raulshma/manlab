@@ -1,0 +1,142 @@
+name: Build Agent
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to build (e.g., v1.0.0)'
+        required: false
+        default: 'latest'
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            artifact: manlab-agent.exe
+          - os: windows-latest
+            rid: win-arm64
+            artifact: manlab-agent.exe
+          - os: ubuntu-latest
+            rid: linux-x64
+            artifact: manlab-agent
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+            artifact: manlab-agent
+          - os: macos-latest
+            rid: osx-x64
+            artifact: manlab-agent
+          - os: macos-latest
+            rid: osx-arm64
+            artifact: manlab-agent
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore src/ManLab.Agent/ManLab.Agent.csproj
+
+      - name: Build and Publish Agent (Native AOT)
+        shell: bash
+        run: |
+          dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishAot=true \
+            -o ./publish/${{ matrix.rid }}
+
+      - name: Create artifact archive (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cd ./publish/${{ matrix.rid }}
+          tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }} appsettings.json 2>/dev/null || tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Create artifact archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $files = @("./publish/${{ matrix.rid }}/${{ matrix.artifact }}")
+          $appsettings = "./publish/${{ matrix.rid }}/appsettings.json"
+          if (Test-Path $appsettings) { $files += $appsettings }
+          Compress-Archive -Path $files -DestinationPath "manlab-agent-${{ matrix.rid }}.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: manlab-agent-${{ matrix.rid }}
+          path: |
+            manlab-agent-${{ matrix.rid }}.*
+          retention-days: 30
+
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            manlab-agent-${{ matrix.rid }}.*
+            ./publish/${{ matrix.rid }}/${{ matrix.artifact }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Create a manifest of all built artifacts
+  create-manifest:
+    name: Create Release Manifest
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create manifest
+        run: |
+          echo "# ManLab Agent Release Manifest" > manifest.md
+          echo "" >> manifest.md
+          echo "**Release:** ${{ github.ref_name }}" >> manifest.md
+          echo "**Built at:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> manifest.md
+          echo "" >> manifest.md
+          echo "## Available Binaries" >> manifest.md
+          echo "" >> manifest.md
+          echo "| Platform | Architecture | File |" >> manifest.md
+          echo "|----------|--------------|------|" >> manifest.md
+          echo "| Windows | x64 | manlab-agent-win-x64.zip |" >> manifest.md
+          echo "| Windows | ARM64 | manlab-agent-win-arm64.zip |" >> manifest.md
+          echo "| Linux | x64 | manlab-agent-linux-x64.tar.gz |" >> manifest.md
+          echo "| Linux | ARM64 | manlab-agent-linux-arm64.tar.gz |" >> manifest.md
+          echo "| macOS | x64 | manlab-agent-osx-x64.tar.gz |" >> manifest.md
+          echo "| macOS | ARM64 | manlab-agent-osx-arm64.tar.gz |" >> manifest.md
+
+      - name: Upload manifest to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: manifest.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

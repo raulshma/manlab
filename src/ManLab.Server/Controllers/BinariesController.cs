@@ -16,15 +16,18 @@ public sealed partial class BinariesController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<BinariesController> _logger;
     private readonly IOptions<BinaryDistributionOptions> _options;
+    private readonly ISettingsService _settingsService;
 
     public BinariesController(
         IWebHostEnvironment env,
         ILogger<BinariesController> logger,
-        IOptions<BinaryDistributionOptions> options)
+        IOptions<BinaryDistributionOptions> options,
+        ISettingsService settingsService)
     {
         _env = env;
         _logger = logger;
         _options = options;
+        _settingsService = settingsService;
     }
 
     [HttpGet("agent")]
@@ -272,6 +275,74 @@ public sealed partial class BinariesController : ControllerBase
         bool HasAppSettings,
         long? AppSettingsSizeBytes,
         string? AppSettingsSha256);
+
+    /// <summary>
+    /// Information about GitHub release downloads for agent binaries.
+    /// </summary>
+    /// <param name="Enabled">Whether GitHub release downloads are enabled.</param>
+    /// <param name="ReleaseBaseUrl">Base URL for GitHub releases (e.g., https://github.com/owner/repo/releases/download).</param>
+    /// <param name="LatestVersion">Latest release version tag (e.g., v1.0.0).</param>
+    /// <param name="DownloadUrls">Pre-constructed download URLs for each RID.</param>
+    public sealed record GitHubReleaseInfo(
+        bool Enabled,
+        string? ReleaseBaseUrl,
+        string? LatestVersion,
+        IReadOnlyDictionary<string, GitHubReleaseDownloadUrl>? DownloadUrls);
+
+    /// <summary>
+    /// Download URLs for a specific RID.
+    /// </summary>
+    /// <param name="Rid">Runtime identifier (e.g., win-x64, linux-arm64).</param>
+    /// <param name="ArchiveUrl">URL to the compressed archive (.zip for Windows, .tar.gz for Linux/macOS).</param>
+    /// <param name="BinaryUrl">Direct URL to the binary file.</param>
+    public sealed record GitHubReleaseDownloadUrl(
+        string Rid,
+        string ArchiveUrl,
+        string BinaryUrl);
+
+    /// <summary>
+    /// Returns GitHub release information for agent downloads.
+    /// Install scripts can use this to download from GitHub releases instead of the server API.
+    /// </summary>
+    [HttpGet("agent/github-release-info")]
+    public async Task<ActionResult<GitHubReleaseInfo>> GetGitHubReleaseInfo()
+    {
+        var enabled = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
+        var baseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
+        var version = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
+
+        if (!enabled || string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(version))
+        {
+            return Ok(new GitHubReleaseInfo(
+                Enabled: false,
+                ReleaseBaseUrl: null,
+                LatestVersion: null,
+                DownloadUrls: null));
+        }
+
+        // Construct download URLs for each supported RID
+        var rids = new[] { "win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64" };
+        var downloadUrls = new Dictionary<string, GitHubReleaseDownloadUrl>();
+
+        foreach (var rid in rids)
+        {
+            var isWindows = rid.StartsWith("win-", StringComparison.OrdinalIgnoreCase);
+            var archiveExt = isWindows ? ".zip" : ".tar.gz";
+            var binaryName = isWindows ? "manlab-agent.exe" : "manlab-agent";
+
+            var archiveUrl = $"{baseUrl.TrimEnd('/')}/{version}/manlab-agent-{rid}{archiveExt}";
+            // Direct binary URL uses the RID-specific naming from the workflow
+            var binaryUrl = $"{baseUrl.TrimEnd('/')}/{version}/{binaryName}";
+
+            downloadUrls[rid] = new GitHubReleaseDownloadUrl(rid, archiveUrl, binaryUrl);
+        }
+
+        return Ok(new GitHubReleaseInfo(
+            Enabled: true,
+            ReleaseBaseUrl: baseUrl,
+            LatestVersion: version,
+            DownloadUrls: downloadUrls));
+    }
 
     [GeneratedRegex("^[a-z0-9][a-z0-9\\-]*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AllowedRidRegexFactory();

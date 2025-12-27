@@ -27,6 +27,21 @@ public class CommandQueueItem
     /// <summary>Current execution status of the command.</summary>
     public CommandStatus Status { get; set; } = CommandStatus.Queued;
 
+    /// <summary>
+    /// Number of times the server attempted to dispatch this command to an agent connection.
+    /// </summary>
+    public int DispatchAttempts { get; set; }
+
+    /// <summary>
+    /// When the command was last attempted to be dispatched.
+    /// </summary>
+    public DateTime? LastDispatchAttemptAt { get; set; }
+
+    /// <summary>
+    /// When the server last successfully sent the command to the agent (status: Sent).
+    /// </summary>
+    public DateTime? SentAt { get; set; }
+
     /// <summary>Output/logs from command execution.</summary>
     public string? OutputLog { get; set; }
 

@@ -215,6 +215,54 @@ function Download-File([string]$Url, [string]$OutFile) {
   }
 }
 
+function Get-GitHubReleaseInfo([string]$ServerUrl) {
+  # Query the server for GitHub release configuration
+  $infoUrl = "$ServerUrl/api/binaries/agent/github-release-info"
+  try {
+    $response = Invoke-RestMethod -Uri $infoUrl -Method Get -TimeoutSec 10 -ErrorAction Stop
+    return $response
+  } catch {
+    Write-Verbose "Failed to get GitHub release info: $($_.Exception.Message)"
+    return $null
+  }
+}
+
+function Try-DownloadFromGitHub([string]$ServerUrl, [string]$Rid, [string]$OutFile) {
+  # Attempt to download the agent binary from GitHub releases
+  # Returns $true if successful, $false otherwise
+  
+  $releaseInfo = Get-GitHubReleaseInfo -ServerUrl $ServerUrl
+  if ($null -eq $releaseInfo -or -not $releaseInfo.enabled) {
+    Write-Verbose "GitHub release downloads not enabled or not configured"
+    return $false
+  }
+  
+  $downloadUrls = $releaseInfo.downloadUrls
+  if ($null -eq $downloadUrls -or -not $downloadUrls.PSObject.Properties.Name.Contains($Rid)) {
+    Write-Verbose "No GitHub download URL found for RID: $Rid"
+    return $false
+  }
+  
+  $ridInfo = $downloadUrls.$Rid
+  $binaryUrl = $ridInfo.binaryUrl
+  
+  if ([string]::IsNullOrWhiteSpace($binaryUrl)) {
+    Write-Verbose "GitHub binary URL is empty for RID: $Rid"
+    return $false
+  }
+  
+  Write-Host "Attempting download from GitHub release: $binaryUrl"
+  try {
+    Download-File -Url $binaryUrl -OutFile $OutFile
+    Write-Host "  Downloaded from GitHub successfully"
+    return $true
+  } catch {
+    Write-Warning "GitHub download failed: $($_.Exception.Message)"
+    Write-Host "  Falling back to server download..."
+    return $false
+  }
+}
+
 function Update-AgentAppSettings(
   [string]$Path,
   [string]$ServerUrl,
@@ -488,8 +536,13 @@ if ((Test-Path $exePath) -and (-not $Force)) {
 
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
-Write-Host "Downloading agent binary: $binUrl"
-Download-File -Url $binUrl -OutFile $exePath
+# Try downloading from GitHub releases first, fall back to server API
+$downloadedFromGitHub = Try-DownloadFromGitHub -ServerUrl $Server -Rid $Rid -OutFile $exePath
+
+if (-not $downloadedFromGitHub) {
+  Write-Host "Downloading agent binary from server: $binUrl"
+  Download-File -Url $binUrl -OutFile $exePath
+}
 
 # appsettings.json is optional; keep existing unless -Force
 try {

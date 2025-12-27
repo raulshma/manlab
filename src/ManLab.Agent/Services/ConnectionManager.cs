@@ -3,6 +3,10 @@ using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
+using System.Text.Json;
+using ManLab.Agent.Networking;
 
 
 namespace ManLab.Agent.Services;
@@ -12,6 +16,8 @@ namespace ManLab.Agent.Services;
 /// </summary>
 public sealed class ConnectionManager : IAsyncDisposable
 {
+    // Keep outbound chunks comfortably below server HubOptions.MaximumReceiveMessageSize (128KB).
+    private const int MaxOutboundTextChunkChars = 16 * 1024;
     private readonly ILogger<ConnectionManager> _logger;
     private readonly AgentConfiguration _config;
     private readonly HubConnection _connection;
@@ -163,8 +169,15 @@ public sealed class ConnectionManager : IAsyncDisposable
             Hostname = Environment.MachineName,
             IpAddress = GetLocalIpAddress(),
             OS = Environment.OSVersion.ToString(),
-            AgentVersion = GetAgentVersion()
+            AgentVersion = GetAgentVersion(),
+            CapabilitiesJson = BuildCapabilitiesJson(),
+            PrimaryInterface = SelectPrimaryInterfaceName()
         };
+
+        // Defensive: if config changed between runs and we already cached metadata,
+        // ensure we at least populate missing optional fields.
+        _cachedMetadata.CapabilitiesJson ??= BuildCapabilitiesJson();
+        _cachedMetadata.PrimaryInterface ??= SelectPrimaryInterfaceName();
 
         _logger.LogInformation("Registering with server as {Hostname}", _cachedMetadata.Hostname);
 
@@ -260,12 +273,124 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, logs).ConfigureAwait(false);
+                if (string.IsNullOrEmpty(logs) || logs.Length <= MaxOutboundTextChunkChars)
+                {
+                    await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, logs).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Chunk large logs into multiple hub invocations.
+                    for (var i = 0; i < logs.Length; i += MaxOutboundTextChunkChars)
+                    {
+                        var len = Math.Min(MaxOutboundTextChunkChars, logs.Length - i);
+                        var chunk = logs.Substring(i, len);
+                        await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, chunk).ConfigureAwait(false);
+                    }
+                }
             _logger.LogDebug("Command status updated: {CommandId} -> {Status}", commandId, status);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to update command status");
+        }
+    }
+
+    /// <summary>
+    /// Sends service status snapshots to the server for persistence.
+    /// </summary>
+    public async Task SendServiceStatusSnapshotsAsync(IReadOnlyList<ServiceStatusSnapshotIngest> snapshots)
+    {
+        if (!_isConnected || _nodeId == Guid.Empty)
+        {
+            _logger.LogWarning("Cannot send service status snapshots: not connected or not registered");
+            return;
+        }
+
+        if (snapshots is null || snapshots.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await _connection.InvokeAsync("SendServiceStatusSnapshots", _nodeId, snapshots.ToList()).ConfigureAwait(false);
+            _logger.LogDebug("Service status snapshots sent: {Count}", snapshots.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send service status snapshots");
+        }
+    }
+
+    /// <summary>
+    /// Sends SMART drive snapshots to the server for persistence.
+    /// </summary>
+    public async Task SendSmartDriveSnapshotsAsync(IReadOnlyList<SmartDriveSnapshotIngest> snapshots)
+    {
+        if (!_isConnected || _nodeId == Guid.Empty)
+        {
+            _logger.LogWarning("Cannot send SMART drive snapshots: not connected or not registered");
+            return;
+        }
+
+        if (snapshots is null || snapshots.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await _connection.InvokeAsync("SendSmartDriveSnapshots", _nodeId, snapshots.ToList()).ConfigureAwait(false);
+            _logger.LogDebug("SMART drive snapshots sent: {Count}", snapshots.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send SMART drive snapshots");
+        }
+    }
+
+    /// <summary>
+    /// Sends terminal output to the server for streaming to dashboard clients.
+    /// </summary>
+    /// <param name="sessionId">The terminal session ID.</param>
+    /// <param name="output">The output chunk to send.</param>
+    /// <param name="isClosed">True if the session has ended.</param>
+    public async Task SendTerminalOutputAsync(Guid sessionId, string output, bool isClosed)
+    {
+        if (!_isConnected)
+        {
+            _logger.LogWarning("Cannot send terminal output: not connected");
+            return;
+        }
+
+        try
+        {
+                output ??= string.Empty;
+                if (output.Length <= MaxOutboundTextChunkChars)
+                {
+                    await _connection.InvokeAsync("SendTerminalOutput", sessionId, output, isClosed).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Send all but last chunk with isClosed=false, then final chunk carries isClosed.
+                    var offset = 0;
+                    while (offset < output.Length)
+                    {
+                        var len = Math.Min(MaxOutboundTextChunkChars, output.Length - offset);
+                        var chunk = output.Substring(offset, len);
+                        offset += len;
+
+                        var closedFlag = isClosed && offset >= output.Length;
+                        await _connection.InvokeAsync("SendTerminalOutput", sessionId, chunk, closedFlag).ConfigureAwait(false);
+                    }
+                }
+
+                _logger.LogDebug("Terminal output sent for session {SessionId}: {Length} chars, closed={IsClosed}", 
+                    sessionId, output.Length, isClosed);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send terminal output for session {SessionId}", sessionId);
         }
     }
 
@@ -404,6 +529,101 @@ public sealed class ConnectionManager : IAsyncDisposable
     private static string GetAgentVersion()
     {
         return typeof(ConnectionManager).Assembly.GetName().Version?.ToString() ?? "1.0.0";
+    }
+
+    private string? SelectPrimaryInterfaceName()
+    {
+        return NetworkInterfaceSelector.SelectPrimaryInterfaceName(_config.PrimaryInterfaceName, _logger);
+    }
+
+    private string? BuildCapabilitiesJson()
+    {
+        try
+        {
+            var capabilities = new AgentCapabilities
+            {
+                Tools = new AgentToolCapabilities
+                {
+                    Smartctl = HasToolOnPath("smartctl"),
+                    NvidiaSmi = HasToolOnPath("nvidia-smi"),
+                    Upsc = HasToolOnPath("upsc"),
+                    Apcaccess = HasToolOnPath("apcaccess")
+                },
+                Features = new AgentFeatureCapabilities
+                {
+                    LogViewer = _config.EnableLogViewer,
+                    Scripts = _config.EnableScripts,
+                    Terminal = _config.EnableTerminal
+                }
+            };
+
+            // NativeAOT-safe: serialize using source-generated type metadata.
+            return JsonSerializer.Serialize(capabilities, ManLabJsonContext.Default.AgentCapabilities);
+        }
+        catch (Exception ex)
+        {
+            // Capabilities are optional; never fail registration due to detection/serialization.
+            _logger.LogDebug(ex, "Failed to build capabilities JSON");
+            return null;
+        }
+    }
+
+    private static bool HasToolOnPath(string baseName)
+    {
+        // Note: we intentionally do *not* execute these tools; presence is enough.
+        // Keep logic AOT-friendly (no reflection, no P/Invokes).
+
+        var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        var fileNames = isWindows
+            ? new[] { baseName + ".exe", baseName + ".cmd", baseName + ".bat", baseName }
+            : new[] { baseName };
+
+        // PATH lookup
+        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var separators = isWindows ? new[] { ';' } : new[] { ':' };
+        var pathEntries = path.Split(separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var entry in pathEntries)
+        {
+            foreach (var fileName in fileNames)
+            {
+                try
+                {
+                    var candidate = Path.Combine(entry, fileName);
+                    if (File.Exists(candidate))
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // ignore malformed paths
+                }
+            }
+        }
+
+        // Common non-PATH locations on Linux
+        if (!isWindows)
+        {
+            var common = new[] { "/usr/sbin", "/sbin", "/usr/local/sbin", "/usr/bin", "/bin" };
+            foreach (var dir in common)
+            {
+                try
+                {
+                    var candidate = Path.Combine(dir, baseName);
+                    if (File.Exists(candidate))
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+        }
+
+        return false;
     }
 
     public async ValueTask DisposeAsync()

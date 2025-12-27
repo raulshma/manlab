@@ -3,6 +3,8 @@ using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Hubs;
 using ManLab.Server.Services.Agents;
+using ManLab.Server.Services.Commands;
+using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -126,6 +128,207 @@ public class DevicesController : ControllerBase
     }
 
     /// <summary>
+    /// Gets network throughput history for a specific node.
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/network")]
+    public async Task<ActionResult<IEnumerable<NetworkTelemetryDto>>> GetNetworkTelemetry(Guid id, [FromQuery] int count = 120)
+    {
+        if (count <= 0) count = 120;
+        count = Math.Min(count, 2_000);
+
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var items = await _dbContext.TelemetrySnapshots
+            .AsNoTracking()
+            .Where(t => t.NodeId == id)
+            .OrderByDescending(t => t.Timestamp)
+            .Take(count)
+            .Select(t => new NetworkTelemetryDto
+            {
+                Timestamp = t.Timestamp,
+                NetRxBytesPerSec = t.NetRxBytesPerSec,
+                NetTxBytesPerSec = t.NetTxBytesPerSec
+            })
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    /// <summary>
+    /// Gets ping history for a specific node.
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/ping")]
+    public async Task<ActionResult<IEnumerable<PingTelemetryDto>>> GetPingTelemetry(Guid id, [FromQuery] int count = 120)
+    {
+        if (count <= 0) count = 120;
+        count = Math.Min(count, 2_000);
+
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var items = await _dbContext.TelemetrySnapshots
+            .AsNoTracking()
+            .Where(t => t.NodeId == id)
+            .OrderByDescending(t => t.Timestamp)
+            .Take(count)
+            .Select(t => new PingTelemetryDto
+            {
+                Timestamp = t.Timestamp,
+                PingTarget = t.PingTarget,
+                PingRttMs = t.PingRttMs,
+                PingPacketLossPercent = t.PingPacketLossPercent
+            })
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    /// <summary>
+    /// Gets service status snapshot history for a specific node.
+    /// </summary>
+    [HttpGet("{id:guid}/service-status")]
+    public async Task<ActionResult<IEnumerable<ServiceStatusSnapshotDto>>> GetServiceStatusHistory(Guid id, [FromQuery] int count = 200)
+    {
+        if (count <= 0) count = 200;
+        count = Math.Min(count, 5_000);
+
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var items = await _dbContext.ServiceStatusSnapshots
+            .AsNoTracking()
+            .Where(s => s.NodeId == id)
+            .OrderByDescending(s => s.Timestamp)
+            .ThenBy(s => s.ServiceName)
+            .Take(count)
+            .Select(s => new ServiceStatusSnapshotDto
+            {
+                Timestamp = s.Timestamp,
+                ServiceName = s.ServiceName,
+                State = s.State.ToString(),
+                Detail = s.Detail
+            })
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    /// <summary>
+    /// Gets SMART drive snapshot history for a specific node.
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/smart")]
+    public async Task<ActionResult<IEnumerable<SmartDriveSnapshotDto>>> GetSmartHistory(Guid id, [FromQuery] int count = 200)
+    {
+        if (count <= 0) count = 200;
+        count = Math.Min(count, 5_000);
+
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var items = await _dbContext.SmartDriveSnapshots
+            .AsNoTracking()
+            .Where(s => s.NodeId == id)
+            .OrderByDescending(s => s.Timestamp)
+            .ThenBy(s => s.Device)
+            .Take(count)
+            .Select(s => new SmartDriveSnapshotDto
+            {
+                Timestamp = s.Timestamp,
+                Device = s.Device,
+                Health = s.Health.ToString(),
+                TemperatureC = s.TemperatureC,
+                PowerOnHours = s.PowerOnHours
+            })
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    /// <summary>
+    /// Gets GPU snapshot history for a specific node.
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/gpus")]
+    public async Task<ActionResult<IEnumerable<GpuSnapshotDto>>> GetGpuHistory(Guid id, [FromQuery] int count = 500)
+    {
+        if (count <= 0) count = 500;
+        count = Math.Min(count, 10_000);
+
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var items = await _dbContext.GpuSnapshots
+            .AsNoTracking()
+            .Where(g => g.NodeId == id)
+            .OrderByDescending(g => g.Timestamp)
+            .ThenBy(g => g.GpuIndex)
+            .Take(count)
+            .Select(g => new GpuSnapshotDto
+            {
+                Timestamp = g.Timestamp,
+                GpuIndex = g.GpuIndex,
+                Vendor = g.Vendor.ToString(),
+                Name = g.Name,
+                UtilizationPercent = g.UtilizationPercent,
+                MemoryUsedBytes = g.MemoryUsedBytes,
+                MemoryTotalBytes = g.MemoryTotalBytes,
+                TemperatureC = g.TemperatureC
+            })
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    /// <summary>
+    /// Gets UPS snapshot history for a specific node.
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/ups")]
+    public async Task<ActionResult<IEnumerable<UpsSnapshotDto>>> GetUpsHistory(Guid id, [FromQuery] int count = 500)
+    {
+        if (count <= 0) count = 500;
+        count = Math.Min(count, 10_000);
+
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var items = await _dbContext.UpsSnapshots
+            .AsNoTracking()
+            .Where(u => u.NodeId == id)
+            .OrderByDescending(u => u.Timestamp)
+            .Take(count)
+            .Select(u => new UpsSnapshotDto
+            {
+                Timestamp = u.Timestamp,
+                Backend = u.Backend.ToString(),
+                BatteryPercent = u.BatteryPercent,
+                LoadPercent = u.LoadPercent,
+                OnBattery = u.OnBattery,
+                EstimatedRuntimeSeconds = u.EstimatedRuntimeSeconds
+            })
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    /// <summary>
     /// Gets command history for a specific node.
     /// </summary>
     /// <param name="id">The node ID.</param>
@@ -148,7 +351,7 @@ public class DevicesController : ControllerBase
             .Select(c => new CommandDto
             {
                 Id = c.Id,
-                CommandType = c.CommandType.ToString(),
+                CommandType = CommandTypeMapper.ToExternal(c.CommandType),
                 Payload = c.Payload,
                 Status = c.Status.ToString(),
                 OutputLog = c.OutputLog,
@@ -274,8 +477,8 @@ public class DevicesController : ControllerBase
             return NotFound();
         }
 
-        // Parse command type
-        if (!Enum.TryParse<CommandType>(request.CommandType, true, out var commandType))
+        // Parse command type (canonical wire names preferred; legacy enum names supported)
+        if (!CommandTypeMapper.TryParseExternal(request.CommandType, out var commandType))
         {
             return BadRequest($"Invalid command type: {request.CommandType}");
         }
@@ -354,7 +557,7 @@ public class DevicesController : ControllerBase
         return CreatedAtAction(nameof(GetCommands), new { id }, new CommandDto
         {
             Id = command.Id,
-            CommandType = command.CommandType.ToString(),
+            CommandType = CommandTypeMapper.ToExternal(command.CommandType),
             Payload = command.Payload,
             Status = command.Status.ToString(),
             OutputLog = command.OutputLog,
@@ -402,7 +605,7 @@ public class DevicesController : ControllerBase
 
             // Send directly to the agent (don't wait for dispatch service)
             await _hubContext.Clients.Client(connectionId)
-                .SendAsync("ExecuteCommand", uninstallCommand.Id, "agent.uninstall", string.Empty);
+                .SendAsync("ExecuteCommand", uninstallCommand.Id, CommandTypes.AgentUninstall, string.Empty);
         }
 
         _dbContext.Nodes.Remove(node);
@@ -471,6 +674,60 @@ public record TelemetryDto
     public float RamUsage { get; init; }
     public float DiskUsage { get; init; }
     public float? Temperature { get; init; }
+}
+
+public record NetworkTelemetryDto
+{
+    public DateTime Timestamp { get; init; }
+    public long? NetRxBytesPerSec { get; init; }
+    public long? NetTxBytesPerSec { get; init; }
+}
+
+public record PingTelemetryDto
+{
+    public DateTime Timestamp { get; init; }
+    public string? PingTarget { get; init; }
+    public float? PingRttMs { get; init; }
+    public float? PingPacketLossPercent { get; init; }
+}
+
+public record ServiceStatusSnapshotDto
+{
+    public DateTime Timestamp { get; init; }
+    public string ServiceName { get; init; } = string.Empty;
+    public string State { get; init; } = string.Empty;
+    public string? Detail { get; init; }
+}
+
+public record SmartDriveSnapshotDto
+{
+    public DateTime Timestamp { get; init; }
+    public string Device { get; init; } = string.Empty;
+    public string Health { get; init; } = string.Empty;
+    public float? TemperatureC { get; init; }
+    public int? PowerOnHours { get; init; }
+}
+
+public record GpuSnapshotDto
+{
+    public DateTime Timestamp { get; init; }
+    public int GpuIndex { get; init; }
+    public string Vendor { get; init; } = string.Empty;
+    public string? Name { get; init; }
+    public float? UtilizationPercent { get; init; }
+    public long? MemoryUsedBytes { get; init; }
+    public long? MemoryTotalBytes { get; init; }
+    public float? TemperatureC { get; init; }
+}
+
+public record UpsSnapshotDto
+{
+    public DateTime Timestamp { get; init; }
+    public string Backend { get; init; } = string.Empty;
+    public float? BatteryPercent { get; init; }
+    public float? LoadPercent { get; init; }
+    public bool? OnBattery { get; init; }
+    public int? EstimatedRuntimeSeconds { get; init; }
 }
 
 /// <summary>

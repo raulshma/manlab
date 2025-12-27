@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useTheme } from "@/components/use-theme";
 import { DiscordSettings } from "@/components/settings/DiscordSettings";
 import { AgentDefaultsSettings } from "@/components/settings/AgentDefaultsSettings";
+import { ScriptsSettings } from "@/components/settings/ScriptsSettings";
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -44,6 +45,7 @@ export function SettingsPage() {
       <Tabs defaultValue="general" className="w-full">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="scripts">Scripts</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
         </TabsList>
@@ -96,6 +98,9 @@ export function SettingsPage() {
                 <Button onClick={handleSaveConnection}>Save & Reload</Button>
             </CardFooter>
           </Card>
+        </TabsContent>
+        <TabsContent value="scripts" className="space-y-4">
+            <ScriptsSettings />
         </TabsContent>
         <TabsContent value="agents" className="space-y-4">
             <AgentDefaultsSettings />

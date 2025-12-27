@@ -1,6 +1,9 @@
 using System.Runtime.InteropServices;
+using System.Net.NetworkInformation;
 using ManLab.Shared.Dtos;
 using Microsoft.Extensions.Logging;
+using ManLab.Agent.Configuration;
+using ManLab.Agent.Networking;
 
 namespace ManLab.Agent.Telemetry;
 
@@ -10,7 +13,11 @@ namespace ManLab.Agent.Telemetry;
 public partial class WindowsTelemetryCollector : ITelemetryCollector
 {
     private readonly ILogger<WindowsTelemetryCollector> _logger;
+    private readonly AgentConfiguration _config;
     private readonly int _cacheSeconds;
+
+    private readonly GpuTelemetryCollector _gpuCollector;
+    private readonly UpsTelemetryCollector _upsCollector;
     
     // Previous CPU times for calculating usage
     private long _prevIdleTime;
@@ -22,10 +29,24 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
     private Dictionary<string, float>? _cachedDiskUsage;
     private DateTime _lastDiskCheck = DateTime.MinValue;
 
-    public WindowsTelemetryCollector(ILogger<WindowsTelemetryCollector> logger, int cacheSeconds = 30)
+    // Network throughput state
+    private string? _primaryInterfaceName;
+    private long? _prevRxBytes;
+    private long? _prevTxBytes;
+    private DateTime _prevNetSampleAtUtc;
+
+    // Ping state
+    private RollingPingWindow? _pingWindow;
+    private string? _resolvedPingTarget;
+
+    public WindowsTelemetryCollector(ILogger<WindowsTelemetryCollector> logger, AgentConfiguration config)
     {
         _logger = logger;
-        _cacheSeconds = cacheSeconds;
+        _config = config;
+        _cacheSeconds = config.TelemetryCacheSeconds;
+
+        _gpuCollector = new GpuTelemetryCollector(_logger, _config);
+        _upsCollector = new UpsTelemetryCollector(_logger, _config);
     }
 
     public TelemetryData Collect()
@@ -38,6 +59,13 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
             (data.RamUsedBytes, data.RamTotalBytes) = GetMemoryInfo();
             data.DiskUsage = GetDiskUsage();
             data.CpuTempCelsius = null; // Temperature not reliably available on Windows without WMI
+
+            PopulateNetworkTelemetry(data);
+            PopulatePingTelemetry(data);
+
+            // Optional: advanced hardware stats.
+            data.Gpus = _gpuCollector.Collect();
+            data.Ups = _upsCollector.Collect();
         }
         catch (Exception ex)
         {
@@ -45,6 +73,126 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
         }
 
         return data;
+    }
+
+    private void PopulateNetworkTelemetry(TelemetryData data)
+    {
+        if (!_config.EnableNetworkTelemetry)
+        {
+            return;
+        }
+
+        _primaryInterfaceName ??= NetworkInterfaceSelector.SelectPrimaryInterfaceName(_config.PrimaryInterfaceName, _logger);
+        var nic = NetworkInterfaceSelector.TryGetInterfaceByName(_primaryInterfaceName);
+        if (nic is null)
+        {
+            _primaryInterfaceName = NetworkInterfaceSelector.SelectPrimaryInterfaceName(null, _logger);
+            nic = NetworkInterfaceSelector.TryGetInterfaceByName(_primaryInterfaceName);
+        }
+
+        if (nic is null)
+        {
+            return;
+        }
+
+        if (!NetworkInterfaceSelector.TryGetIpv4ByteCounters(nic, out var rx, out var tx))
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        if (_prevRxBytes is null || _prevTxBytes is null || _prevNetSampleAtUtc == default)
+        {
+            _prevRxBytes = rx;
+            _prevTxBytes = tx;
+            _prevNetSampleAtUtc = now;
+            return;
+        }
+
+        var elapsedSeconds = (now - _prevNetSampleAtUtc).TotalSeconds;
+        if (elapsedSeconds <= 0.5)
+        {
+            return;
+        }
+
+        var drx = rx - _prevRxBytes.Value;
+        var dtx = tx - _prevTxBytes.Value;
+        if (drx < 0 || dtx < 0)
+        {
+            _prevRxBytes = rx;
+            _prevTxBytes = tx;
+            _prevNetSampleAtUtc = now;
+            return;
+        }
+
+        data.NetRxBytesPerSec = (long)(drx / elapsedSeconds);
+        data.NetTxBytesPerSec = (long)(dtx / elapsedSeconds);
+
+        _prevRxBytes = rx;
+        _prevTxBytes = tx;
+        _prevNetSampleAtUtc = now;
+    }
+
+    private void PopulatePingTelemetry(TelemetryData data)
+    {
+        if (!_config.EnablePingTelemetry)
+        {
+            return;
+        }
+
+        if (_config.PingWindowSize < 1)
+        {
+            return;
+        }
+
+        _pingWindow ??= new RollingPingWindow(_config.PingWindowSize);
+
+        _primaryInterfaceName ??= NetworkInterfaceSelector.SelectPrimaryInterfaceName(_config.PrimaryInterfaceName, _logger);
+        _resolvedPingTarget ??= ResolvePingTarget(_primaryInterfaceName);
+
+        if (string.IsNullOrWhiteSpace(_resolvedPingTarget))
+        {
+            return;
+        }
+
+        data.PingTarget = _resolvedPingTarget;
+
+        try
+        {
+            using var ping = new Ping();
+            var reply = ping.Send(_resolvedPingTarget, Math.Max(50, _config.PingTimeoutMs));
+
+            var success = reply.Status == IPStatus.Success;
+            var rttMs = success ? (float)reply.RoundtripTime : 0f;
+
+            _pingWindow.Add(success, rttMs);
+
+            var (avgRtt, loss, _) = _pingWindow.GetStats();
+            data.PingRttMs = avgRtt;
+            data.PingPacketLossPercent = loss;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Ping telemetry failed");
+        }
+    }
+
+    private string ResolvePingTarget(string? primaryInterfaceName)
+    {
+        var configured = _config.PingTarget?.Trim();
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        var nic = NetworkInterfaceSelector.TryGetInterfaceByName(primaryInterfaceName);
+        var gw = nic is not null ? NetworkInterfaceSelector.TryGetDefaultGatewayIpv4(nic) : null;
+        if (!string.IsNullOrWhiteSpace(gw))
+        {
+            return gw;
+        }
+
+        return "1.1.1.1";
     }
 
     private float GetCpuUsage()

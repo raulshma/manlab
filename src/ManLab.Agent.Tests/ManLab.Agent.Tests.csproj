@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ManLab.Agent\ManLab.Agent.csproj" />
+    <ProjectReference Include="..\ManLab.Shared\ManLab.Shared.csproj" />
+    <ProjectReference Include="..\ManLab.Server\ManLab.Server.csproj" />
   </ItemGroup>
 
 </Project>

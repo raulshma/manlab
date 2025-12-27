@@ -41,19 +41,19 @@ public sealed class TelemetryService : IAsyncDisposable
         {
             return new WindowsTelemetryCollector(
                 loggerFactory.CreateLogger<WindowsTelemetryCollector>(),
-                config.TelemetryCacheSeconds);
+                config);
         }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
             return new LinuxTelemetryCollector(
                 loggerFactory.CreateLogger<LinuxTelemetryCollector>(),
-                config.TelemetryCacheSeconds);
+                config);
         }
         else
         {
             return new LinuxTelemetryCollector(
                 loggerFactory.CreateLogger<LinuxTelemetryCollector>(),
-                config.TelemetryCacheSeconds);
+                config);
         }
     }
 

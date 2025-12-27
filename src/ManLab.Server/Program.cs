@@ -3,6 +3,9 @@ using ManLab.Server.Hubs;
 using ManLab.Server.Services;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Commands;
+using ManLab.Server.Services.Enhancements;
+using ManLab.Server.Services.Persistence;
+using ManLab.Server.Services.Retention;
 using ManLab.Shared.Dtos;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
@@ -33,6 +36,13 @@ builder.Services
 
         // Security/perf: keep detailed errors off by default.
         hubOptions.EnableDetailedErrors = builder.Environment.IsDevelopment();
+
+        // Rate limits and bounds: limit maximum message size to prevent abuse.
+        // 128KB allows for reasonably sized script output chunks while preventing excessive memory usage.
+        hubOptions.MaximumReceiveMessageSize = 128 * 1024;
+
+        // Limit concurrent streaming items per connection.
+        hubOptions.StreamBufferCapacity = 10;
     })
     .AddJsonProtocol(protocolOptions =>
     {
@@ -40,7 +50,14 @@ builder.Services
         protocolOptions.PayloadSerializerOptions.TypeInfoResolverChain.Insert(0, ManLabJsonContext.Default);
     });
 
+
 builder.Services.AddMemoryCache();
+
+// Enhancements services
+builder.Services.AddScoped<LogViewerSessionService>();
+builder.Services.AddScoped<TerminalSessionService>();
+builder.Services.AddScoped<RemoteToolsAuthorizationService>();
+builder.Services.AddHostedService<TerminalSessionCleanupService>();
 
 builder.Services.AddOptions<ManLab.Server.Services.Ssh.SshProvisioningOptions>()
     .Bind(builder.Configuration.GetSection(ManLab.Server.Services.Ssh.SshProvisioningOptions.SectionName));
@@ -73,9 +90,29 @@ builder.Services.AddHostedService<CommandDispatchService>();
 // Background services
 builder.Services.AddHostedService<HealthMonitorService>();
 
+// Retention cleanup (snapshot tables)
+builder.Services.AddOptions<RetentionOptions>()
+    .Bind(builder.Configuration.GetSection(RetentionOptions.SectionName));
+builder.Services.AddHostedService<RetentionCleanupService>();
+
 // Configure Entity Framework Core with PostgreSQL via Aspire integration.
 // The connection name ("manlab") must match the database resource name in the AppHost.
-builder.AddNpgsqlDbContext<DataContext>(connectionName: "manlab");
+var connectionString =
+    builder.Configuration.GetConnectionString("manlab") ??
+    builder.Configuration.GetConnectionString("DefaultConnection");
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "No database connection string configured. " +
+        "Run via the Aspire AppHost (which provides ConnectionStrings:manlab) or set ConnectionStrings:DefaultConnection.");
+}
+
+builder.Services.AddDbContext<DataContext>(options =>
+{
+    options.UseNpgsql(connectionString);
+    options.AddInterceptors(new BoundedTextSaveChangesInterceptor());
+});
 
 var app = builder.Build();
 

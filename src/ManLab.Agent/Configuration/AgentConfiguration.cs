@@ -30,4 +30,108 @@ public class AgentConfiguration
     /// This reduces I/O overhead since drives rarely change at runtime.
     /// </summary>
     public int TelemetryCacheSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Optional override for the primary network interface name the agent should report
+    /// during registration (e.g. "eth0" / "Ethernet").
+    /// If null/empty, the agent will attempt to auto-detect a reasonable default.
+    /// </summary>
+    public string? PrimaryInterfaceName { get; set; }
+
+    /// <summary>
+    /// Enable network throughput telemetry (NetRxBytesPerSec/NetTxBytesPerSec).
+    /// Default is true.
+    /// </summary>
+    public bool EnableNetworkTelemetry { get; set; } = true;
+
+    /// <summary>
+    /// Enable ping-based connectivity telemetry (PingTarget/PingRttMs/PingPacketLossPercent).
+    /// Default is true.
+    /// </summary>
+    public bool EnablePingTelemetry { get; set; } = true;
+
+    /// <summary>
+    /// Enable GPU telemetry (TelemetryData.Gpus).
+    /// Default is true.
+    /// </summary>
+    public bool EnableGpuTelemetry { get; set; } = true;
+
+    /// <summary>
+    /// Enable UPS telemetry (TelemetryData.Ups).
+    /// Default is true.
+    /// </summary>
+    public bool EnableUpsTelemetry { get; set; } = true;
+
+    /// <summary>
+    /// Optional ping target override (hostname or IP).
+    /// If null/empty, the agent will attempt to use the primary interface's default gateway,
+    /// else falls back to 1.1.1.1.
+    /// </summary>
+    public string? PingTarget { get; set; }
+
+    /// <summary>
+    /// Ping timeout in milliseconds.
+    /// Default is 800ms.
+    /// </summary>
+    public int PingTimeoutMs { get; set; } = 800;
+
+    /// <summary>
+    /// Rolling window size (number of samples) used to compute packet loss and average RTT.
+    /// Default is 10 samples.
+    /// </summary>
+    public int PingWindowSize { get; set; } = 10;
+
+    /// <summary>
+    /// Enable remote log viewer commands (log.read/log.tail).
+    /// Default is false (default-deny).
+    /// </summary>
+    public bool EnableLogViewer { get; set; } = false;
+
+    /// <summary>
+    /// Enable remote script execution (script.run).
+    /// Default is false (default-deny).
+    /// </summary>
+    public bool EnableScripts { get; set; } = false;
+
+    /// <summary>
+    /// Enable remote terminal commands (terminal.*).
+    /// Default is false (default-deny).
+    /// </summary>
+    public bool EnableTerminal { get; set; } = false;
+
+    /// <summary>
+    /// Hard upper bound for log reads/tails produced by the agent (bytes).
+    /// This is a defense-in-depth limit; the server also enforces bounds.
+    /// </summary>
+    public int LogMaxBytes { get; set; } = 64 * 1024;
+
+    /// <summary>
+    /// Minimum seconds between log read/tail operations (rate limit).
+    /// </summary>
+    public int LogMinSecondsBetweenRequests { get; set; } = 1;
+
+    /// <summary>
+    /// Hard upper bound for script output captured/streamed by the agent (bytes).
+    /// </summary>
+    public int ScriptMaxOutputBytes { get; set; } = 64 * 1024;
+
+    /// <summary>
+    /// Maximum script runtime in seconds.
+    /// </summary>
+    public int ScriptMaxDurationSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Minimum seconds between script runs (rate limit).
+    /// </summary>
+    public int ScriptMinSecondsBetweenRuns { get; set; } = 1;
+
+    /// <summary>
+    /// Hard upper bound for terminal output produced by the agent (bytes).
+    /// </summary>
+    public int TerminalMaxOutputBytes { get; set; } = 64 * 1024;
+
+    /// <summary>
+    /// Maximum terminal session duration in seconds.
+    /// </summary>
+    public int TerminalMaxDurationSeconds { get; set; } = 10 * 60;
 }

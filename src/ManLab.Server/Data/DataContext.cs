@@ -1,5 +1,7 @@
 using ManLab.Server.Data.Entities;
+using ManLab.Server.Data.Entities.Enhancements;
 using Microsoft.EntityFrameworkCore;
+using ManLab.Server.Services.Persistence;
 
 namespace ManLab.Server.Data;
 
@@ -35,6 +37,22 @@ public class DataContext : DbContext
 
     /// <summary>Per-node configuration settings.</summary>
     public DbSet<NodeSetting> NodeSettings => Set<NodeSetting>();
+
+    // Enhancements
+    public DbSet<ServiceMonitorConfig> ServiceMonitorConfigs => Set<ServiceMonitorConfig>();
+    public DbSet<ServiceStatusSnapshot> ServiceStatusSnapshots => Set<ServiceStatusSnapshot>();
+    public DbSet<SmartDriveSnapshot> SmartDriveSnapshots => Set<SmartDriveSnapshot>();
+    public DbSet<GpuSnapshot> GpuSnapshots => Set<GpuSnapshot>();
+    public DbSet<UpsSnapshot> UpsSnapshots => Set<UpsSnapshot>();
+
+    public DbSet<AlertRule> AlertRules => Set<AlertRule>();
+    public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
+
+    public DbSet<Script> Scripts => Set<Script>();
+    public DbSet<ScriptRun> ScriptRuns => Set<ScriptRun>();
+
+    public DbSet<LogViewerPolicy> LogViewerPolicies => Set<LogViewerPolicy>();
+    public DbSet<TerminalSession> TerminalSessions => Set<TerminalSession>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -109,6 +127,158 @@ public class DataContext : DbContext
 
             entity.HasOne(e => e.Node)
                 .WithMany()
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: Service monitor config
+        modelBuilder.Entity<ServiceMonitorConfig>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => new { e.NodeId, e.ServiceName }).IsUnique();
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.ServiceMonitorConfigs)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: Service status snapshots
+        modelBuilder.Entity<ServiceStatusSnapshot>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.Timestamp);
+            entity.HasIndex(e => new { e.NodeId, e.Timestamp });
+            entity.HasIndex(e => new { e.NodeId, e.ServiceName, e.Timestamp });
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.ServiceStatusSnapshots)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: SMART snapshots
+        modelBuilder.Entity<SmartDriveSnapshot>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.Timestamp);
+            entity.HasIndex(e => new { e.NodeId, e.Timestamp });
+            entity.HasIndex(e => new { e.NodeId, e.Device, e.Timestamp });
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.SmartDriveSnapshots)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: GPU snapshots
+        modelBuilder.Entity<GpuSnapshot>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.Timestamp);
+            entity.HasIndex(e => new { e.NodeId, e.Timestamp });
+            entity.HasIndex(e => new { e.NodeId, e.GpuIndex, e.Timestamp });
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.GpuSnapshots)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: UPS snapshots
+        modelBuilder.Entity<UpsSnapshot>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.Timestamp);
+            entity.HasIndex(e => new { e.NodeId, e.Timestamp });
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.UpsSnapshots)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: Alerting
+        modelBuilder.Entity<AlertRule>(entity =>
+        {
+            entity.HasIndex(e => e.Enabled);
+            entity.HasIndex(e => e.Scope);
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.UpdatedAt);
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.AlertRules)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AlertEvent>(entity =>
+        {
+            entity.HasIndex(e => e.AlertRuleId);
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.StartedAt);
+            entity.HasIndex(e => new { e.AlertRuleId, e.Status, e.StartedAt });
+
+            entity.HasOne(e => e.AlertRule)
+                .WithMany(r => r.Events)
+                .HasForeignKey(e => e.AlertRuleId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.AlertEvents)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: Scripts
+        modelBuilder.Entity<Script>(entity =>
+        {
+            entity.HasIndex(e => e.Name).IsUnique();
+            entity.HasIndex(e => e.UpdatedAt);
+        });
+
+        modelBuilder.Entity<ScriptRun>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.ScriptId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => new { e.NodeId, e.CreatedAt });
+
+            entity.HasOne(e => e.Script)
+                .WithMany(s => s.Runs)
+                .HasForeignKey(e => e.ScriptId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.ScriptRuns)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: Log policies
+        modelBuilder.Entity<LogViewerPolicy>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => new { e.NodeId, e.Path }).IsUnique();
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.LogViewerPolicies)
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: Terminal sessions
+        modelBuilder.Entity<TerminalSession>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.ExpiresAt);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => new { e.NodeId, e.CreatedAt });
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.TerminalSessions)
                 .HasForeignKey(e => e.NodeId)
                 .OnDelete(DeleteBehavior.Cascade);
         });

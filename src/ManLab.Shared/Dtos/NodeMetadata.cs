@@ -16,4 +16,15 @@ public class NodeMetadata
 
     /// <summary>Version of the ManLab agent.</summary>
     public string? AgentVersion { get; set; }
+
+    /// <summary>
+    /// Optional JSON describing agent capabilities (e.g. detected tools, supported features).
+    /// Stored as-is by the server (jsonb) so the schema can evolve without breaking AOT.
+    /// </summary>
+    public string? CapabilitiesJson { get; set; }
+
+    /// <summary>
+    /// Optional primary network interface name selected by the agent (e.g. "eth0").
+    /// </summary>
+    public string? PrimaryInterface { get; set; }
 }

@@ -27,5 +27,37 @@ public enum CommandType
     DisableTask,
 
     /// <summary>Uninstall the agent from the machine.</summary>
-    Uninstall
+    Uninstall,
+
+    // --- Enhancements (append-only to preserve persisted numeric values) ---
+
+    /// <summary>Request service status snapshots.</summary>
+    ServiceStatus,
+
+    /// <summary>Restart a service.</summary>
+    ServiceRestart,
+
+    /// <summary>Request a SMART scan.</summary>
+    SmartScan,
+
+    /// <summary>Execute a server-defined script.</summary>
+    ScriptRun,
+
+    /// <summary>Read a bounded log file chunk.</summary>
+    LogRead,
+
+    /// <summary>Tail a log file stream.</summary>
+    LogTail,
+
+    /// <summary>Open a restricted terminal session.</summary>
+    TerminalOpen,
+
+    /// <summary>Close a restricted terminal session.</summary>
+    TerminalClose,
+
+    /// <summary>Send terminal input.</summary>
+    TerminalInput,
+
+    /// <summary>Cancel a running command by ID.</summary>
+    CommandCancel
 }

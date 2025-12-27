@@ -93,7 +93,7 @@ export interface Container {
 /**
  * Command execution status.
  */
-export type CommandExecutionStatus = 'Queued' | 'InProgress' | 'Success' | 'Failed';
+export type CommandExecutionStatus = 'Queued' | 'Sent' | 'InProgress' | 'Success' | 'Failed';
 
 /**
  * Command record from the server.
@@ -219,3 +219,185 @@ export interface AgentConfiguration {
   maxReconnectDelaySeconds: number;
 }
 
+/**
+ * Enhancements: Service monitoring config
+ */
+export interface ServiceMonitorConfig {
+  id: string;
+  nodeId: string;
+  serviceName: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Enhancements: Log viewer policy + session
+ */
+export interface LogViewerPolicy {
+  id: string;
+  nodeId: string;
+  displayName: string;
+  path: string;
+  maxBytesPerRequest: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LogViewerSession {
+  sessionId: string;
+  nodeId: string;
+  policyId: string;
+  displayName: string;
+  path: string;
+  maxBytesPerRequest: number;
+  expiresAt: string;
+}
+
+/**
+ * Enhancements: Scripts + runs
+ */
+export type ScriptShell = "Bash" | "PowerShell";
+
+export interface ScriptSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  shell: ScriptShell;
+  isReadOnly: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Script extends ScriptSummary {
+  content: string;
+}
+
+export type ScriptRunStatus = "Queued" | "Sent" | "InProgress" | "Success" | "Failed" | "Cancelled";
+
+export interface ScriptRun {
+  id: string;
+  nodeId: string;
+  scriptId: string;
+  requestedBy: string | null;
+  status: ScriptRunStatus;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  stdoutTail: string | null;
+  stderrTail: string | null;
+}
+
+export interface CreateScriptRunResponse {
+  runId: string;
+  commandId: string;
+}
+
+/**
+ * Enhancements: Telemetry history DTOs
+ */
+export interface NetworkTelemetryPoint {
+  timestamp: string;
+  netRxBytesPerSec: number | null;
+  netTxBytesPerSec: number | null;
+}
+
+export interface PingTelemetryPoint {
+  timestamp: string;
+  pingTarget: string | null;
+  pingRttMs: number | null;
+  pingPacketLossPercent: number | null;
+}
+
+export interface ServiceStatusSnapshot {
+  timestamp: string;
+  serviceName: string;
+  state: string;
+  detail: string | null;
+}
+
+export interface SmartDriveSnapshot {
+  timestamp: string;
+  device: string;
+  health: string;
+  temperatureC: number | null;
+  powerOnHours: number | null;
+}
+
+export interface GpuSnapshot {
+  timestamp: string;
+  gpuIndex: number;
+  vendor: string;
+  name: string | null;
+  utilizationPercent: number | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  temperatureC: number | null;
+}
+
+export interface UpsSnapshot {
+  timestamp: string;
+  backend: string;
+  batteryPercent: number | null;
+  loadPercent: number | null;
+  onBattery: boolean | null;
+  estimatedRuntimeSeconds: number | null;
+}
+
+/**
+ * Enhancements: Log viewer responses
+ */
+export interface LogReadResponse {
+  sessionId: string;
+  nodeId: string;
+  path: string;
+  content: string;
+  commandId: string;
+  status: string;
+  error: string | null;
+}
+
+export interface LogTailResponse {
+  sessionId: string;
+  nodeId: string;
+  path: string;
+  content: string;
+  commandId: string;
+  status: string;
+}
+
+/**
+ * Enhancements: Terminal session types
+ */
+export interface TerminalOpenResponse {
+  sessionId: string;
+  nodeId: string;
+  expiresAt: string;
+  commandId: string;
+  warning: string;
+}
+
+export interface TerminalInputResponse {
+  sessionId: string;
+  commandId: string;
+  success: boolean;
+}
+
+export interface TerminalCloseResponse {
+  sessionId: string;
+  closed: boolean;
+}
+
+export interface TerminalSessionResponse {
+  sessionId: string;
+  nodeId: string;
+  expiresAt: string;
+  isExpired: boolean;
+  requestedBy: string | null;
+  warning?: string;
+}
+
+export interface CancelScriptRunResponse {
+  commandId?: string;
+  message: string;
+}

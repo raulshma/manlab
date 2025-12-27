@@ -39,11 +39,25 @@ import {
   shutdownAgent,
   enableAgentTask,
   disableAgentTask,
+  fetchNodeNetworkTelemetry,
+  fetchNodePingTelemetry,
+  fetchSmartHistory,
+  fetchGpuHistory,
+  fetchUpsHistory,
 } from "../api";
 import { TelemetryChart } from "./TelemetryChart";
 import { ContainerList } from "./ContainerList";
 import { ConfirmationModal } from "./ConfirmationModal";
 import { NodeCommandsPanel } from "./NodeCommandsPanel";
+import { NetworkThroughputChart } from "./NetworkThroughputChart";
+import { PingLatencyChart } from "./PingLatencyChart";
+import { SmartDrivePanel } from "./SmartDrivePanel";
+import { GpuStatsPanel } from "./GpuStatsPanel";
+import { UpsStatusPanel } from "./UpsStatusPanel";
+import { ServiceMonitoringPanel } from "./ServiceMonitoringPanel";
+import { LogViewerPanel } from "./LogViewerPanel";
+import { ScriptRunnerPanel } from "./ScriptRunnerPanel";
+import { TerminalPanel } from "./TerminalPanel";
 
 interface NodeDetailViewProps {
   nodeId: string;
@@ -159,16 +173,51 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
     refetchInterval: 30000,
   });
 
+  // Fetch network telemetry history
+  const { data: networkTelemetry } = useQuery({
+    queryKey: ["networkTelemetry", nodeId],
+    queryFn: () => fetchNodeNetworkTelemetry(nodeId, 60),
+    refetchInterval: 10000,
+  });
+
+  // Fetch ping telemetry history
+  const { data: pingTelemetry } = useQuery({
+    queryKey: ["pingTelemetry", nodeId],
+    queryFn: () => fetchNodePingTelemetry(nodeId, 60),
+    refetchInterval: 10000,
+  });
+
+  // Fetch SMART drive history
+  const { data: smartData } = useQuery({
+    queryKey: ["smartData", nodeId],
+    queryFn: () => fetchSmartHistory(nodeId, 50),
+    refetchInterval: 60000, // Less frequent for hardware data
+  });
+
+  // Fetch GPU history
+  const { data: gpuData } = useQuery({
+    queryKey: ["gpuData", nodeId],
+    queryFn: () => fetchGpuHistory(nodeId, 50),
+    refetchInterval: 10000,
+  });
+
+  // Fetch UPS history
+  const { data: upsData } = useQuery({
+    queryKey: ["upsData", nodeId],
+    queryFn: () => fetchUpsHistory(nodeId, 50),
+    refetchInterval: 10000,
+  });
+
   const currentChannel =
     nodeSettings?.find((s) => s.key === "agent.update.channel")?.value ??
     "stable";
 
   const dockerListCommand = (commands ?? []).find(
-    (c) => c.commandType === "DockerList" && c.status !== "Failed"
+    (c) => c.commandType === "docker.list" && c.status !== "Failed"
   );
   const latestSuccessfulDockerList = (commands ?? []).find(
     (c) =>
-      c.commandType === "DockerList" && c.status === "Success" && !!c.outputLog
+      c.commandType === "docker.list" && c.status === "Success" && !!c.outputLog
   );
 
   let dockerContainers: Container[] = [];
@@ -216,6 +265,7 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
 
   const isDockerListRunning =
     dockerListCommand?.status === "Queued" ||
+    dockerListCommand?.status === "Sent" ||
     dockerListCommand?.status === "InProgress";
 
   const dockerListMutation = useMutation({
@@ -465,6 +515,31 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
           </div>
         </section>
 
+        {/* Network Monitoring */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            Network Monitoring
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <NetworkThroughputChart data={networkTelemetry || []} />
+            <PingLatencyChart data={pingTelemetry || []} />
+          </div>
+        </section>
+
+        {/* Hardware Health */}
+        {((smartData && smartData.length > 0) || (gpuData && gpuData.length > 0) || (upsData && upsData.length > 0)) && (
+          <section className="mb-8">
+            <h2 className="text-lg font-semibold text-foreground mb-4">
+              Hardware Health
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <SmartDrivePanel data={smartData || []} />
+              <GpuStatsPanel data={gpuData || []} />
+              <UpsStatusPanel data={upsData || []} />
+            </div>
+          </section>
+        )}
+
         {/* Docker Containers */}
         <section className="mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -501,6 +576,23 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
               Docker queries are only available when the node is online.
             </p>
           )}
+        </section>
+
+        {/* Service Monitoring */}
+        <section className="mb-8">
+          <ServiceMonitoringPanel nodeId={nodeId} nodeStatus={node.status} />
+        </section>
+
+        {/* Remote Tools */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            Remote Tools
+          </h2>
+          <div className="space-y-6">
+            <LogViewerPanel nodeId={nodeId} nodeStatus={node.status} />
+            <ScriptRunnerPanel nodeId={nodeId} nodeStatus={node.status} />
+            <TerminalPanel nodeId={nodeId} nodeStatus={node.status} />
+          </div>
         </section>
 
         {/* Commands */}

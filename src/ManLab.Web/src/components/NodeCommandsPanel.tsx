@@ -24,6 +24,8 @@ function statusVariant(
       return "destructive";
     case "InProgress":
       return "secondary";
+    case "Sent":
+      return "secondary";
     case "Queued":
       return "outline";
     default:
@@ -43,7 +45,7 @@ export function NodeCommandsPanel({ nodeId }: { nodeId: string }) {
     refetchInterval: (query) => {
       const data = query.state.data as Command[] | undefined;
       const hasRunning = data?.some(
-        (c) => c.status === "Queued" || c.status === "InProgress"
+        (c) => c.status === "Queued" || c.status === "Sent" || c.status === "InProgress"
       );
       return hasRunning ? 2000 : 10_000;
     },

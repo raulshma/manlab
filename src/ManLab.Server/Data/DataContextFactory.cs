@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
+using ManLab.Server.Services.Persistence;
 
 namespace ManLab.Server.Data;
 
@@ -56,6 +57,7 @@ public sealed class DataContextFactory : IDesignTimeDbContextFactory<DataContext
 
         var optionsBuilder = new DbContextOptionsBuilder<DataContext>();
         optionsBuilder.UseNpgsql(connectionString);
+        optionsBuilder.AddInterceptors(new BoundedTextSaveChangesInterceptor());
 
         return new DataContext(optionsBuilder.Options);
     }

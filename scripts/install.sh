@@ -91,6 +91,60 @@ download() {
   fi
 }
 
+get_github_release_info() {
+  local server_url="$1"
+  local info_url="${server_url}/api/binaries/agent/github-release-info"
+  
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$info_url" --connect-timeout 10 2>/dev/null || echo ""
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$info_url" --timeout=10 2>/dev/null || echo ""
+  else
+    echo ""
+  fi
+}
+
+try_download_from_github() {
+  local server_url="$1"
+  local rid="$2"
+  local out="$3"
+  
+  local release_info
+  release_info="$(get_github_release_info "$server_url")"
+  
+  if [[ -z "$release_info" ]]; then
+    return 1
+  fi
+  
+  # Parse JSON with python3 if available, otherwise jq
+  local enabled=""
+  local binary_url=""
+  
+  if command -v python3 >/dev/null 2>&1; then
+    enabled=$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('true' if d.get('enabled') else 'false')" <<< "$release_info" 2>/dev/null || echo "false")
+    binary_url=$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); urls=d.get('downloadUrls',{}); r=urls.get('$rid',{}); print(r.get('binaryUrl',''))" <<< "$release_info" 2>/dev/null || echo "")
+  elif command -v jq >/dev/null 2>&1; then
+    enabled=$(echo "$release_info" | jq -r '.enabled // false' 2>/dev/null || echo "false")
+    binary_url=$(echo "$release_info" | jq -r ".downloadUrls.\"$rid\".binaryUrl // \"\"" 2>/dev/null || echo "")
+  else
+    # No JSON parser available
+    return 1
+  fi
+  
+  if [[ "$enabled" != "true" ]] || [[ -z "$binary_url" ]]; then
+    return 1
+  fi
+  
+  echo "Attempting download from GitHub release: $binary_url"
+  if download "$binary_url" "$out"; then
+    echo "  Downloaded from GitHub successfully"
+    return 0
+  else
+    echo "  GitHub download failed, falling back to server..." >&2
+    return 1
+  fi
+}
+
 backup_file() {
   local path="$1"
   if [[ -f "$path" ]]; then
@@ -333,8 +387,13 @@ trap cleanup EXIT
 TMP_BIN="$TMP_DIR/$BIN_NAME"
 TMP_APPSETTINGS="$TMP_DIR/appsettings.json"
 
-echo "Downloading agent binary: $BIN_URL"
-download "$BIN_URL" "$TMP_BIN"
+# Try downloading from GitHub releases first, fall back to server API
+if try_download_from_github "$SERVER" "$RID" "$TMP_BIN"; then
+  : # Downloaded from GitHub
+else
+  echo "Downloading agent binary from server: $BIN_URL"
+  download "$BIN_URL" "$TMP_BIN"
+fi
 
 echo "Downloading appsettings.json: $APPSETTINGS_URL"
 # appsettings.json is optional; if not staged the server will return 404.
