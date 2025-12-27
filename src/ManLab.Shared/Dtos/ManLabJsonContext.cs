@@ -10,6 +10,7 @@ namespace ManLab.Shared.Dtos;
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(NodeMetadata))]
+[JsonSerializable(typeof(NodeRegisteredDto))]
 [JsonSerializable(typeof(TelemetryData))]
 [JsonSerializable(typeof(Dictionary<string, float>))]
 [JsonSerializable(typeof(Guid))]

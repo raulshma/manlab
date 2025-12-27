@@ -13,6 +13,7 @@ namespace ManLab.Server.Services.Commands;
 public sealed class CommandDispatchService : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan IdleMaxInterval = TimeSpan.FromSeconds(30);
     private const int BatchSize = 25;
 
     private readonly ILogger<CommandDispatchService> _logger;
@@ -48,11 +49,20 @@ public sealed class CommandDispatchService : BackgroundService
             return;
         }
 
+        var currentInterval = Interval;
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await DispatchQueuedCommandsAsync(stoppingToken);
+                var dispatchedAny = await DispatchQueuedCommandsAsync(stoppingToken);
+
+                // Adaptive backoff:
+                // - If we dispatched something, stay responsive.
+                // - If nothing was dispatched (or no connections), back off to reduce DB polling.
+                currentInterval = dispatchedAny
+                    ? Interval
+                    : TimeSpan.FromSeconds(Math.Min(IdleMaxInterval.TotalSeconds, Math.Max(Interval.TotalSeconds, currentInterval.TotalSeconds * 2)));
             }
             catch (OperationCanceledException)
             {
@@ -65,7 +75,7 @@ public sealed class CommandDispatchService : BackgroundService
 
             try
             {
-                await Task.Delay(Interval, stoppingToken);
+                await Task.Delay(currentInterval, stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -76,38 +86,40 @@ public sealed class CommandDispatchService : BackgroundService
         _logger.LogInformation("CommandDispatchService stopped");
     }
 
-    private async Task DispatchQueuedCommandsAsync(CancellationToken cancellationToken)
+    private async Task<bool> DispatchQueuedCommandsAsync(CancellationToken cancellationToken)
     {
         // Early exit if no agents are connected - avoids unnecessary database queries
         if (!_registry.HasConnections())
         {
-            return;
+            return false;
+        }
+
+        var connectedNodeIds = _registry.GetConnectedNodeIdsSnapshot();
+        if (connectedNodeIds.Length == 0)
+        {
+            return false;
         }
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
 
-        // Pull a small batch of queued commands.
+        // Pull a small batch of queued commands for currently connected nodes.
+        // This avoids scanning/returning commands for offline nodes and avoids an eager JOIN.
         var queued = await db.CommandQueue
-            .Include(c => c.Node)
-            .Where(c => c.Status == CommandStatus.Queued)
+            .Where(c => c.Status == CommandStatus.Queued && connectedNodeIds.Contains(c.NodeId))
             .OrderBy(c => c.CreatedAt)
             .Take(BatchSize)
             .ToListAsync(cancellationToken);
 
         if (queued.Count == 0)
         {
-            return;
+            return false;
         }
+
+        var dispatchedAny = false;
 
         foreach (var cmd in queued)
         {
-            // Only dispatch to online nodes.
-            if (cmd.Node.Status != NodeStatus.Online)
-            {
-                continue;
-            }
-
             if (!_registry.TryGet(cmd.NodeId, out var connectionId))
             {
                 continue;
@@ -138,6 +150,8 @@ public sealed class CommandDispatchService : BackgroundService
             cmd.OutputLog = AppendLog(cmd.OutputLog, $"Dispatched to agent at {DateTime.UtcNow:o} (connectionId={connectionId}).");
             await db.SaveChangesAsync(cancellationToken);
 
+            dispatchedAny = true;
+
             await _hubContext.Clients.Client(connectionId)
                 .SendAsync("ExecuteCommand", cmd.Id, agentType, payload, cancellationToken);
 
@@ -148,6 +162,8 @@ public sealed class CommandDispatchService : BackgroundService
                 cmd.Status.ToString(),
                 cancellationToken);
         }
+
+        return dispatchedAny;
     }
 
     private static (string agentType, string payload, bool supported) MapToAgentCommand(CommandType type, string? payload)

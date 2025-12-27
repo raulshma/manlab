@@ -15,7 +15,6 @@ public sealed class ConnectionManager : IAsyncDisposable
     private readonly ILogger<ConnectionManager> _logger;
     private readonly AgentConfiguration _config;
     private readonly HubConnection _connection;
-    private readonly CancellationTokenSource _cts = new();
     private readonly HeartbeatRetryManager _heartbeatRetryManager;
 
     private Guid _nodeId;
@@ -68,12 +67,19 @@ public sealed class ConnectionManager : IAsyncDisposable
             {
                 if (!string.IsNullOrEmpty(_config.AuthToken))
                 {
-                    options.Headers.Add("Authorization", $"Bearer {_config.AuthToken}");
+                    // Use the standard SignalR token mechanism.
+                    // Server supports both Authorization header and access_token query string.
+                    options.AccessTokenProvider = () => Task.FromResult(_config.AuthToken)!;
                 }
             })
             .WithAutomaticReconnect(new ExponentialBackoffRetryPolicy(_config.MaxReconnectDelaySeconds));
 
         _connection = builder.Build();
+
+        // Make timeouts explicit and aligned with typical SignalR guidance.
+        // These values should be >= server KeepAliveInterval and client timeout should be ~2x.
+        _connection.KeepAliveInterval = TimeSpan.FromSeconds(15);
+        _connection.ServerTimeout = TimeSpan.FromSeconds(30);
 
         // Register event handlers for server-to-agent methods
         _connection.On<Guid, string, string>("ExecuteCommand", HandleExecuteCommand);
@@ -402,9 +408,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await _cts.CancelAsync().ConfigureAwait(false);
         await _connection.DisposeAsync().ConfigureAwait(false);
-        _cts.Dispose();
         GC.SuppressFinalize(this);
     }
 }

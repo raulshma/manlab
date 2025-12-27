@@ -15,6 +15,9 @@ namespace ManLab.Server.Hubs;
 /// </summary>
 public class AgentHub : Hub
 {
+    private const string ContextNodeIdKey = "manlab.nodeId";
+    private const string ContextTokenHashKey = "manlab.tokenHash";
+
     private readonly ILogger<AgentHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentConnectionRegistry _connectionRegistry;
@@ -48,6 +51,10 @@ public class AgentHub : Hub
             Context.ConnectionId, exception?.Message ?? "Normal disconnect");
 
         _connectionRegistry.TryRemoveByConnectionId(Context.ConnectionId, out _);
+
+        // Best-effort cleanup of per-connection auth context.
+        Context.Items.Remove(ContextNodeIdKey);
+        Context.Items.Remove(ContextTokenHashKey);
 
         await base.OnDisconnectedAsync(exception);
     }
@@ -91,6 +98,11 @@ public class AgentHub : Hub
 
             // Bind the latest connectionId to this nodeId for targeted server->agent calls.
             _connectionRegistry.Set(authedNode.Id, Context.ConnectionId);
+
+            // Bind auth context to this connection so subsequent calls (heartbeat, status updates)
+            // do not require a DB round-trip just to re-validate the token.
+            Context.Items[ContextNodeIdKey] = authedNode.Id;
+            Context.Items[ContextTokenHashKey] = tokenHash;
 
             if (previousStatus != authedNode.Status)
             {
@@ -138,22 +150,46 @@ public class AgentHub : Hub
         // Bind the latest connectionId to this nodeId for targeted server->agent calls.
         _connectionRegistry.Set(newNode.Id, Context.ConnectionId);
 
+        // Bind auth context to this connection.
+        Context.Items[ContextNodeIdKey] = newNode.Id;
+        Context.Items[ContextTokenHashKey] = tokenHash;
+
         // Let dashboards upsert immediately without waiting for a REST poll.
-        await Clients.All.SendAsync("NodeRegistered", new
+        await Clients.All.SendAsync("NodeRegistered", new NodeRegisteredDto
         {
-            id = newNode.Id,
-            hostname = newNode.Hostname,
-            ipAddress = newNode.IpAddress,
-            os = newNode.OS,
-            agentVersion = newNode.AgentVersion,
-            lastSeen = newNode.LastSeen,
-            status = newNode.Status.ToString(),
-            createdAt = newNode.CreatedAt
+            Id = newNode.Id,
+            Hostname = newNode.Hostname,
+            IpAddress = newNode.IpAddress,
+            OS = newNode.OS,
+            AgentVersion = newNode.AgentVersion,
+            LastSeen = newNode.LastSeen,
+            Status = newNode.Status.ToString(),
+            CreatedAt = newNode.CreatedAt
         });
 
         await Clients.All.SendAsync("NodeStatusChanged", newNode.Id, newNode.Status.ToString(), newNode.LastSeen);
 
         return newNode.Id;
+    }
+
+    private bool TryGetRegisteredAgentContext(out Guid registeredNodeId, out string registeredTokenHash)
+    {
+        registeredNodeId = Guid.Empty;
+        registeredTokenHash = string.Empty;
+
+        if (!Context.Items.TryGetValue(ContextNodeIdKey, out var nodeObj) || nodeObj is not Guid nodeId)
+        {
+            return false;
+        }
+
+        if (!Context.Items.TryGetValue(ContextTokenHashKey, out var tokenObj) || tokenObj is not string tokenHash)
+        {
+            return false;
+        }
+
+        registeredNodeId = nodeId;
+        registeredTokenHash = tokenHash;
+        return registeredNodeId != Guid.Empty && !string.IsNullOrWhiteSpace(registeredTokenHash);
     }
 
     /// <summary>
@@ -164,37 +200,22 @@ public class AgentHub : Hub
     /// <param name="data">Telemetry data from the agent.</param>
     public async Task SendHeartbeat(Guid nodeId, TelemetryData data)
     {
-        if (!TryGetBearerToken(out var bearerToken))
+        // Heartbeats are allowed only after a successful Register(), which binds node/token to this connection.
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
         {
-            throw new HubException("Unauthorized: missing bearer token.");
+            throw new HubException("Unauthorized: agent must register before sending heartbeats.");
         }
 
-        var tokenHash = TokenHasher.NormalizeToSha256Hex(bearerToken);
+        // Prevent a connected agent from spoofing another nodeId.
+        if (registeredNodeId != nodeId)
+        {
+            _logger.LogWarning("Rejected heartbeat for node {NodeId}: connection bound to node {RegisteredNodeId}", nodeId, registeredNodeId);
+            throw new HubException("Unauthorized: nodeId does not match registered connection.");
+        }
 
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
 
-        // Use AsNoTracking for validation - we only need to verify auth and get previous status
-        var nodeInfo = await dbContext.Nodes
-            .AsNoTracking()
-            .Where(n => n.Id == nodeId)
-            .Select(n => new { n.AuthKeyHash, n.Status })
-            .FirstOrDefaultAsync();
-
-        if (nodeInfo == null)
-        {
-            _logger.LogWarning("Heartbeat from unknown node: {NodeId}", nodeId);
-            return;
-        }
-
-        // Security: ensure the caller token matches the node.
-        if (!string.Equals(nodeInfo.AuthKeyHash, tokenHash, StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogWarning("Rejected heartbeat for node {NodeId}: auth token mismatch", nodeId);
-            throw new HubException("Unauthorized: token does not match node.");
-        }
-
-        var previousStatus = nodeInfo.Status;
         var now = DateTime.UtcNow;
 
         // Use ExecuteUpdateAsync for efficient update without loading entity
@@ -230,10 +251,8 @@ public class AgentHub : Hub
 
         _logger.LogDebug("Heartbeat received from node: {NodeId}", nodeId);
 
-        if (previousStatus != NodeStatus.Online)
-        {
-            await Clients.All.SendAsync("NodeStatusChanged", nodeId, NodeStatus.Online.ToString(), now);
-        }
+        // Node status transitions are handled on Register() (Online) and HealthMonitorService (Offline).
+        // Avoid additional DB round-trips in the hot heartbeat path.
 
         // Let the dashboard invalidate/refetch telemetry for this node.
         await Clients.All.SendAsync("TelemetryReceived", nodeId);
@@ -248,12 +267,10 @@ public class AgentHub : Hub
     /// <param name="logs">Output/logs from command execution.</param>
     public async Task UpdateCommandStatus(Guid commandId, string status, string? logs)
     {
-        if (!TryGetBearerToken(out var bearerToken))
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
         {
-            throw new HubException("Unauthorized: missing bearer token.");
+            throw new HubException("Unauthorized: agent must register before updating command status.");
         }
-
-        var tokenHash = TokenHasher.NormalizeToSha256Hex(bearerToken);
 
         _logger.LogInformation("Command status update: {CommandId} -> {Status}", commandId, status);
 
@@ -267,12 +284,15 @@ public class AgentHub : Hub
             return;
         }
 
-        // Security: ensure the command belongs to the node authenticated by this token.
-        var node = await dbContext.Nodes.FindAsync(command.NodeId);
-        if (node is null || !string.Equals(node.AuthKeyHash, tokenHash, StringComparison.OrdinalIgnoreCase))
+        // Security: ensure the command belongs to the node bound to this connection.
+        if (command.NodeId != registeredNodeId)
         {
-            _logger.LogWarning("Rejected command status update {CommandId}: auth token mismatch", commandId);
-            throw new HubException("Unauthorized: token does not match node.");
+            _logger.LogWarning(
+                "Rejected command status update {CommandId}: command belongs to node {CommandNodeId} but connection is bound to {RegisteredNodeId}",
+                commandId,
+                command.NodeId,
+                registeredNodeId);
+            throw new HubException("Unauthorized: command does not belong to this agent.");
         }
 
         // Parse status string to enum
@@ -312,19 +332,29 @@ public class AgentHub : Hub
         var httpContext = Context.GetHttpContext();
         var auth = httpContext?.Request.Headers.Authorization.ToString();
 
-        if (string.IsNullOrWhiteSpace(auth))
+        // Prefer Authorization header.
+        if (!string.IsNullOrWhiteSpace(auth))
         {
-            return false;
+            const string prefix = "Bearer ";
+            if (!auth.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            token = auth[prefix.Length..].Trim();
+            return !string.IsNullOrWhiteSpace(token);
         }
 
-        const string prefix = "Bearer ";
-        if (!auth.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        // SignalR clients (especially browsers) often send tokens via the `access_token` query string.
+        // Supporting this improves interoperability and allows clients to use AccessTokenProvider.
+        var accessToken = httpContext?.Request.Query["access_token"].ToString();
+        if (!string.IsNullOrWhiteSpace(accessToken))
         {
-            return false;
+            token = accessToken.Trim();
+            return !string.IsNullOrWhiteSpace(token);
         }
 
-        token = auth[prefix.Length..].Trim();
-        return !string.IsNullOrWhiteSpace(token);
+        return false;
     }
 
     #region Agent Backoff and Ping Methods

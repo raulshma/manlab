@@ -300,7 +300,7 @@ del ""%~f0""
         // Step 3: Schedule shutdown after response
         if (_shutdownCallback is not null)
         {
-            Task.Run(async () =>
+            _ = Task.Run(async () =>
             {
                 await Task.Delay(1000).ConfigureAwait(false); // Give time for response
                 _shutdownCallback();

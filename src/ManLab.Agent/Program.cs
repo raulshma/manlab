@@ -68,7 +68,8 @@ await using var connectionManager = new ConnectionManager(
 await using var telemetryService = new TelemetryService(
     loggerFactory,
     agentConfig,
-    async data => await connectionManager.SendHeartbeatAsync(data).ConfigureAwait(false));
+    async data => await connectionManager.SendHeartbeatAsync(data).ConfigureAwait(false),
+    shouldSendTelemetry: () => connectionManager.IsConnected && connectionManager.NodeId != Guid.Empty);
 
 // Create command dispatcher for handling server commands
 using var commandDispatcher = new ManLab.Agent.Commands.CommandDispatcher(

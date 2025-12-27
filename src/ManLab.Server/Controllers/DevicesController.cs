@@ -44,6 +44,7 @@ public class DevicesController : ControllerBase
     public async Task<ActionResult<IEnumerable<NodeDto>>> GetAll()
     {
         var nodes = await _dbContext.Nodes
+            .AsNoTracking()
             .OrderByDescending(n => n.LastSeen)
             .Select(n => new NodeDto
             {
@@ -69,7 +70,9 @@ public class DevicesController : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<NodeDto>> GetById(Guid id)
     {
-        var node = await _dbContext.Nodes.FindAsync(id);
+        var node = await _dbContext.Nodes
+            .AsNoTracking()
+            .FirstOrDefaultAsync(n => n.Id == id);
 
         if (node == null)
         {
@@ -105,6 +108,7 @@ public class DevicesController : ControllerBase
         }
 
         var telemetry = await _dbContext.TelemetrySnapshots
+            .AsNoTracking()
             .Where(t => t.NodeId == id)
             .OrderByDescending(t => t.Timestamp)
             .Take(count)
@@ -137,6 +141,7 @@ public class DevicesController : ControllerBase
         }
 
         var commands = await _dbContext.CommandQueue
+            .AsNoTracking()
             .Where(c => c.NodeId == id)
             .OrderByDescending(c => c.CreatedAt)
             .Take(count)

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 
 namespace ManLab.Server.Services.Agents;
 
@@ -24,6 +25,16 @@ public sealed class AgentConnectionRegistry
     /// Returns true if there are any connected agents.
     /// </summary>
     public bool HasConnections() => !_nodeToConnectionId.IsEmpty;
+
+    /// <summary>
+    /// Gets a point-in-time snapshot of currently connected node IDs.
+    /// Useful for composing SQL queries (e.g., IN (...) filters) without holding locks.
+    /// </summary>
+    public Guid[] GetConnectedNodeIdsSnapshot()
+    {
+        // ConcurrentDictionary keys enumerations are thread-safe and represent a moment-in-time view.
+        return _nodeToConnectionId.Keys.ToArray();
+    }
 
     public bool TryRemoveByConnectionId(string connectionId, out Guid nodeId)
     {

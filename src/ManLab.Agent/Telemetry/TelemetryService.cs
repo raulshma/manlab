@@ -14,6 +14,7 @@ public sealed class TelemetryService : IAsyncDisposable
     private readonly ITelemetryCollector _collector;
     private readonly AgentConfiguration _config;
     private readonly Func<TelemetryData, Task> _sendTelemetry;
+    private readonly Func<bool>? _shouldSendTelemetry;
     private readonly CancellationTokenSource _cts = new();
     private PeriodicTimer? _timer;
     private Task? _runningTask;
@@ -21,11 +22,13 @@ public sealed class TelemetryService : IAsyncDisposable
     public TelemetryService(
         ILoggerFactory loggerFactory,
         AgentConfiguration config,
-        Func<TelemetryData, Task> sendTelemetry)
+        Func<TelemetryData, Task> sendTelemetry,
+        Func<bool>? shouldSendTelemetry = null)
     {
         _logger = loggerFactory.CreateLogger<TelemetryService>();
         _config = config;
         _sendTelemetry = sendTelemetry;
+        _shouldSendTelemetry = shouldSendTelemetry;
 
         // Select the appropriate collector based on the current platform
         _collector = CreateCollector(loggerFactory, config);
@@ -126,6 +129,12 @@ public sealed class TelemetryService : IAsyncDisposable
             {
                 try
                 {
+                    if (_shouldSendTelemetry is not null && !_shouldSendTelemetry())
+                    {
+                        // Stay quiet while offline to reduce resource usage.
+                        continue;
+                    }
+
                     var data = _collector.Collect();
 
                     _logger.LogDebug("Telemetry collected - CPU: {Cpu:F1}%, RAM: {Ram}/{Total} MB, Disks: {DiskCount}",

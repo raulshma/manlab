@@ -3,6 +3,7 @@ using ManLab.Server.Hubs;
 using ManLab.Server.Services;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Commands;
+using ManLab.Shared.Dtos;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -13,8 +14,31 @@ builder.AddServiceDefaults();
 
 // Add services to the container.
 builder.Services.AddOpenApi();
-builder.Services.AddControllers();
-builder.Services.AddSignalR();
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Reuse source-generated metadata for DTOs to reduce reflection and allocations.
+        // This also keeps JSON shape consistent between Server <-> Agent.
+        options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, ManLabJsonContext.Default);
+    });
+
+builder.Services
+    .AddSignalR(hubOptions =>
+    {
+        // Keep defaults mostly intact, but make timeouts explicit and aligned with SignalR guidance:
+        // ClientTimeoutInterval should be ~2x KeepAliveInterval.
+        hubOptions.KeepAliveInterval = TimeSpan.FromSeconds(15);
+        hubOptions.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+
+        // Security/perf: keep detailed errors off by default.
+        hubOptions.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    })
+    .AddJsonProtocol(protocolOptions =>
+    {
+        // JSON hub protocol uses System.Text.Json; supply our source-generated resolver.
+        protocolOptions.PayloadSerializerOptions.TypeInfoResolverChain.Insert(0, ManLabJsonContext.Default);
+    });
 
 builder.Services.AddMemoryCache();
 
