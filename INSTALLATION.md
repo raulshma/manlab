@@ -16,6 +16,17 @@ This repo includes simple installation scripts for the **ManLab Agent** that:
 - `GET /api/binaries/agent` (lists available RIDs)
 - `GET /api/binaries/agent/{rid}` (downloads `manlab-agent` or `manlab-agent.exe`)
 
+## Choosing the correct `--server` / `-Server` URL
+
+The installer scripts expect a **server base URL** (origin), not a hub URL:
+
+- ✅ `http://<host>:<port>`
+- ❌ `http://<host>:<port>/hubs/agent`
+
+If you deployed ManLab using the containerized topology (Aspire Docker hosting integration), the web dashboard container acts as a reverse proxy for `/api` and `/hubs`.
+
+In that case, point installers at the **dashboard URL** (default: `http://<host>:8080`).
+
 ## Linux (`install.sh`)
 
 - Installs to `/opt/manlab-agent`
@@ -25,7 +36,8 @@ This repo includes simple installation scripts for the **ManLab Agent** that:
 
 Example:
 
-- `sudo ./scripts/install.sh --server http://localhost:5247 --token "YOUR_TOKEN"`
+- Dev (Aspire/manual server): `sudo ./scripts/install.sh --server http://localhost:5247 --token "YOUR_TOKEN"`
+- Containerized (dashboard proxy): `sudo ./scripts/install.sh --server http://localhost:8080 --token "YOUR_TOKEN"`
 
 After install:
 
@@ -48,7 +60,8 @@ Uninstall / cleanup (removes systemd unit, env file, and install directory):
 
 Example (elevated PowerShell):
 
-- `./scripts/install.ps1 -Server http://localhost:5247 -AuthToken "YOUR_TOKEN" -Force`
+- Dev (Aspire/manual server): `./scripts/install.ps1 -Server http://localhost:5247 -AuthToken "YOUR_TOKEN" -Force`
+- Containerized (dashboard proxy): `./scripts/install.ps1 -Server http://localhost:8080 -AuthToken "YOUR_TOKEN" -Force`
 
 After install:
 
@@ -70,7 +83,8 @@ Use `-UserMode` to install without administrator privileges:
 
 Example (no elevation required):
 
-- `./scripts/install.ps1 -Server http://localhost:5247 -AuthToken "YOUR_TOKEN" -UserMode`
+- Dev (Aspire/manual server): `./scripts/install.ps1 -Server http://localhost:5247 -AuthToken "YOUR_TOKEN" -UserMode`
+- Containerized (dashboard proxy): `./scripts/install.ps1 -Server http://localhost:8080 -AuthToken "YOUR_TOKEN" -UserMode`
 
 After install:
 

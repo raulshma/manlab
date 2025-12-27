@@ -6,6 +6,12 @@
 # dotenv files
 .env
 
+# Aspire local settings
+.aspire/
+
+# Aspire publish output (generated)
+aspire-output/*
+
 # User-specific files
 *.rsuser
 *.suo
@@ -482,3 +488,4 @@ $RECYCLE.BIN/
 *.swp
 
 spec/
+

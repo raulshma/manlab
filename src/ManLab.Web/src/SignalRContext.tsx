@@ -71,11 +71,23 @@ export function SignalRProvider({
   children,
   hubUrl = "/hubs/agent",
 }: SignalRProviderProps) {
-  // Check for override in localStorage
+  const normalizeServerBaseUrl = (value: string): string | null =>
+    {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+
+      if (/^https?:\/\//i.test(trimmed)) return trimmed.replace(/\/+$/, "");
+      if (trimmed.startsWith("//")) return `${window.location.protocol}${trimmed}`.replace(/\/+$/, "");
+      if (trimmed.startsWith("/")) return `${window.location.origin}${trimmed}`.replace(/\/+$/, "");
+      // Back-compat: older Settings stored host[:port] without scheme.
+      return `http://${trimmed}`.replace(/\/+$/, "");
+    };
+
+  // Optional override in localStorage.
+  // This should be a *server base URL* (e.g., https://example.com:8080), not a hub URL.
   const storedUrl = localStorage.getItem("manlab:server_url");
-  const finalHubUrl = storedUrl 
-    ? `${storedUrl.replace(/\/$/, "")}/hubs/agent` 
-    : hubUrl;
+  const normalizedBase = storedUrl ? normalizeServerBaseUrl(storedUrl) : null;
+  const finalHubUrl = normalizedBase ? `${normalizedBase}/hubs/agent` : hubUrl;
 
   const [connection, setConnection] = useState<HubConnection | null>(null);
   const [connectionStatus, setConnectionStatus] =

@@ -19,14 +19,34 @@ import { ScriptsSettings } from "@/components/settings/ScriptsSettings";
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
+
+  const normalizeServerBaseUrl = (value: string): string => {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+
+    // If user pastes a full URL, keep it.
+    if (/^https?:\/\//i.test(trimmed)) {
+      return trimmed.replace(/\/+$/, "");
+    }
+
+    // Allow protocol-relative URLs.
+    if (trimmed.startsWith("//")) {
+      return `${window.location.protocol}${trimmed}`.replace(/\/+$/, "");
+    }
+
+    // If they entered just host[:port], assume http.
+    return `http://${trimmed}`.replace(/\/+$/, "");
+  };
+
   // Initialize from localStorage directly to avoid effect sync issues
   const [serverUrl, setServerUrl] = useState(() => 
-    localStorage.getItem("manlab:server_url") || window.location.host
+    localStorage.getItem("manlab:server_url") || window.location.origin
   );
 
   const handleSaveConnection = () => {
-    if (serverUrl) {
-        localStorage.setItem("manlab:server_url", serverUrl);
+    const normalized = normalizeServerBaseUrl(serverUrl);
+    if (normalized) {
+        localStorage.setItem("manlab:server_url", normalized);
         // Force reload to apply new URL
         window.location.reload();
     } else {
@@ -87,7 +107,7 @@ export function SettingsPage() {
                         id="server-url" 
                         value={serverUrl} 
                         onChange={(e) => setServerUrl(e.target.value)}
-                        placeholder="https://your-server.com"
+                      placeholder="https://your-server.com"
                     />
                     <p className="text-[0.8rem] text-muted-foreground">
                         Changes will require a page reload.

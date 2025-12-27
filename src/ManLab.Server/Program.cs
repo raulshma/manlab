@@ -7,6 +7,7 @@ using ManLab.Server.Services.Enhancements;
 using ManLab.Server.Services.Persistence;
 using ManLab.Server.Services.Retention;
 using ManLab.Shared.Dtos;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -115,6 +116,20 @@ builder.Services.AddDbContext<DataContext>(options =>
 });
 
 var app = builder.Build();
+
+// Support running behind a reverse proxy (e.g., nginx in the containerized 'web' service).
+// This ensures Request.Scheme/Host reflect X-Forwarded-* headers.
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor |
+        ForwardedHeaders.XForwardedProto |
+        ForwardedHeaders.XForwardedHost
+};
+// When running in containers, the reverse proxy is on a private network; allow forwarded headers.
+forwardedHeadersOptions.KnownIPNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
 
 // Ensure the database schema exists before hosted services start querying it.
 // This prevents runtime errors like: relation "Nodes" does not exist.
