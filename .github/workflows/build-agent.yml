@@ -33,7 +33,7 @@ jobs:
           - os: ubuntu-latest
             rid: linux-x64
             artifact: manlab-agent
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-latest
             rid: linux-arm64
             artifact: manlab-agent
           - os: macos-latest
@@ -50,13 +50,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET for ${{ matrix.rid }}
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Restore dependencies
         run: dotnet restore src/ManLab.Agent/ManLab.Agent.csproj
+
+      - name: Set up QEMU for cross-compilation
+        if: runner.os != 'Windows' && (matrix.rid == 'linux-arm64' || matrix.rid == 'osx-arm64')
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Build and Publish Agent (Native AOT)
         shell: bash
@@ -71,8 +77,14 @@ jobs:
       - name: Create artifact archive (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
+          set -e
           cd ./publish/${{ matrix.rid }}
-          tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }} appsettings.json 2>/dev/null || tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }}
+          if [ -f "appsettings.json" ]; then
+            tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }} appsettings.json
+          else
+            tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }}
+            echo "Warning: appsettings.json not found in build output" >&2
+          fi
 
       - name: Create artifact archive (Windows)
         if: runner.os == 'Windows'
@@ -80,7 +92,11 @@ jobs:
         run: |
           $files = @("./publish/${{ matrix.rid }}/${{ matrix.artifact }}")
           $appsettings = "./publish/${{ matrix.rid }}/appsettings.json"
-          if (Test-Path $appsettings) { $files += $appsettings }
+          if (Test-Path $appsettings) { 
+            $files += $appsettings
+          } else {
+            Write-Host "Warning: appsettings.json not found in build output" -ForegroundColor Yellow
+          }
           Compress-Archive -Path $files -DestinationPath "manlab-agent-${{ matrix.rid }}.zip" -Force
 
       - name: Upload build artifact
