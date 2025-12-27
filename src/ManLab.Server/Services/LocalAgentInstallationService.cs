@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Security.Principal;
 using ManLab.Server.Data;
 using ManLab.Server.Data.Enums;
@@ -57,7 +58,7 @@ public sealed class LocalAgentInstallationService
     /// </summary>
     public LocalAgentStatus GetStatus()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!OperatingSystem.IsWindows())
         {
             return new LocalAgentStatus(
                 IsSupported: false,
@@ -221,7 +222,7 @@ public sealed class LocalAgentInstallationService
     /// <param name="userMode">If true, install to user-local directory without admin privileges.</param>
     public bool TryStartInstall(string serverBaseUrl, bool force, bool userMode = false)
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!OperatingSystem.IsWindows())
         {
             return false;
         }
@@ -241,7 +242,7 @@ public sealed class LocalAgentInstallationService
     /// <param name="userMode">If true, uninstall from user-local directory.</param>
     public bool TryStartUninstall(bool userMode = false)
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!OperatingSystem.IsWindows())
         {
             return false;
         }
@@ -262,7 +263,7 @@ public sealed class LocalAgentInstallationService
     /// <param name="clearUser">If true, clear user install directory.</param>
     public bool TryStartClearFiles(bool clearSystem, bool clearUser)
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!OperatingSystem.IsWindows())
         {
             return false;
         }
@@ -707,7 +708,7 @@ public sealed class LocalAgentInstallationService
 
     private static bool IsAdministrator()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!OperatingSystem.IsWindows())
         {
             return false;
         }
@@ -726,30 +727,22 @@ public sealed class LocalAgentInstallationService
 
     private static bool CheckScheduledTaskExists(string taskName)
     {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "schtasks.exe",
-                Arguments = $"/Query /TN \"{taskName}\"",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-            process?.WaitForExit(5000);
-            return process?.ExitCode == 0;
-        }
-        catch
+        if (!OperatingSystem.IsWindows())
         {
             return false;
         }
+
+        return TryGetRegisteredTaskSnapshot(taskName, out _, out _, out _);
     }
 
+    [SupportedOSPlatform("windows")]
     private static bool CheckUserRunEntryExists(string name)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
         try
         {
             // HKCU\Software\Microsoft\Windows\CurrentVersion\Run
@@ -766,31 +759,17 @@ public sealed class LocalAgentInstallationService
 
     private static bool CheckScheduledTaskRunning(string taskName)
     {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "schtasks.exe",
-                Arguments = $"/Query /TN \"{taskName}\" /FO CSV /V",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-            if (process is null) return false;
-
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(5000);
-
-            // Check if status column contains "Running"
-            return output.Contains("Running", StringComparison.OrdinalIgnoreCase);
-        }
-        catch
+        if (!OperatingSystem.IsWindows())
         {
             return false;
         }
+
+        if (!TryGetRegisteredTaskSnapshot(taskName, out var state, out _, out _))
+        {
+            return false;
+        }
+
+        return state == WindowsTaskState.Running;
     }
 
     private Task PublishLogAsync(string message)
@@ -850,49 +829,157 @@ public sealed class LocalAgentInstallationService
 
     private static TaskInfo? GetTaskInfo(string taskName)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        if (!TryGetRegisteredTaskSnapshot(taskName, out var state, out var lastRunTime, out var nextRunTime))
+        {
+            return null;
+        }
+
+        var stateStr = state switch
+        {
+            WindowsTaskState.Unknown => "Unknown",
+            WindowsTaskState.Disabled => "Disabled",
+            WindowsTaskState.Queued => "Queued",
+            WindowsTaskState.Ready => "Ready",
+            WindowsTaskState.Running => "Running",
+            _ => "Unknown"
+        };
+
+        return new TaskInfo(
+            Name: taskName,
+            State: stateStr,
+            LastRunTime: lastRunTime?.ToString("o"),
+            NextRunTime: nextRunTime?.ToString("o"));
+    }
+
+    private enum WindowsTaskState
+    {
+        Unknown = 0,
+        Disabled = 1,
+        Queued = 2,
+        Ready = 3,
+        Running = 4
+    }
+
+    /// <summary>
+    /// Uses the native Task Scheduler COM automation entry point (Schedule.Service)
+    /// to retrieve lightweight information about a task by name from the root folder.
+    ///
+    /// References:
+    /// - Task Scheduler start page: https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page
+    /// - Enumerating task info: https://learn.microsoft.com/en-us/windows/win32/taskschd/enumerating-tasks-and-displaying-task-information
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static bool TryGetRegisteredTaskSnapshot(
+        string taskName,
+        out WindowsTaskState state,
+        out DateTime? lastRunTime,
+        out DateTime? nextRunTime)
+    {
+        state = WindowsTaskState.Unknown;
+        lastRunTime = null;
+        nextRunTime = null;
+
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return false;
+        }
+
+        object? service = null;
+        object? rootFolder = null;
+        object? task = null;
+
         try
         {
-            var psi = new ProcessStartInfo
+            var serviceType = Type.GetTypeFromProgID("Schedule.Service");
+            if (serviceType is null) return false;
+
+            service = Activator.CreateInstance(serviceType);
+            if (service is null) return false;
+
+            dynamic svc = service;
+            svc.Connect();
+
+            rootFolder = svc.GetFolder("\\");
+            dynamic folder = rootFolder;
+
+            try
             {
-                FileName = "schtasks.exe",
-                Arguments = $"/Query /TN \"{taskName}\" /FO CSV /V",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-            if (process is null) return null;
-
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(5000);
-
-            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
+                task = folder.GetTask(taskName);
+            }
+            catch (COMException ex) when ((uint)ex.HResult == 0x80070002)
             {
-                return null;
+                // HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+                return false;
             }
 
-            // Parse CSV output - second line has data
-            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Length < 2) return null;
+            dynamic t = task;
 
-            var headers = ParseCsvLine(lines[0]);
-            var values = ParseCsvLine(lines[1]);
+            try
+            {
+                var stateValue = (int)t.State;
+                state = Enum.IsDefined(typeof(WindowsTaskState), stateValue)
+                    ? (WindowsTaskState)stateValue
+                    : WindowsTaskState.Unknown;
+            }
+            catch
+            {
+                state = WindowsTaskState.Unknown;
+            }
 
-            var statusIndex = Array.FindIndex(headers, h => h.Contains("Status", StringComparison.OrdinalIgnoreCase));
-            var lastRunIndex = Array.FindIndex(headers, h => h.Contains("Last Run Time", StringComparison.OrdinalIgnoreCase));
-            var nextRunIndex = Array.FindIndex(headers, h => h.Contains("Next Run Time", StringComparison.OrdinalIgnoreCase));
+            try
+            {
+                if (t.LastRunTime is DateTime dt && dt.Year > 1900)
+                {
+                    lastRunTime = dt;
+                }
+            }
+            catch { }
 
-            return new TaskInfo(
-                Name: taskName,
-                State: statusIndex >= 0 && statusIndex < values.Length ? values[statusIndex] : "Unknown",
-                LastRunTime: lastRunIndex >= 0 && lastRunIndex < values.Length ? values[lastRunIndex] : null,
-                NextRunTime: nextRunIndex >= 0 && nextRunIndex < values.Length ? values[nextRunIndex] : null);
+            try
+            {
+                if (t.NextRunTime is DateTime dt && dt.Year > 1900)
+                {
+                    nextRunTime = dt;
+                }
+            }
+            catch { }
+
+            return true;
         }
         catch
         {
-            return new TaskInfo(taskName, "Unknown", null, null);
+            // best-effort
+            return false;
+        }
+        finally
+        {
+            ReleaseComObject(task);
+            ReleaseComObject(rootFolder);
+            ReleaseComObject(service);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void ReleaseComObject(object? com)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (com is null) return;
+
+        try
+        {
+            if (Marshal.IsComObject(com))
+            {
+                Marshal.FinalReleaseComObject(com);
+            }
+        }
+        catch
+        {
+            // ignore
         }
     }
 

@@ -317,6 +317,49 @@ public class AgentHub : Hub
         return !string.IsNullOrWhiteSpace(token);
     }
 
+    #region Agent Backoff and Ping Methods
+
+    /// <summary>
+    /// Receives backoff status from an agent when heartbeat fails.
+    /// Broadcasts to dashboard clients so they can display next expected ping time.
+    /// </summary>
+    /// <param name="nodeId">The node reporting backoff status.</param>
+    /// <param name="consecutiveFailures">Number of consecutive heartbeat failures.</param>
+    /// <param name="nextRetryTimeUtc">When the next heartbeat will be attempted.</param>
+    public async Task ReportBackoffStatus(Guid nodeId, int consecutiveFailures, DateTime nextRetryTimeUtc)
+    {
+        _logger.LogInformation(
+            "Node {NodeId} backoff status: {Failures} failures, next retry at {NextRetry:O}",
+            nodeId, consecutiveFailures, nextRetryTimeUtc);
+
+        // Broadcast to dashboard clients
+        await Clients.All.SendAsync("AgentBackoffStatus", nodeId, consecutiveFailures, nextRetryTimeUtc);
+    }
+
+    /// <summary>
+    /// Receives ping response from an agent after admin-initiated ping.
+    /// </summary>
+    /// <param name="nodeId">The node responding to ping.</param>
+    /// <param name="success">Whether the ping was successful.</param>
+    /// <param name="nextRetryTimeUtc">Next retry time if ping failed (null if successful).</param>
+    public async Task PingResponse(Guid nodeId, bool success, DateTime? nextRetryTimeUtc)
+    {
+        _logger.LogInformation(
+            "Ping response from node {NodeId}: success={Success}, nextRetry={NextRetry}",
+            nodeId, success, nextRetryTimeUtc?.ToString("O") ?? "N/A");
+
+        // Broadcast to dashboard clients
+        await Clients.All.SendAsync("AgentPingResponse", nodeId, success, nextRetryTimeUtc);
+
+        if (success)
+        {
+            // Clear any backoff status in UI
+            await Clients.All.SendAsync("AgentBackoffStatus", nodeId, 0, (DateTime?)null);
+        }
+    }
+
+    #endregion
+
     #region Server-to-Agent Methods
 
     /// <summary>
@@ -338,6 +381,15 @@ public class AgentHub : Hub
     public async Task RequestTelemetryFromAgent(string connectionId)
     {
         await Clients.Client(connectionId).SendAsync("RequestTelemetry");
+    }
+
+    /// <summary>
+    /// Requests a ping from a specific agent (admin-initiated).
+    /// </summary>
+    /// <param name="connectionId">The SignalR connection ID of the target agent.</param>
+    public async Task RequestPingFromAgent(string connectionId)
+    {
+        await Clients.Client(connectionId).SendAsync("RequestPing");
     }
 
     #endregion

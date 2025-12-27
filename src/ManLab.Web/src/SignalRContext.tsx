@@ -18,7 +18,7 @@ import {
   LogLevel,
 } from "@microsoft/signalr";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Node, NodeStatus } from "./types";
+import type { Node, NodeStatus, AgentBackoffStatus } from "./types";
 
 /**
  * Local agent log entry for real-time log streaming.
@@ -46,6 +46,8 @@ interface SignalRContextValue {
   connectionStatus: ConnectionStatus;
   error: Error | null;
   localAgentLogs: LocalAgentLogEntry[];
+  /** Map of nodeId -> backoff status for agents experiencing heartbeat failures */
+  agentBackoffStatus: Map<string, AgentBackoffStatus>;
   subscribeToLocalAgentLogs: (
     callback: (log: LocalAgentLogEntry) => void
   ) => () => void;
@@ -75,6 +77,9 @@ export function SignalRProvider({
   const [error, setError] = useState<Error | null>(null);
   const [localAgentLogs, setLocalAgentLogs] = useState<LocalAgentLogEntry[]>(
     []
+  );
+  const [agentBackoffStatus, setAgentBackoffStatus] = useState<Map<string, AgentBackoffStatus>>(
+    new Map()
   );
   const queryClient = useQueryClient();
 
@@ -202,6 +207,52 @@ export function SignalRProvider({
     [queryClient]
   );
 
+  // Handle agent backoff status updates
+  const handleAgentBackoffStatus = useCallback(
+    (nodeId: string, consecutiveFailures: number, nextRetryTimeUtc: string | null) => {
+      setAgentBackoffStatus((prev) => {
+        const newMap = new Map(prev);
+        if (consecutiveFailures === 0 || !nextRetryTimeUtc) {
+          // Backoff cleared
+          newMap.delete(nodeId);
+        } else {
+          newMap.set(nodeId, { nodeId, consecutiveFailures, nextRetryTimeUtc });
+        }
+        return newMap;
+      });
+    },
+    []
+  );
+
+  // Handle agent ping response
+  const handleAgentPingResponse = useCallback(
+    (nodeId: string, success: boolean, nextRetryTimeUtc: string | null) => {
+      if (success) {
+        // Clear backoff status on successful ping
+        setAgentBackoffStatus((prev) => {
+          const newMap = new Map(prev);
+          newMap.delete(nodeId);
+          return newMap;
+        });
+      } else if (nextRetryTimeUtc) {
+        // Update backoff status with new retry time
+        setAgentBackoffStatus((prev) => {
+          const newMap = new Map(prev);
+          const existing = prev.get(nodeId);
+          newMap.set(nodeId, {
+            nodeId,
+            consecutiveFailures: (existing?.consecutiveFailures ?? 0) + 1,
+            nextRetryTimeUtc,
+          });
+          return newMap;
+        });
+      }
+      // Invalidate node data to refresh status
+      queryClient.invalidateQueries({ queryKey: ["nodes"] });
+    },
+    [queryClient]
+  );
+
   // Use ref to track if we've started connecting (to avoid synchronous setState in effect)
   const isConnectingRef = useRef(false);
 
@@ -213,6 +264,8 @@ export function SignalRProvider({
     handleCommandUpdated,
     handleLocalAgentLog,
     handleLocalAgentStatusChanged,
+    handleAgentBackoffStatus,
+    handleAgentPingResponse,
   });
 
   // Keep refs in sync with latest handlers
@@ -224,6 +277,8 @@ export function SignalRProvider({
       handleCommandUpdated,
       handleLocalAgentLog,
       handleLocalAgentStatusChanged,
+      handleAgentBackoffStatus,
+      handleAgentPingResponse,
     };
   });
 
@@ -297,6 +352,17 @@ export function SignalRProvider({
     newConnection.on("LocalAgentLog", localAgentLogHandler);
     newConnection.on("LocalAgentStatusChanged", localAgentStatusChangedHandler);
 
+    // Register agent backoff/ping event handlers
+    const agentBackoffStatusHandler = (
+      ...args: Parameters<typeof handleAgentBackoffStatus>
+    ) => handlersRef.current.handleAgentBackoffStatus(...args);
+    const agentPingResponseHandler = (
+      ...args: Parameters<typeof handleAgentPingResponse>
+    ) => handlersRef.current.handleAgentPingResponse(...args);
+
+    newConnection.on("AgentBackoffStatus", agentBackoffStatusHandler);
+    newConnection.on("AgentPingResponse", agentPingResponseHandler);
+
     // Start the connection asynchronously
     // Wrap in an async IIFE to handle setState after the microtask
     const startConnection = async () => {
@@ -321,7 +387,6 @@ export function SignalRProvider({
       startConnection();
     });
 
-    // Cleanup on unmount - unregister handlers and stop connection
     return () => {
       newConnection.off("NodeStatusChanged", nodeStatusChangedHandler);
       newConnection.off("NodeRegistered", nodeRegisteredHandler);
@@ -332,6 +397,8 @@ export function SignalRProvider({
         "LocalAgentStatusChanged",
         localAgentStatusChangedHandler
       );
+      newConnection.off("AgentBackoffStatus", agentBackoffStatusHandler);
+      newConnection.off("AgentPingResponse", agentPingResponseHandler);
       newConnection.stop();
     };
   }, [hubUrl, queryClient]);
@@ -343,6 +410,7 @@ export function SignalRProvider({
         connectionStatus,
         error,
         localAgentLogs,
+        agentBackoffStatus,
         subscribeToLocalAgentLogs,
       }}
     >

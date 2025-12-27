@@ -15,8 +15,9 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, AlertCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, AlertCircle, Trash2, RefreshCw, Clock } from "lucide-react";
 import type { Container } from "../types";
+import { useSignalR } from "../SignalRContext";
 import {
   fetchNode,
   fetchNodeTelemetry,
@@ -25,6 +26,7 @@ import {
   restartContainer,
   triggerSystemUpdate,
   deleteNode,
+  requestAgentPing,
 } from "../api";
 import { TelemetryChart } from "./TelemetryChart";
 import { ContainerList } from "./ContainerList";
@@ -78,9 +80,42 @@ function formatRelativeTime(dateString: string): string {
 }
 
 /**
+ * Formats a future date to countdown (e.g., "in 30 seconds").
+ */
+function formatCountdown(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+
+  if (diffMs <= 0) {
+    return "now";
+  }
+
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+
+  if (diffSeconds < 60) {
+    return `in ${diffSeconds} second${diffSeconds !== 1 ? "s" : ""}`;
+  } else if (diffMinutes < 60) {
+    const remainingSeconds = diffSeconds % 60;
+    if (remainingSeconds > 0) {
+      return `in ${diffMinutes}m ${remainingSeconds}s`;
+    }
+    return `in ${diffMinutes} minute${diffMinutes !== 1 ? "s" : ""}`;
+  } else {
+    const hours = Math.floor(diffMinutes / 60);
+    const mins = diffMinutes % 60;
+    return `in ${hours}h ${mins}m`;
+  }
+}
+
+/**
  * NodeDetailView displays detailed information about a specific node.
  */
 export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
+  const { agentBackoffStatus } = useSignalR();
+  const backoffStatus = agentBackoffStatus.get(nodeId);
+
   // Fetch node details
   const {
     data: node,
@@ -117,7 +152,27 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
   let dockerListError: string | null = null;
   if (latestSuccessfulDockerList?.outputLog) {
     try {
-      const parsed = JSON.parse(latestSuccessfulDockerList.outputLog);
+      // The output may contain agent dispatch messages before the actual JSON.
+      // Extract the JSON portion by finding the first '[' or '{' character.
+      let jsonContent = latestSuccessfulDockerList.outputLog;
+      const arrayStart = jsonContent.indexOf('[');
+      const objectStart = jsonContent.indexOf('{');
+      
+      // Determine which comes first (or only one exists)
+      let jsonStart = -1;
+      if (arrayStart >= 0 && objectStart >= 0) {
+        jsonStart = Math.min(arrayStart, objectStart);
+      } else if (arrayStart >= 0) {
+        jsonStart = arrayStart;
+      } else if (objectStart >= 0) {
+        jsonStart = objectStart;
+      }
+      
+      if (jsonStart > 0) {
+        jsonContent = jsonContent.substring(jsonStart);
+      }
+      
+      const parsed = JSON.parse(jsonContent);
       if (Array.isArray(parsed)) {
         dockerContainers = parsed as Container[];
       } else if (
@@ -126,9 +181,13 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
         typeof parsed.error === "string"
       ) {
         dockerListError = parsed.error;
+      } else {
+        // Unexpected structure
+        dockerListError = `Unexpected response format: ${JSON.stringify(parsed).substring(0, 100)}`;
       }
-    } catch {
-      dockerListError = "Failed to parse docker list output.";
+    } catch (e) {
+      const preview = latestSuccessfulDockerList.outputLog.substring(0, 100);
+      dockerListError = `Failed to parse docker list output: ${e instanceof Error ? e.message : "Unknown error"}. Preview: ${preview}`;
     }
   }
 
@@ -166,6 +225,11 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
       queryClient.invalidateQueries({ queryKey: ["nodes"] });
       onBack();
     },
+  });
+
+  // Ping agent mutation
+  const pingMutation = useMutation({
+    mutationFn: () => requestAgentPing(nodeId),
   });
 
   if (nodeLoading) {
@@ -230,6 +294,52 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
           </div>
         </div>
       </header>
+
+      {/* Backoff Status Alert */}
+      {backoffStatus && (
+        <div className="max-w-7xl mx-auto px-6 pt-4">
+          <Alert variant="destructive">
+            <Clock className="h-4 w-4" />
+            <AlertTitle>Agent Heartbeat Backoff Active</AlertTitle>
+            <AlertDescription className="flex items-center justify-between">
+              <span>
+                Failed to send {backoffStatus.consecutiveFailures} consecutive heartbeat{backoffStatus.consecutiveFailures !== 1 ? "s" : ""}.
+                Next ping expected{" "}
+                <strong>{formatCountdown(backoffStatus.nextRetryTimeUtc ?? "")}</strong>.
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => pingMutation.mutate()}
+                disabled={pingMutation.isPending}
+                className="ml-4"
+              >
+                {pingMutation.isPending ? (
+                  <>
+                    <Spinner className="h-4 w-4 mr-2" />
+                    Pinging...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Ping Now
+                  </>
+                )}
+              </Button>
+            </AlertDescription>
+          </Alert>
+          {pingMutation.isError && (
+            <Alert variant="destructive" className="mt-2">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {pingMutation.error instanceof Error
+                  ? pingMutation.error.message
+                  : "Failed to send ping request"}
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8">

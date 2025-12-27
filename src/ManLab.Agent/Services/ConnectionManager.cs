@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
+
 namespace ManLab.Agent.Services;
 
 /// <summary>
@@ -15,7 +16,8 @@ public sealed class ConnectionManager : IAsyncDisposable
     private readonly AgentConfiguration _config;
     private readonly HubConnection _connection;
     private readonly CancellationTokenSource _cts = new();
-    
+    private readonly HeartbeatRetryManager _heartbeatRetryManager;
+
     private Guid _nodeId;
     private int _reconnectAttempt;
     private bool _isConnected;
@@ -41,10 +43,19 @@ public sealed class ConnectionManager : IAsyncDisposable
     /// </summary>
     public Guid NodeId => _nodeId;
 
-    public ConnectionManager(ILogger<ConnectionManager> logger, AgentConfiguration config)
+    /// <summary>
+    /// Gets the heartbeat retry manager for monitoring backoff state.
+    /// </summary>
+    public HeartbeatRetryManager HeartbeatRetryManager => _heartbeatRetryManager;
+
+    public ConnectionManager(ILoggerFactory loggerFactory, AgentConfiguration config)
     {
-        _logger = logger;
+        _logger = loggerFactory.CreateLogger<ConnectionManager>();
         _config = config;
+        _heartbeatRetryManager = new HeartbeatRetryManager(
+            loggerFactory.CreateLogger<HeartbeatRetryManager>(),
+            baseDelaySeconds: 2,
+            maxDelaySeconds: config.MaxReconnectDelaySeconds);
 
         var builder = new HubConnectionBuilder()
             .AddJsonProtocol(options =>
@@ -67,6 +78,7 @@ public sealed class ConnectionManager : IAsyncDisposable
         // Register event handlers for server-to-agent methods
         _connection.On<Guid, string, string>("ExecuteCommand", HandleExecuteCommand);
         _connection.On("RequestTelemetry", HandleRequestTelemetry);
+        _connection.On("RequestPing", HandleRequestPing);
 
         // Handle connection state changes
         _connection.Closed += OnConnectionClosed;
@@ -164,8 +176,11 @@ public sealed class ConnectionManager : IAsyncDisposable
 
     /// <summary>
     /// Sends a heartbeat with telemetry data to the server.
+    /// Respects exponential backoff if previous heartbeats have failed.
     /// </summary>
-    public async Task SendHeartbeatAsync(TelemetryData data)
+    /// <param name="data">Telemetry data to send.</param>
+    /// <param name="bypassBackoff">If true, ignores backoff timing (used for admin-triggered pings).</param>
+    public async Task SendHeartbeatAsync(TelemetryData data, bool bypassBackoff = false)
     {
         if (!_isConnected || _nodeId == Guid.Empty)
         {
@@ -173,14 +188,56 @@ public sealed class ConnectionManager : IAsyncDisposable
             return;
         }
 
+        // Check if we should skip due to backoff (unless bypassed for admin pings)
+        if (!bypassBackoff && !_heartbeatRetryManager.ShouldAttemptHeartbeat())
+        {
+            var (failures, nextRetry) = _heartbeatRetryManager.GetStatus();
+            _logger.LogDebug(
+                "Skipping heartbeat due to backoff (failures: {Failures}, next retry: {NextRetry:O})",
+                failures, nextRetry);
+            return;
+        }
+
         try
         {
             await _connection.InvokeAsync("SendHeartbeat", _nodeId, data).ConfigureAwait(false);
             _logger.LogDebug("Heartbeat sent successfully");
+            _heartbeatRetryManager.RecordSuccess();
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to send heartbeat");
+            var nextRetryTime = _heartbeatRetryManager.RecordFailure();
+
+            // Notify server about backoff status so UI can display it
+            await NotifyBackoffStatusAsync(nextRetryTime).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Notifies the server about the current backoff status.
+    /// </summary>
+    private async Task NotifyBackoffStatusAsync(DateTime nextRetryTime)
+    {
+        if (!_isConnected || _nodeId == Guid.Empty)
+        {
+            return;
+        }
+
+        try
+        {
+            var (failures, _) = _heartbeatRetryManager.GetStatus();
+            await _connection.InvokeAsync(
+                "ReportBackoffStatus",
+                _nodeId,
+                failures,
+                nextRetryTime).ConfigureAwait(false);
+            _logger.LogDebug("Backoff status reported: failures={Failures}, nextRetry={NextRetry:O}",
+                failures, nextRetryTime);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to report backoff status (non-critical)");
         }
     }
 
@@ -223,6 +280,55 @@ public sealed class ConnectionManager : IAsyncDisposable
         if (OnTelemetryRequested != null)
         {
             await OnTelemetryRequested().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Handles admin-initiated ping request from server.
+    /// Bypasses backoff and resets it on success.
+    /// </summary>
+    private async Task HandleRequestPing()
+    {
+        _logger.LogInformation("Admin ping request received");
+
+        if (!_isConnected || _nodeId == Guid.Empty)
+        {
+            _logger.LogWarning("Cannot respond to ping: not connected or not registered");
+            return;
+        }
+
+        try
+        {
+            // Collect and send telemetry immediately, bypassing backoff
+            if (OnTelemetryRequested != null)
+            {
+                await OnTelemetryRequested().ConfigureAwait(false);
+            }
+
+            // Reset backoff on successful admin ping
+            _heartbeatRetryManager.Reset();
+
+            // Notify server of ping success
+            await _connection.InvokeAsync("PingResponse", _nodeId, true, (DateTime?)null)
+                .ConfigureAwait(false);
+            
+            _logger.LogInformation("Admin ping response sent successfully, backoff reset");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to respond to admin ping");
+
+            try
+            {
+                // Notify server of ping failure with current backoff status
+                var (failures, nextRetry) = _heartbeatRetryManager.GetStatus();
+                await _connection.InvokeAsync("PingResponse", _nodeId, false, nextRetry)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Ignore nested failures
+            }
         }
     }
 

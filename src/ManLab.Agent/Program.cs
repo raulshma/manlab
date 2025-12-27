@@ -51,7 +51,7 @@ Console.CancelKeyPress += (_, e) =>
 
 // Create and start connection manager
 await using var connectionManager = new ConnectionManager(
-    loggerFactory.CreateLogger<ConnectionManager>(),
+    loggerFactory,
     agentConfig);
 
 // Create telemetry service

@@ -243,6 +243,93 @@ function Try-CreateUserScheduledTask([
   }
 }
 
+function Get-ScheduledTaskIfExists([string]$Name) {
+  try {
+    $null = Get-Command -Name Get-ScheduledTask -ErrorAction Stop
+    return (Get-ScheduledTask -TaskName $Name -ErrorAction Stop)
+  } catch {
+    return $null
+  }
+}
+
+function Remove-ScheduledTaskIfExists([string]$Name) {
+  try {
+    $null = Get-Command -Name Unregister-ScheduledTask -ErrorAction Stop
+  } catch {
+    # Fallback to schtasks.exe
+    try {
+      & schtasks /Delete /TN "$Name" /F 2>$null | Out-Null
+    } catch { }
+    return
+  }
+
+  $task = Get-ScheduledTaskIfExists -Name $Name
+  if ($null -eq $task) { return }
+
+  try {
+    # Stop if running (best effort)
+    $null = Get-Command -Name Stop-ScheduledTask -ErrorAction Stop
+    try { Stop-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue | Out-Null } catch { }
+  } catch {
+    # ignore
+  }
+
+  try {
+    Unregister-ScheduledTask -TaskName $Name -Confirm:$false -ErrorAction Stop | Out-Null
+  } catch {
+    # ignore
+  }
+}
+
+function Start-ScheduledTaskIfExists([string]$Name) {
+  try {
+    $null = Get-Command -Name Start-ScheduledTask -ErrorAction Stop
+    Start-ScheduledTask -TaskName $Name -ErrorAction Stop | Out-Null
+    return $true
+  } catch {
+    # Fallback
+    try {
+      & schtasks /Run /TN "$Name" 2>$null | Out-Null
+      return ($LASTEXITCODE -eq 0)
+    } catch {
+      return $false
+    }
+  }
+}
+
+function Create-OrUpdateSystemScheduledTask([
+  string]$Name,
+  [string]$RunnerPath,
+  [ref]$ErrorDetails
+) {
+  $ErrorDetails.Value = $null
+
+  # Prefer ScheduledTasks module (Task Scheduler API)
+  try {
+    $null = Get-Command -Name Register-ScheduledTask -ErrorAction Stop
+  } catch {
+    $ErrorDetails.Value = "ScheduledTasks module not available: $($_.Exception.Message)"
+    return $false
+  }
+
+  $psArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$RunnerPath`""
+
+  try {
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $psArgs
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    # Run as LocalSystem with highest privileges
+    $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
+    $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+
+    Register-ScheduledTask -TaskName $Name -InputObject $task -Force | Out-Null
+    return $true
+  } catch {
+    $ErrorDetails.Value = $_.Exception.Message
+    return $false
+  }
+}
+
 # Override InstallDir if UserMode and no explicit path provided
 if ($UserMode -and $InstallDir -eq "C:\ProgramData\ManLab\Agent") {
   $InstallDir = "$env:LOCALAPPDATA\ManLab\Agent"
@@ -264,26 +351,24 @@ if ($Uninstall) {
   Write-Host "  Install dir: $InstallDir"
 
   # Remove scheduled task if present (best-effort)
-  $taskExists = $false
-  try {
-    schtasks /Query /TN "$TaskName" | Out-Null
-    $taskExists = $true
-  } catch {
-    $taskExists = $false
-  }
-
-  if ($taskExists) {
-    try {
-      Write-Host "Stopping scheduled task: $TaskName"
-      schtasks /End /TN "$TaskName" | Out-Null
-    } catch {
-      # ignore
-    }
-
+  $task = Get-ScheduledTaskIfExists -Name $TaskName
+  if ($null -ne $task) {
     Write-Host "Removing scheduled task: $TaskName"
-    schtasks /Delete /TN "$TaskName" /F | Out-Null
+    Remove-ScheduledTaskIfExists -Name $TaskName
   } else {
-    Write-Host "Scheduled task not found; skipping."
+    # In case the ScheduledTasks module isn't available, attempt schtasks-based removal anyway.
+    try {
+      & schtasks /Query /TN "$TaskName" 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "Removing scheduled task (fallback): $TaskName"
+        try { & schtasks /End /TN "$TaskName" 2>$null | Out-Null } catch { }
+        try { & schtasks /Delete /TN "$TaskName" /F 2>$null | Out-Null } catch { }
+      } else {
+        Write-Host "Scheduled task not found; skipping."
+      }
+    } catch {
+      Write-Host "Scheduled task not found; skipping."
+    }
   }
 
   if ($UserMode) {
@@ -434,17 +519,21 @@ $runner | Set-Content -Path $runnerPath -Encoding UTF8
 
 # Register scheduled task
 # Use Task Scheduler where possible; fall back to HKCU Run in user mode if blocked by policy.
-# Check if task exists by examining exit code (try/catch doesn't work with schtasks.exe errors)
+# Check if task exists.
 $taskExists = $false
-try {
-  # Some environments/policies cause native command failures to surface as terminating errors
-  # (e.g., via $PSNativeCommandUseErrorActionPreference). Keep this best-effort.
-  & schtasks /Query /TN "$TaskName" 2>$null | Out-Null
-  if ($LASTEXITCODE -eq 0) {
-    $taskExists = $true
+$existing = Get-ScheduledTaskIfExists -Name $TaskName
+if ($null -ne $existing) {
+  $taskExists = $true
+} else {
+  # Fallback for environments lacking ScheduledTasks module
+  try {
+    & schtasks /Query /TN "$TaskName" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      $taskExists = $true
+    }
+  } catch {
+    $taskExists = $false
   }
-} catch {
-  $taskExists = $false
 }
 
 if ($taskExists) {
@@ -494,14 +583,22 @@ if ($UserMode) {
     }
   }
 } else {
-  # Admin mode: run as SYSTEM at startup (requires admin)
-  schtasks /Create /TN "$TaskName" /TR "$taskCommand" /SC ONSTART /RU "SYSTEM" /RL HIGHEST /F | Out-Null
-  $createdScheduledTask = $true
+  # Admin mode: run as SYSTEM at startup (requires admin).
+  # Prefer ScheduledTasks cmdlets (Task Scheduler API) over schtasks.exe.
+  $details = $null
+  if (Create-OrUpdateSystemScheduledTask -Name $TaskName -RunnerPath $runnerPath -ErrorDetails ([ref]$details)) {
+    $createdScheduledTask = $true
+  } else {
+    Write-Warning "Failed to register scheduled task via ScheduledTasks API: $details"
+    # Fallback to schtasks.exe for rare environments where ScheduledTasks is unavailable.
+    schtasks /Create /TN "$TaskName" /TR "$taskCommand" /SC ONSTART /RU "SYSTEM" /RL HIGHEST /F | Out-Null
+    $createdScheduledTask = $true
+  }
 }
 
 if ($createdScheduledTask) {
   Write-Host "Starting scheduled task: $TaskName"
-  schtasks /Run /TN "$TaskName" | Out-Null
+  $null = Start-ScheduledTaskIfExists -Name $TaskName
 } else {
   Write-Host "Starting agent process (user mode fallback)"
   Start-Process -FilePath "powershell.exe" -ArgumentList @(
@@ -516,7 +613,7 @@ Write-Host "Installed. Logs will be written to: $logPath"
 if ($UserMode) {
   Write-Host "To remove: .\\scripts\\install.ps1 -Uninstall -UserMode -TaskName `"$TaskName`" -InstallDir `"$InstallDir`""
 } else {
-  Write-Host "To remove: schtasks /Delete /TN `"$TaskName`" /F and delete $InstallDir"
+  Write-Host "To remove: .\\scripts\\install.ps1 -Uninstall -TaskName `"$TaskName`" -InstallDir `"$InstallDir`""
 }
 
 } catch {

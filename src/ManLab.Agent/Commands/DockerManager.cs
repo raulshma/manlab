@@ -1,36 +1,30 @@
-using Docker.DotNet;
-using Docker.DotNet.Models;
 using Microsoft.Extensions.Logging;
-using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace ManLab.Agent.Commands;
 
 /// <summary>
-/// Manages Docker container operations via Docker.DotNet.
-/// Uses platform-specific socket/pipe connections.
+/// Manages Docker container operations via Docker CLI.
+/// Uses CLI commands instead of Docker.DotNet for Native AOT compatibility.
 /// </summary>
 public sealed class DockerManager : IDisposable
 {
     private readonly ILogger<DockerManager> _logger;
-    private readonly DockerClient? _client;
     private readonly bool _isAvailable;
 
     public DockerManager(ILogger<DockerManager> logger)
     {
         _logger = logger;
-
-        try
+        _isAvailable = CheckDockerAvailable();
+        
+        if (_isAvailable)
         {
-            var dockerUri = GetDockerUri();
-            _client = new DockerClientConfiguration(dockerUri).CreateClient();
-            _isAvailable = true;
-            _logger.LogInformation("Docker client initialized: {Uri}", dockerUri);
+            _logger.LogInformation("Docker CLI is available");
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogWarning(ex, "Docker is not available on this system");
-            _isAvailable = false;
+            _logger.LogWarning("Docker CLI is not available on this system");
         }
     }
 
@@ -44,7 +38,7 @@ public sealed class DockerManager : IDisposable
     /// </summary>
     public async Task<string> ListContainersAsync(CancellationToken cancellationToken = default)
     {
-        if (!_isAvailable || _client == null)
+        if (!_isAvailable)
         {
             return JsonSerializer.Serialize(
                 new DockerErrorResponse("Docker is not available"),
@@ -53,21 +47,22 @@ public sealed class DockerManager : IDisposable
 
         try
         {
-            var containers = await _client.Containers.ListContainersAsync(
-                new ContainersListParameters { All = true },
+            // Use docker ps with JSON format
+            var (exitCode, output, error) = await RunDockerCommandAsync(
+                "ps -a --format \"{{json .}}\"",
                 cancellationToken).ConfigureAwait(false);
 
-            var result = containers.Select(c => new ContainerInfo(
-                Id: c.ID[..12], // Short ID
-                Names: c.Names,
-                Image: c.Image,
-                State: c.State,
-                Status: c.Status,
-                Created: c.Created
-            )).ToList();
+            if (exitCode != 0)
+            {
+                _logger.LogError("Docker ps failed with exit code {ExitCode}: {Error}", exitCode, error);
+                return JsonSerializer.Serialize(
+                    new DockerErrorResponse(string.IsNullOrEmpty(error) ? $"Docker command failed with exit code {exitCode}" : error),
+                    DockerJsonContext.Default.DockerErrorResponse);
+            }
 
-            _logger.LogInformation("Listed {Count} containers", result.Count);
-            return JsonSerializer.Serialize(result, DockerJsonContext.Default.ListContainerInfo);
+            var containers = ParseContainerList(output);
+            _logger.LogInformation("Listed {Count} containers", containers.Count);
+            return JsonSerializer.Serialize(containers, DockerJsonContext.Default.ListContainerInfo);
         }
         catch (Exception ex)
         {
@@ -83,7 +78,7 @@ public sealed class DockerManager : IDisposable
     /// </summary>
     public async Task<string> RestartContainerAsync(string containerId, CancellationToken cancellationToken = default)
     {
-        if (!_isAvailable || _client == null)
+        if (!_isAvailable)
         {
             return JsonSerializer.Serialize(
                 new DockerErrorResponse("Docker is not available"),
@@ -94,10 +89,17 @@ public sealed class DockerManager : IDisposable
         {
             _logger.LogInformation("Restarting container: {ContainerId}", containerId);
             
-            await _client.Containers.RestartContainerAsync(
-                containerId,
-                new ContainerRestartParameters { WaitBeforeKillSeconds = 10 },
+            var (exitCode, _, error) = await RunDockerCommandAsync(
+                $"restart {containerId}",
                 cancellationToken).ConfigureAwait(false);
+
+            if (exitCode != 0)
+            {
+                _logger.LogError("Docker restart failed: {Error}", error);
+                return JsonSerializer.Serialize(
+                    new DockerErrorResponse(error, containerId),
+                    DockerJsonContext.Default.DockerErrorResponse);
+            }
 
             _logger.LogInformation("Container restarted: {ContainerId}", containerId);
             return JsonSerializer.Serialize(
@@ -118,7 +120,7 @@ public sealed class DockerManager : IDisposable
     /// </summary>
     public async Task<string> StopContainerAsync(string containerId, CancellationToken cancellationToken = default)
     {
-        if (!_isAvailable || _client == null)
+        if (!_isAvailable)
         {
             return JsonSerializer.Serialize(
                 new DockerErrorResponse("Docker is not available"),
@@ -129,10 +131,17 @@ public sealed class DockerManager : IDisposable
         {
             _logger.LogInformation("Stopping container: {ContainerId}", containerId);
             
-            await _client.Containers.StopContainerAsync(
-                containerId,
-                new ContainerStopParameters { WaitBeforeKillSeconds = 10 },
+            var (exitCode, _, error) = await RunDockerCommandAsync(
+                $"stop {containerId}",
                 cancellationToken).ConfigureAwait(false);
+
+            if (exitCode != 0)
+            {
+                _logger.LogError("Docker stop failed: {Error}", error);
+                return JsonSerializer.Serialize(
+                    new DockerErrorResponse(error, containerId),
+                    DockerJsonContext.Default.DockerErrorResponse);
+            }
 
             _logger.LogInformation("Container stopped: {ContainerId}", containerId);
             return JsonSerializer.Serialize(
@@ -153,7 +162,7 @@ public sealed class DockerManager : IDisposable
     /// </summary>
     public async Task<string> StartContainerAsync(string containerId, CancellationToken cancellationToken = default)
     {
-        if (!_isAvailable || _client == null)
+        if (!_isAvailable)
         {
             return JsonSerializer.Serialize(
                 new DockerErrorResponse("Docker is not available"),
@@ -164,10 +173,17 @@ public sealed class DockerManager : IDisposable
         {
             _logger.LogInformation("Starting container: {ContainerId}", containerId);
             
-            await _client.Containers.StartContainerAsync(
-                containerId,
-                new ContainerStartParameters(),
+            var (exitCode, _, error) = await RunDockerCommandAsync(
+                $"start {containerId}",
                 cancellationToken).ConfigureAwait(false);
+
+            if (exitCode != 0)
+            {
+                _logger.LogError("Docker start failed: {Error}", error);
+                return JsonSerializer.Serialize(
+                    new DockerErrorResponse(error, containerId),
+                    DockerJsonContext.Default.DockerErrorResponse);
+            }
 
             _logger.LogInformation("Container started: {ContainerId}", containerId);
             return JsonSerializer.Serialize(
@@ -183,20 +199,118 @@ public sealed class DockerManager : IDisposable
         }
     }
 
-    private static Uri GetDockerUri()
+    private static bool CheckDockerAvailable()
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        try
         {
-            return new Uri("npipe://./pipe/docker_engine");
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "docker",
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            
+            process.Start();
+            process.WaitForExit(5000);
+            return process.ExitCode == 0;
         }
-        else
+        catch
         {
-            return new Uri("unix:///var/run/docker.sock");
+            return false;
         }
+    }
+
+    private static async Task<(int ExitCode, string Output, string Error)> RunDockerCommandAsync(
+        string arguments,
+        CancellationToken cancellationToken)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "docker",
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+
+        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+        var output = await outputTask.ConfigureAwait(false);
+        var error = await errorTask.ConfigureAwait(false);
+
+        return (process.ExitCode, output.Trim(), error.Trim());
+    }
+
+    private List<ContainerInfo> ParseContainerList(string output)
+    {
+        var containers = new List<ContainerInfo>();
+        
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return containers;
+        }
+
+        // Each line is a JSON object from docker ps --format "{{json .}}"
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                var dockerContainer = JsonSerializer.Deserialize(line.Trim(), DockerCliJsonContext.Default.DockerPsOutput);
+                if (dockerContainer != null)
+                {
+                    containers.Add(new ContainerInfo(
+                        Id: dockerContainer.ID ?? "",
+                        Names: [dockerContainer.Names ?? ""],
+                        Image: dockerContainer.Image ?? "",
+                        State: dockerContainer.State?.ToLowerInvariant() ?? "unknown",
+                        Status: dockerContainer.Status ?? "",
+                        Created: ParseCreatedAt(dockerContainer.CreatedAt)
+                    ));
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse container JSON line: {Line}", line);
+            }
+        }
+
+        return containers;
+    }
+
+    private static DateTime ParseCreatedAt(string? createdAt)
+    {
+        if (string.IsNullOrEmpty(createdAt))
+        {
+            return DateTime.MinValue;
+        }
+
+        // Docker returns format like "2024-01-15 10:30:00 +0000 UTC"
+        // Try to parse it, fall back to MinValue
+        if (DateTime.TryParse(createdAt.Replace(" UTC", "").Replace(" +0000", ""), out var result))
+        {
+            return result;
+        }
+
+        return DateTime.MinValue;
     }
 
     public void Dispose()
     {
-        _client?.Dispose();
+        // No resources to dispose when using CLI
     }
 }

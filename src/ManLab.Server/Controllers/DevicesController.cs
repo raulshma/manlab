@@ -1,7 +1,10 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
+using ManLab.Server.Hubs;
+using ManLab.Server.Services.Agents;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -18,11 +21,19 @@ public class DevicesController : ControllerBase
 
     private readonly DataContext _dbContext;
     private readonly ILogger<DevicesController> _logger;
+    private readonly IHubContext<AgentHub> _hubContext;
+    private readonly AgentConnectionRegistry _connectionRegistry;
 
-    public DevicesController(DataContext dbContext, ILogger<DevicesController> logger)
+    public DevicesController(
+        DataContext dbContext,
+        ILogger<DevicesController> logger,
+        IHubContext<AgentHub> hubContext,
+        AgentConnectionRegistry connectionRegistry)
     {
         _dbContext = dbContext;
         _logger = logger;
+        _hubContext = hubContext;
+        _connectionRegistry = connectionRegistry;
     }
 
     /// <summary>
@@ -273,6 +284,38 @@ public class DevicesController : ControllerBase
         _logger.LogInformation("Deleted node: {NodeId} ({Hostname})", id, node.Hostname);
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// Requests an immediate ping from a specific agent.
+    /// If the ping succeeds, the agent's heartbeat backoff will be reset.
+    /// </summary>
+    /// <param name="id">The node ID.</param>
+    /// <returns>
+    /// 202 Accepted if the ping request was sent,
+    /// 404 if the node doesn't exist,
+    /// 503 if the agent is not currently connected.
+    /// </returns>
+    [HttpPost("{id:guid}/ping")]
+    public async Task<IActionResult> RequestPing(Guid id)
+    {
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        if (!_connectionRegistry.TryGet(id, out var connectionId))
+        {
+            _logger.LogWarning("Cannot request ping for node {NodeId}: agent not connected", id);
+            return StatusCode(503, new { message = "Agent is not currently connected" });
+        }
+
+        await _hubContext.Clients.Client(connectionId).SendAsync("RequestPing");
+
+        _logger.LogInformation("Admin ping request sent to node {NodeId}", id);
+
+        return Accepted(new { message = "Ping request sent to agent" });
     }
 }
 

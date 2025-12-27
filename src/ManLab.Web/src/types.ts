@@ -56,6 +56,24 @@ export interface NodeStatusChange {
 }
 
 /**
+ * Agent backoff status from SignalR when heartbeat fails.
+ */
+export interface AgentBackoffStatus {
+  nodeId: string;
+  consecutiveFailures: number;
+  nextRetryTimeUtc: string | null;
+}
+
+/**
+ * Agent ping response from SignalR after admin-triggered ping.
+ */
+export interface AgentPingResponse {
+  nodeId: string;
+  success: boolean;
+  nextRetryTimeUtc: string | null;
+}
+
+/**
  * Docker container status.
  */
 export type ContainerState = 'running' | 'exited' | 'created' | 'paused' | 'restarting' | 'dead';

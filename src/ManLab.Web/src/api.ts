@@ -67,6 +67,28 @@ export async function deleteNode(id: string): Promise<void> {
 }
 
 /**
+ * Requests an immediate ping from a specific agent.
+ * If successful, the agent's heartbeat backoff will be reset.
+ * @returns Promise resolving when the ping request is sent (not when a response is received)
+ */
+export async function requestAgentPing(nodeId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/ping`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("Node not found");
+    }
+    if (response.status === 503) {
+      const data = await response.json();
+      throw new Error(data.message || "Agent is not currently connected");
+    }
+    throw new Error(`Failed to request ping: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
  * Fetches a specific node by ID.
  */
 export async function fetchNode(id: string): Promise<Node> {

@@ -24,6 +24,18 @@ public sealed record DockerErrorResponse(string Error, string? ContainerId = nul
 public sealed record DockerActionResponse(bool Success, string ContainerId, string Action);
 
 /// <summary>
+/// Raw Docker ps JSON output format.
+/// Field names match Docker CLI JSON output exactly (PascalCase).
+/// </summary>
+public sealed record DockerPsOutput(
+    string? ID,
+    string? Names,
+    string? Image,
+    string? State,
+    string? Status,
+    string? CreatedAt);
+
+/// <summary>
 /// Source-generated JSON serializer context for Docker Manager DTOs.
 /// Enables Native AOT compatibility by avoiding runtime reflection.
 /// </summary>
@@ -31,7 +43,18 @@ public sealed record DockerActionResponse(bool Success, string ContainerId, stri
 [JsonSerializable(typeof(List<ContainerInfo>))]
 [JsonSerializable(typeof(DockerErrorResponse))]
 [JsonSerializable(typeof(DockerActionResponse))]
+[JsonSerializable(typeof(DockerPsOutput))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 public sealed partial class DockerJsonContext : JsonSerializerContext
+{
+}
+
+/// <summary>
+/// Separate context for Docker CLI output parsing (uses case-insensitive matching).
+/// Docker CLI outputs property names in PascalCase.
+/// </summary>
+[JsonSerializable(typeof(DockerPsOutput))]
+[JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+public sealed partial class DockerCliJsonContext : JsonSerializerContext
 {
 }

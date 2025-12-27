@@ -40,6 +40,7 @@ Uninstall / cleanup (removes systemd unit, env file, and install directory):
 
 - Installs to `C:\ProgramData\ManLab\Agent`
 - Creates a Scheduled Task named `ManLab Agent` (runs as `SYSTEM` at startup)
+  - Uses the built-in PowerShell **ScheduledTasks** module (Task Scheduler API)
 - Writes a config file `agent-config.json` and logs to `agent.log`
 
 Example (elevated PowerShell):
@@ -83,7 +84,6 @@ You can also install/uninstall the local agent from the ManLab web dashboard. Th
 
 - **System Install**: Requires the server to run with administrator privileges. Agent runs as SYSTEM at startup.
 - **User Install**: No admin required. Agent runs as your user on logon.
-
 
 ## SSH onboarding transport (server-side)
 
