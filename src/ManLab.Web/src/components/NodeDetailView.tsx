@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, AlertCircle, Trash2, RefreshCw, Clock } from "lucide-react";
+import { ArrowLeft, AlertCircle, Trash2, RefreshCw, Clock, Power, Play, Square } from "lucide-react";
 import type { Container } from "../types";
 import { useSignalR } from "../SignalRContext";
 import {
@@ -27,6 +27,9 @@ import {
   triggerSystemUpdate,
   deleteNode,
   requestAgentPing,
+  shutdownAgent,
+  enableAgentTask,
+  disableAgentTask,
 } from "../api";
 import { TelemetryChart } from "./TelemetryChart";
 import { ContainerList } from "./ContainerList";
@@ -230,6 +233,19 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
   // Ping agent mutation
   const pingMutation = useMutation({
     mutationFn: () => requestAgentPing(nodeId),
+  });
+
+  // Agent control mutations
+  const shutdownMutation = useMutation({
+    mutationFn: () => shutdownAgent(nodeId),
+  });
+
+  const enableTaskMutation = useMutation({
+    mutationFn: () => enableAgentTask(nodeId),
+  });
+
+  const disableTaskMutation = useMutation({
+    mutationFn: () => disableAgentTask(nodeId),
   });
 
   if (nodeLoading) {
@@ -495,6 +511,163 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
                 <p className="text-xs text-muted-foreground mt-3">
                   ⚠️ System actions are only available when the node is online.
                 </p>
+              )}
+            </CardHeader>
+          </Card>
+
+          {/* Ping Agent */}
+          <Card className="mt-4">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4" />
+                    Ping Agent
+                  </CardTitle>
+                  <CardDescription>
+                    Request an immediate connectivity check from the agent.
+                    Resets any heartbeat backoff if successful.
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="secondary"
+                  disabled={node.status !== "Online" || pingMutation.isPending}
+                  onClick={() => pingMutation.mutate()}
+                >
+                  {pingMutation.isPending ? (
+                    <>
+                      <Spinner className="h-4 w-4 mr-2" />
+                      Pinging...
+                    </>
+                  ) : (
+                    "Ping Now"
+                  )}
+                </Button>
+              </div>
+              {pingMutation.isSuccess && (
+                <Alert className="mt-3">
+                  <AlertDescription>Ping request sent successfully.</AlertDescription>
+                </Alert>
+              )}
+              {pingMutation.isError && (
+                <Alert variant="destructive" className="mt-3">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {pingMutation.error instanceof Error
+                      ? pingMutation.error.message
+                      : "Failed to send ping request"}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </CardHeader>
+          </Card>
+
+          {/* Agent Control - Enable/Disable Task */}
+          <Card className="mt-4">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Power className="h-4 w-4" />
+                    Agent Scheduled Task
+                  </CardTitle>
+                  <CardDescription>
+                    Enable or disable the agent's Windows scheduled task.
+                    Disabling prevents the agent from auto-starting.
+                  </CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    disabled={node.status !== "Online" || enableTaskMutation.isPending}
+                    onClick={() => enableTaskMutation.mutate()}
+                  >
+                    {enableTaskMutation.isPending ? (
+                      <Spinner className="h-4 w-4" />
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 mr-1" />
+                        Enable
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={node.status !== "Online" || disableTaskMutation.isPending}
+                    onClick={() => disableTaskMutation.mutate()}
+                  >
+                    {disableTaskMutation.isPending ? (
+                      <Spinner className="h-4 w-4" />
+                    ) : (
+                      <>
+                        <Square className="h-4 w-4 mr-1" />
+                        Disable
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+              {(enableTaskMutation.isSuccess || disableTaskMutation.isSuccess) && (
+                <Alert className="mt-3">
+                  <AlertDescription>Task control command sent successfully.</AlertDescription>
+                </Alert>
+              )}
+              {(enableTaskMutation.isError || disableTaskMutation.isError) && (
+                <Alert variant="destructive" className="mt-3">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>Failed to send task control command.</AlertDescription>
+                </Alert>
+              )}
+            </CardHeader>
+          </Card>
+
+          {/* Shutdown Agent */}
+          <Card className="mt-4">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Power className="h-4 w-4" />
+                    Shutdown Agent
+                  </CardTitle>
+                  <CardDescription>
+                    Gracefully terminate the agent process. The agent will
+                    restart automatically via its scheduled task.
+                  </CardDescription>
+                </div>
+                <ConfirmationModal
+                  trigger={
+                    <Button
+                      variant="secondary"
+                      disabled={node.status !== "Online"}
+                    >
+                      Shutdown
+                    </Button>
+                  }
+                  title="Shutdown Agent"
+                  message={`Are you sure you want to shutdown the agent on "${node.hostname}"? The agent will terminate and restart via its scheduled task.`}
+                  confirmText="Shutdown"
+                  isDestructive
+                  isLoading={shutdownMutation.isPending}
+                  onConfirm={async () => {
+                    await shutdownMutation.mutateAsync();
+                  }}
+                />
+              </div>
+              {shutdownMutation.isSuccess && (
+                <Alert className="mt-3">
+                  <AlertDescription>Shutdown command sent. Agent will restart shortly.</AlertDescription>
+                </Alert>
+              )}
+              {shutdownMutation.isError && (
+                <Alert variant="destructive" className="mt-3">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {shutdownMutation.error instanceof Error
+                      ? shutdownMutation.error.message
+                      : "Failed to send shutdown command"}
+                  </AlertDescription>
+                </Alert>
               )}
             </CardHeader>
           </Card>

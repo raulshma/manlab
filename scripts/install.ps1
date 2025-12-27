@@ -70,7 +70,13 @@ param(
   [switch]$Uninstall,
 
   [Parameter(Mandatory = $false)]
-  [switch]$UserMode
+  [switch]$UserMode,
+
+  [Parameter(Mandatory = $false)]
+  [int]$HeartbeatIntervalSeconds = 5,
+
+  [Parameter(Mandatory = $false)]
+  [int]$MaxReconnectDelaySeconds = 60
 )
 
 Set-StrictMode -Version Latest
@@ -459,6 +465,8 @@ $config = [ordered]@{
   ServerUrl = $hubUrl
   AuthToken = $AuthToken
   LogPath = $logPath
+  HeartbeatIntervalSeconds = $HeartbeatIntervalSeconds
+  MaxReconnectDelaySeconds = $MaxReconnectDelaySeconds
 }
 $config | ConvertTo-Json -Depth 5 | Set-Content -Path $configPath -Encoding UTF8
 
@@ -482,6 +490,14 @@ $env:MANLAB_SERVER_URL = [string]$config.ServerUrl
 
 if ($null -ne $config.AuthToken -and -not [string]::IsNullOrWhiteSpace([string]$config.AuthToken)) {
   $env:MANLAB_AUTH_TOKEN = [string]$config.AuthToken
+}
+
+if ($null -ne $config.HeartbeatIntervalSeconds) {
+  $env:MANLAB_HEARTBEAT_INTERVAL_SECONDS = [string]$config.HeartbeatIntervalSeconds
+}
+
+if ($null -ne $config.MaxReconnectDelaySeconds) {
+  $env:MANLAB_MAX_RECONNECT_DELAY_SECONDS = [string]$config.MaxReconnectDelaySeconds
 }
 
 $exe = Join-Path $PSScriptRoot 'manlab-agent.exe'

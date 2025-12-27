@@ -15,5 +15,17 @@ public enum CommandType
     Shell,
 
     /// <summary>List Docker containers on the node.</summary>
-    DockerList
+    DockerList,
+
+    /// <summary>Gracefully shutdown the agent process.</summary>
+    Shutdown,
+
+    /// <summary>Enable the agent's scheduled task (start agent).</summary>
+    EnableTask,
+
+    /// <summary>Disable the agent's scheduled task (stop agent).</summary>
+    DisableTask,
+
+    /// <summary>Uninstall the agent from the machine.</summary>
+    Uninstall
 }

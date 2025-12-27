@@ -78,6 +78,12 @@ public sealed class CommandDispatchService : BackgroundService
 
     private async Task DispatchQueuedCommandsAsync(CancellationToken cancellationToken)
     {
+        // Early exit if no agents are connected - avoids unnecessary database queries
+        if (!_registry.HasConnections())
+        {
+            return;
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
 
@@ -153,6 +159,10 @@ public sealed class CommandDispatchService : BackgroundService
             CommandType.Update => ("system.update", payload ?? string.Empty, true),
             CommandType.DockerRestart => ("docker.restart", payload ?? string.Empty, true),
             CommandType.DockerList => ("docker.list", payload ?? string.Empty, true),
+            CommandType.Shutdown => ("agent.shutdown", payload ?? string.Empty, true),
+            CommandType.EnableTask => ("agent.enabletask", payload ?? string.Empty, true),
+            CommandType.DisableTask => ("agent.disabletask", payload ?? string.Empty, true),
+            CommandType.Uninstall => ("agent.uninstall", payload ?? string.Empty, true),
             _ => (type.ToString(), payload ?? string.Empty, false)
         };
     }

@@ -200,4 +200,11 @@ export interface LocalAgentInstallResponse {
   error: string | null;
 }
 
+/**
+ * Agent configuration for installation.
+ */
+export interface AgentConfiguration {
+  heartbeatIntervalSeconds: number;
+  maxReconnectDelaySeconds: number;
+}
 

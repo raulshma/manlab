@@ -14,17 +14,20 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchLocalAgentStatus,
+  fetchDefaultAgentConfig,
   installLocalAgent,
   uninstallLocalAgent,
   clearLocalAgentFiles,
 } from "../api";
 import { useSignalR } from "../SignalRContext";
-import type { LocalAgentStatus } from "../types";
+import type { LocalAgentStatus, AgentConfiguration } from "../types";
 import { ConfirmationModal } from "./ConfirmationModal";
-import { ChevronRight, Server, Shield, User, Trash2, AlertTriangle } from "lucide-react";
+import { ChevronRight, Server, Shield, User, Trash2, AlertTriangle, Settings } from "lucide-react";
 
 const LOCAL_MACHINE_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -33,8 +36,13 @@ export function LocalAgentCard() {
   const { localAgentLogs, subscribeToLocalAgentLogs } = useSignalR();
   const [showLogs, setShowLogs] = useState(false);
   const [showOrphanedDetails, setShowOrphanedDetails] = useState(false);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const logsContainerRef = useRef<HTMLDivElement>(null);
   const [isFollowingLogs, setIsFollowingLogs] = useState(true);
+
+  // Agent configuration state
+  const [heartbeatInterval, setHeartbeatInterval] = useState<number>(5);
+  const [maxReconnectDelay, setMaxReconnectDelay] = useState<number>(60);
 
   const {
     data: status,
@@ -45,6 +53,20 @@ export function LocalAgentCard() {
     queryFn: fetchLocalAgentStatus,
     refetchInterval: 5000,
   });
+
+  // Fetch default agent configuration
+  const { data: defaultConfig } = useQuery<AgentConfiguration>({
+    queryKey: ["defaultAgentConfig"],
+    queryFn: fetchDefaultAgentConfig,
+  });
+
+  // Use default config values when available, otherwise use initial state
+  const effectiveHeartbeatInterval = heartbeatInterval === 5 && defaultConfig 
+    ? defaultConfig.heartbeatIntervalSeconds 
+    : heartbeatInterval;
+  const effectiveMaxReconnectDelay = maxReconnectDelay === 60 && defaultConfig 
+    ? defaultConfig.maxReconnectDelaySeconds 
+    : maxReconnectDelay;
 
   // Filter logs for local machine
   const filteredLogs = localAgentLogs
@@ -77,8 +99,14 @@ export function LocalAgentCard() {
   }, [filteredLogs.length, showLogs, isFollowingLogs]);
 
   const installMutation = useMutation({
-    mutationFn: ({ force, userMode }: { force: boolean; userMode: boolean }) =>
-      installLocalAgent(force, userMode),
+    mutationFn: ({ force, userMode }: { force: boolean; userMode: boolean }) => {
+      // Build config object only if values differ from defaults
+      const agentConfig = showAdvancedSettings ? {
+        heartbeatIntervalSeconds: effectiveHeartbeatInterval,
+        maxReconnectDelaySeconds: effectiveMaxReconnectDelay,
+      } : undefined;
+      return installLocalAgent(force, userMode, agentConfig);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["localAgentStatus"] });
     },
@@ -287,6 +315,72 @@ export function LocalAgentCard() {
                       </div>
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* Advanced Settings - only show when not installed */}
+        {!status.isInstalled && (
+          <div className="space-y-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+              className="w-fit"
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              <ChevronRight
+                className={`h-4 w-4 transition-transform ${
+                  showAdvancedSettings ? "rotate-90" : ""
+                }`}
+              />
+              Advanced Settings
+            </Button>
+
+            {showAdvancedSettings && (
+              <Card>
+                <CardContent className="py-3 space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="heartbeatInterval">
+                        Heartbeat Interval (seconds)
+                      </Label>
+                      <Input
+                        id="heartbeatInterval"
+                        type="number"
+                        min={1}
+                        max={300}
+                        value={heartbeatInterval}
+                        onChange={(e) =>
+                          setHeartbeatInterval(parseInt(e.target.value) || 5)
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        How often the agent sends telemetry data
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="maxReconnectDelay">
+                        Max Reconnect Delay (seconds)
+                      </Label>
+                      <Input
+                        id="maxReconnectDelay"
+                        type="number"
+                        min={10}
+                        max={600}
+                        value={maxReconnectDelay}
+                        onChange={(e) =>
+                          setMaxReconnectDelay(parseInt(e.target.value) || 60)
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Maximum delay between reconnection attempts
+                      </p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             )}

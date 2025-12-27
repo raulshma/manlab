@@ -36,6 +36,16 @@ if (Environment.GetEnvironmentVariable("MANLAB_AUTH_TOKEN") is string authToken)
 {
     agentConfig.AuthToken = authToken;
 }
+if (Environment.GetEnvironmentVariable("MANLAB_HEARTBEAT_INTERVAL_SECONDS") is string heartbeatStr 
+    && int.TryParse(heartbeatStr, out var heartbeatSeconds))
+{
+    agentConfig.HeartbeatIntervalSeconds = heartbeatSeconds;
+}
+if (Environment.GetEnvironmentVariable("MANLAB_MAX_RECONNECT_DELAY_SECONDS") is string reconnectStr 
+    && int.TryParse(reconnectStr, out var reconnectSeconds))
+{
+    agentConfig.MaxReconnectDelaySeconds = reconnectSeconds;
+}
 
 logger.LogInformation("Connecting to server: {ServerUrl}", agentConfig.ServerUrl);
 
@@ -63,7 +73,8 @@ await using var telemetryService = new TelemetryService(
 // Create command dispatcher for handling server commands
 using var commandDispatcher = new ManLab.Agent.Commands.CommandDispatcher(
     loggerFactory,
-    async (commandId, status, logs) => await connectionManager.UpdateCommandStatusAsync(commandId, status, logs).ConfigureAwait(false));
+    async (commandId, status, logs) => await connectionManager.UpdateCommandStatusAsync(commandId, status, logs).ConfigureAwait(false),
+    () => cts.Cancel()); // Shutdown callback
 
 // Handle command execution via dispatcher
 connectionManager.OnCommandReceived += async (commandId, type, payload) =>

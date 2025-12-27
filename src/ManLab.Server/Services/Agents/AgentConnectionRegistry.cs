@@ -20,6 +20,11 @@ public sealed class AgentConnectionRegistry
     public bool TryGet(Guid nodeId, out string connectionId)
         => _nodeToConnectionId.TryGetValue(nodeId, out connectionId!);
 
+    /// <summary>
+    /// Returns true if there are any connected agents.
+    /// </summary>
+    public bool HasConnections() => !_nodeToConnectionId.IsEmpty;
+
     public bool TryRemoveByConnectionId(string connectionId, out Guid nodeId)
     {
         if (_connectionIdToNode.TryRemove(connectionId, out nodeId))

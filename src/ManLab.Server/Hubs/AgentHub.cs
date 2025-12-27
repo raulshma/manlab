@@ -174,25 +174,35 @@ public class AgentHub : Hub
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
 
-        // Update node's LastSeen
-        var node = await dbContext.Nodes.FindAsync(nodeId);
-        if (node == null)
+        // Use AsNoTracking for validation - we only need to verify auth and get previous status
+        var nodeInfo = await dbContext.Nodes
+            .AsNoTracking()
+            .Where(n => n.Id == nodeId)
+            .Select(n => new { n.AuthKeyHash, n.Status })
+            .FirstOrDefaultAsync();
+
+        if (nodeInfo == null)
         {
             _logger.LogWarning("Heartbeat from unknown node: {NodeId}", nodeId);
             return;
         }
 
         // Security: ensure the caller token matches the node.
-        if (!string.Equals(node.AuthKeyHash, tokenHash, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(nodeInfo.AuthKeyHash, tokenHash, StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning("Rejected heartbeat for node {NodeId}: auth token mismatch", nodeId);
             throw new HubException("Unauthorized: token does not match node.");
         }
 
-        var previousStatus = node.Status;
+        var previousStatus = nodeInfo.Status;
+        var now = DateTime.UtcNow;
 
-        node.LastSeen = DateTime.UtcNow;
-        node.Status = NodeStatus.Online;
+        // Use ExecuteUpdateAsync for efficient update without loading entity
+        await dbContext.Nodes
+            .Where(n => n.Id == nodeId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(n => n.LastSeen, now)
+                .SetProperty(n => n.Status, NodeStatus.Online));
 
         // Calculate overall disk usage (average of all mount points)
         float diskUsage = data.DiskUsage.Count > 0
@@ -208,7 +218,7 @@ public class AgentHub : Hub
         var snapshot = new TelemetrySnapshot
         {
             NodeId = nodeId,
-            Timestamp = DateTime.UtcNow,
+            Timestamp = now,
             CpuUsage = data.CpuPercent,
             RamUsage = ramUsage,
             DiskUsage = diskUsage,
@@ -220,13 +230,13 @@ public class AgentHub : Hub
 
         _logger.LogDebug("Heartbeat received from node: {NodeId}", nodeId);
 
-        if (previousStatus != node.Status)
+        if (previousStatus != NodeStatus.Online)
         {
-            await Clients.All.SendAsync("NodeStatusChanged", node.Id, node.Status.ToString(), node.LastSeen);
+            await Clients.All.SendAsync("NodeStatusChanged", nodeId, NodeStatus.Online.ToString(), now);
         }
 
         // Let the dashboard invalidate/refetch telemetry for this node.
-        await Clients.All.SendAsync("TelemetryReceived", node.Id);
+        await Clients.All.SendAsync("TelemetryReceived", nodeId);
     }
 
     /// <summary>

@@ -75,6 +75,18 @@ public sealed class LocalAgentController : ControllerBase
     }
 
     /// <summary>
+    /// Gets the default agent configuration values.
+    /// </summary>
+    [HttpGet("default-config")]
+    public ActionResult<AgentConfigurationResponse> GetDefaultConfig()
+    {
+        // Return default values from AgentConfiguration class
+        return Ok(new AgentConfigurationResponse(
+            HeartbeatIntervalSeconds: 5,
+            MaxReconnectDelaySeconds: 60));
+    }
+
+    /// <summary>
     /// Triggers installation of the local agent on the server machine.
     /// </summary>
     [HttpPost("install")]
@@ -106,7 +118,14 @@ public sealed class LocalAgentController : ControllerBase
         // Build server base URL from request
         var serverBaseUrl = $"{Request.Scheme}://{Request.Host}";
 
-        var started = _installService.TryStartInstall(serverBaseUrl, request.Force, request.UserMode);
+        // Map request config to service options
+        AgentConfigOptions? configOptions = request.AgentConfig is not null
+            ? new AgentConfigOptions(
+                request.AgentConfig.HeartbeatIntervalSeconds,
+                request.AgentConfig.MaxReconnectDelaySeconds)
+            : null;
+
+        var started = _installService.TryStartInstall(serverBaseUrl, request.Force, request.UserMode, configOptions);
 
         if (!started)
         {
@@ -246,11 +265,29 @@ public sealed class LocalAgentController : ControllerBase
         string? LastRunTime,
         string? NextRunTime);
 
-    public sealed record LocalAgentInstallRequest(bool Force = false, bool UserMode = false);
+    public sealed record LocalAgentInstallRequest(
+        bool Force = false, 
+        bool UserMode = false,
+        AgentConfigurationRequest? AgentConfig = null);
 
     public sealed record LocalAgentUninstallRequest(bool UserMode = false);
 
     public sealed record LocalAgentClearFilesRequest(bool ClearSystem = true, bool ClearUser = true);
 
     public sealed record LocalAgentInstallResponse(bool Started, string? Error);
+
+    /// <summary>
+    /// Optional agent configuration settings for installation.
+    /// When null, defaults from appsettings.json are used.
+    /// </summary>
+    public sealed record AgentConfigurationRequest(
+        int? HeartbeatIntervalSeconds = null,
+        int? MaxReconnectDelaySeconds = null);
+
+    /// <summary>
+    /// Default agent configuration values.
+    /// </summary>
+    public sealed record AgentConfigurationResponse(
+        int HeartbeatIntervalSeconds,
+        int MaxReconnectDelaySeconds);
 }

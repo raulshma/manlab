@@ -16,9 +16,9 @@ public class AgentConfiguration
     public string? AuthToken { get; set; }
 
     /// <summary>
-    /// Interval in seconds between telemetry heartbeats. Default is 5 seconds.
+    /// Interval in seconds between telemetry heartbeats. Default is 15 seconds.
     /// </summary>
-    public int HeartbeatIntervalSeconds { get; set; } = 5;
+    public int HeartbeatIntervalSeconds { get; set; } = 15;
 
     /// <summary>
     /// Maximum reconnection delay in seconds. Default is 60 seconds.

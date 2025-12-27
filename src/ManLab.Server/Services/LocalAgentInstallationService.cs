@@ -220,7 +220,8 @@ public sealed class LocalAgentInstallationService
     /// <param name="serverBaseUrl">Base URL of the ManLab server.</param>
     /// <param name="force">If true, reinstall even if already installed.</param>
     /// <param name="userMode">If true, install to user-local directory without admin privileges.</param>
-    public bool TryStartInstall(string serverBaseUrl, bool force, bool userMode = false)
+    /// <param name="agentConfig">Optional agent configuration overrides.</param>
+    public bool TryStartInstall(string serverBaseUrl, bool force, bool userMode = false, AgentConfigOptions? agentConfig = null)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -232,7 +233,7 @@ public sealed class LocalAgentInstallationService
             return false;
         }
 
-        var task = Task.Run(() => RunInstallAsync(serverBaseUrl, force, userMode));
+        var task = Task.Run(() => RunInstallAsync(serverBaseUrl, force, userMode, agentConfig));
         return _running.TryAdd(LocalMachineId, task);
     }
 
@@ -277,7 +278,7 @@ public sealed class LocalAgentInstallationService
         return _running.TryAdd(LocalMachineId, task);
     }
 
-    private async Task RunInstallAsync(string serverBaseUrl, bool force, bool userMode)
+    private async Task RunInstallAsync(string serverBaseUrl, bool force, bool userMode, AgentConfigOptions? agentConfig)
     {
         string? tokenHash = null;
         var installDir = userMode ? UserInstallDir : SystemInstallDir;
@@ -351,6 +352,16 @@ public sealed class LocalAgentInstallationService
             if (userMode)
             {
                 args += " -UserMode";
+            }
+
+            // Add agent configuration parameters if provided
+            if (agentConfig?.HeartbeatIntervalSeconds is not null)
+            {
+                args += $" -HeartbeatIntervalSeconds {agentConfig.HeartbeatIntervalSeconds}";
+            }
+            if (agentConfig?.MaxReconnectDelaySeconds is not null)
+            {
+                args += $" -MaxReconnectDelaySeconds {agentConfig.MaxReconnectDelaySeconds}";
             }
 
             await PublishLogAsync($"Running: powershell.exe {args.Replace(plainToken, "***")}");
@@ -1060,3 +1071,10 @@ public sealed record TaskInfo(
     string State,
     string? LastRunTime,
     string? NextRunTime);
+
+/// <summary>
+/// Optional agent configuration settings for installation.
+/// </summary>
+public sealed record AgentConfigOptions(
+    int? HeartbeatIntervalSeconds,
+    int? MaxReconnectDelaySeconds);

@@ -14,6 +14,7 @@ import type {
   SshAuthMode,
   LocalAgentStatus,
   LocalAgentInstallResponse,
+  AgentConfiguration,
 } from "./types";
 
 const API_BASE = "/api";
@@ -195,6 +196,28 @@ export async function requestDockerContainerList(
 }
 
 /**
+ * Requests a graceful shutdown of the agent.
+ * The agent will terminate and restart via its scheduled task.
+ */
+export async function shutdownAgent(nodeId: string): Promise<Command> {
+  return createCommand(nodeId, "Shutdown");
+}
+
+/**
+ * Enables the agent's scheduled task (starts the agent on next trigger).
+ */
+export async function enableAgentTask(nodeId: string): Promise<Command> {
+  return createCommand(nodeId, "EnableTask");
+}
+
+/**
+ * Disables the agent's scheduled task (prevents the agent from auto-starting).
+ */
+export async function disableAgentTask(nodeId: string): Promise<Command> {
+  return createCommand(nodeId, "DisableTask");
+}
+
+/**
  * Onboarding: list all machines.
  */
 export async function fetchOnboardingMachines(): Promise<OnboardingMachine[]> {
@@ -325,18 +348,37 @@ export async function fetchLocalAgentStatus(): Promise<LocalAgentStatus> {
 }
 
 /**
+ * Local Agent: Fetches the default agent configuration values.
+ */
+export async function fetchDefaultAgentConfig(): Promise<AgentConfiguration> {
+  const response = await fetch(`${API_BASE}/localagent/default-config`);
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch default agent config: ${response.statusText}`
+    );
+  }
+  return response.json();
+}
+
+/**
  * Local Agent: Triggers installation of the agent on the server machine.
  * @param force If true, reinstall even if already installed.
  * @param userMode If true, install to user-local directory without admin privileges.
+ * @param agentConfig Optional agent configuration overrides.
  */
 export async function installLocalAgent(
   force: boolean = false,
-  userMode: boolean = false
+  userMode: boolean = false,
+  agentConfig?: Partial<AgentConfiguration>
 ): Promise<LocalAgentInstallResponse> {
   const response = await fetch(`${API_BASE}/localagent/install`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ force, userMode }),
+    body: JSON.stringify({ 
+      force, 
+      userMode,
+      agentConfig: agentConfig ? agentConfig : undefined
+    }),
   });
   if (!response.ok) {
     const errorData = await response

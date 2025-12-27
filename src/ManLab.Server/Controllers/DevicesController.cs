@@ -261,6 +261,7 @@ public class DevicesController : ControllerBase
 
     /// <summary>
     /// Deletes a specific device node by ID.
+    /// If the agent is connected, sends an uninstall command to cleanup the agent.
     /// Also removes all associated telemetry snapshots and commands.
     /// </summary>
     /// <param name="id">The node ID.</param>
@@ -276,6 +277,28 @@ public class DevicesController : ControllerBase
         if (node == null)
         {
             return NotFound();
+        }
+
+        // If agent is connected, send uninstall command to cleanup the agent
+        if (_connectionRegistry.TryGet(id, out var connectionId))
+        {
+            _logger.LogInformation("Sending uninstall command to connected agent for node {NodeId}", id);
+            
+            // Queue the uninstall command
+            var uninstallCommand = new Data.Entities.CommandQueueItem
+            {
+                Id = Guid.NewGuid(),
+                NodeId = id,
+                CommandType = Data.Enums.CommandType.Uninstall,
+                Status = Data.Enums.CommandStatus.Queued,
+                CreatedAt = DateTime.UtcNow
+            };
+            _dbContext.CommandQueue.Add(uninstallCommand);
+            await _dbContext.SaveChangesAsync();
+
+            // Send directly to the agent (don't wait for dispatch service)
+            await _hubContext.Clients.Client(connectionId)
+                .SendAsync("ExecuteCommand", uninstallCommand.Id, "agent.uninstall", string.Empty);
         }
 
         _dbContext.Nodes.Remove(node);
