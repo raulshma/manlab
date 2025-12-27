@@ -289,14 +289,17 @@ export async function fetchLocalAgentStatus(): Promise<LocalAgentStatus> {
 
 /**
  * Local Agent: Triggers installation of the agent on the server machine.
+ * @param force If true, reinstall even if already installed.
+ * @param userMode If true, install to user-local directory without admin privileges.
  */
 export async function installLocalAgent(
-  force: boolean = false
+  force: boolean = false,
+  userMode: boolean = false
 ): Promise<LocalAgentInstallResponse> {
   const response = await fetch(`${API_BASE}/localagent/install`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ force }),
+    body: JSON.stringify({ force, userMode }),
   });
   if (!response.ok) {
     const errorData = await response
@@ -309,9 +312,28 @@ export async function installLocalAgent(
 
 /**
  * Local Agent: Triggers uninstallation of the agent from the server machine.
+ * The server will automatically detect the correct install mode to use.
  */
 export async function uninstallLocalAgent(): Promise<LocalAgentInstallResponse> {
   const response = await fetch(`${API_BASE}/localagent/uninstall`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    const errorData = await response
+      .json()
+      .catch(() => ({ error: response.statusText }));
+    return { started: false, error: errorData.error ?? response.statusText };
+  }
+  return response.json();
+}
+
+/**
+ * Local Agent: Clears leftover agent files from the server machine.
+ */
+export async function clearLocalAgentFiles(): Promise<LocalAgentInstallResponse> {
+  const response = await fetch(`${API_BASE}/localagent/clear-files`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),

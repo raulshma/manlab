@@ -36,6 +36,8 @@ Uninstall / cleanup (removes systemd unit, env file, and install directory):
 
 ## Windows (`install.ps1`)
 
+### System Mode (Default, requires Admin)
+
 - Installs to `C:\ProgramData\ManLab\Agent`
 - Creates a Scheduled Task named `ManLab Agent` (runs as `SYSTEM` at startup)
 - Writes a config file `agent-config.json` and logs to `agent.log`
@@ -52,6 +54,36 @@ After install:
 Uninstall / cleanup (removes Scheduled Task and deletes install directory):
 
 - `./scripts/install.ps1 -Uninstall`
+
+### User Mode (No Admin Required)
+
+Use `-UserMode` to install without administrator privileges:
+
+- Installs to `%LOCALAPPDATA%\ManLab\Agent` (e.g., `C:\Users\<username>\AppData\Local\ManLab\Agent`)
+- Attempts to create a Scheduled Task that runs as the current user on logon
+- If Task Scheduler creation is blocked by policy for standard users, falls back to a per-user autostart entry (HKCU `...\Run`)
+- Agent only runs when you are logged in
+
+Example (no elevation required):
+
+- `./scripts/install.ps1 -Server http://localhost:5247 -AuthToken "YOUR_TOKEN" -UserMode`
+
+After install:
+
+- Task Scheduler → Task Scheduler Library → **ManLab Agent**
+- Logs: `%LOCALAPPDATA%\ManLab\Agent\agent.log`
+
+Uninstall user mode installation:
+
+- `./scripts/install.ps1 -Uninstall -UserMode`
+
+### Web UI Installation
+
+You can also install/uninstall the local agent from the ManLab web dashboard. The dashboard offers two installation modes:
+
+- **System Install**: Requires the server to run with administrator privileges. Agent runs as SYSTEM at startup.
+- **User Install**: No admin required. Agent runs as your user on logon.
+
 
 ## SSH onboarding transport (server-side)
 

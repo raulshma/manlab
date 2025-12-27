@@ -1,6 +1,7 @@
 using ManLab.Agent.Configuration;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace ManLab.Agent.Services;
@@ -46,6 +47,12 @@ public sealed class ConnectionManager : IAsyncDisposable
         _config = config;
 
         var builder = new HubConnectionBuilder()
+            .AddJsonProtocol(options =>
+            {
+                // NativeAOT: reflection-based serialization is disabled.
+                // Provide source-generated type metadata for hub payloads.
+                options.PayloadSerializerOptions.TypeInfoResolver = ManLabJsonContext.Default;
+            })
             .WithUrl(_config.ServerUrl, options =>
             {
                 if (!string.IsNullOrEmpty(_config.AuthToken))
@@ -88,9 +95,26 @@ public sealed class ConnectionManager : IAsyncDisposable
                 _reconnectAttempt = 0;
                 _logger.LogInformation("Connected to server successfully");
 
-                // Register with the server
-                await RegisterAsync().ConfigureAwait(false);
-                return;
+                // Register with the server. If registration fails, stop the connection
+                // so the next retry can start cleanly.
+                try
+                {
+                    await RegisterAsync().ConfigureAwait(false);
+                    return;
+                }
+                catch
+                {
+                    _isConnected = false;
+                    try
+                    {
+                        await _connection.StopAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // ignore stop failures; we'll retry
+                    }
+                    throw;
+                }
             }
             catch (Exception ex)
             {

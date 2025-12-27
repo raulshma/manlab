@@ -1,6 +1,3 @@
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
@@ -10,6 +7,9 @@ param(
     # Staging folder consumed by the ManLab.Server BinariesController
     [string]$ServerDistributionRoot
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 # This script is kept as a convenience wrapper; the implementation lives in the
 # cross-platform ManLab.Build tool.

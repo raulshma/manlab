@@ -3,7 +3,7 @@
  * Provides install/uninstall buttons and shows real-time logs.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -19,11 +19,12 @@ import {
   fetchLocalAgentStatus,
   installLocalAgent,
   uninstallLocalAgent,
+  clearLocalAgentFiles,
 } from "../api";
 import { useSignalR } from "../SignalRContext";
 import type { LocalAgentStatus } from "../types";
 import { ConfirmationModal } from "./ConfirmationModal";
-import { ChevronRight, Server } from "lucide-react";
+import { ChevronRight, Server, Shield, User, Trash2, AlertTriangle } from "lucide-react";
 
 const LOCAL_MACHINE_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -31,6 +32,9 @@ export function LocalAgentCard() {
   const queryClient = useQueryClient();
   const { localAgentLogs, subscribeToLocalAgentLogs } = useSignalR();
   const [showLogs, setShowLogs] = useState(false);
+  const [showOrphanedDetails, setShowOrphanedDetails] = useState(false);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
+  const [isFollowingLogs, setIsFollowingLogs] = useState(true);
 
   const {
     data: status,
@@ -52,13 +56,29 @@ export function LocalAgentCard() {
     const unsubscribe = subscribeToLocalAgentLogs((log) => {
       if (log.machineId === LOCAL_MACHINE_ID) {
         setShowLogs(true);
+        setIsFollowingLogs(true);
       }
     });
     return unsubscribe;
   }, [subscribeToLocalAgentLogs]);
 
+  // Auto-scroll logs ("follow tail") while the user hasn't scrolled up.
+  useEffect(() => {
+    if (!showLogs || !isFollowingLogs) return;
+    const el = logsContainerRef.current;
+    if (!el) return;
+
+    const raf = requestAnimationFrame(() => {
+      // Keep the scroll pinned to the bottom as new log lines arrive.
+      el.scrollTop = el.scrollHeight;
+    });
+
+    return () => cancelAnimationFrame(raf);
+  }, [filteredLogs.length, showLogs, isFollowingLogs]);
+
   const installMutation = useMutation({
-    mutationFn: (force: boolean) => installLocalAgent(force),
+    mutationFn: ({ force, userMode }: { force: boolean; userMode: boolean }) =>
+      installLocalAgent(force, userMode),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["localAgentStatus"] });
     },
@@ -66,6 +86,13 @@ export function LocalAgentCard() {
 
   const uninstallMutation = useMutation({
     mutationFn: () => uninstallLocalAgent(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["localAgentStatus"] });
+    },
+  });
+
+  const clearFilesMutation = useMutation({
+    mutationFn: () => clearLocalAgentFiles(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["localAgentStatus"] });
     },
@@ -125,6 +152,20 @@ export function LocalAgentCard() {
     : status.isInstalled
     ? "secondary"
     : "outline";
+  
+  // Check if there are orphaned resources (files or tasks exist but agent is not properly installed)
+  const hasOrphanedResources = !status.isInstalled && 
+    (status.hasSystemFiles || status.hasUserFiles || status.hasSystemTask || status.hasUserTask);
+  const orphaned = status.orphanedResources;
+  
+  // Format bytes to human readable
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
 
   return (
     <Card>
@@ -143,34 +184,168 @@ export function LocalAgentCard() {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* Orphaned Resources Warning */}
+        {hasOrphanedResources && (
+          <div className="space-y-3">
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span>Leftover agent resources detected</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2"
+                    onClick={() => setShowOrphanedDetails(!showOrphanedDetails)}
+                  >
+                    <ChevronRight
+                      className={`h-3 w-3 transition-transform ${showOrphanedDetails ? "rotate-90" : ""}`}
+                    />
+                    {showOrphanedDetails ? "Hide" : "Details"}
+                  </Button>
+                </div>
+                <ConfirmationModal
+                  title="Clear Agent Resources"
+                  message="This will remove all leftover agent files, configuration, and scheduled tasks. This action cannot be undone."
+                  confirmText="Clear All"
+                  isDestructive={true}
+                  onConfirm={() => clearFilesMutation.mutate()}
+                  trigger={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={isOperationRunning || clearFilesMutation.isPending}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      {clearFilesMutation.isPending ? "Clearing..." : "Clear"}
+                    </Button>
+                  }
+                />
+              </AlertDescription>
+            </Alert>
+
+            {/* Expandable Details */}
+            {showOrphanedDetails && orphaned && (
+              <Card>
+                <CardContent className="py-3 space-y-3 text-sm">
+                  {/* System Directory */}
+                  {orphaned.systemDirectory && (
+                    <div>
+                      <div className="font-medium flex items-center gap-2">
+                        <Shield className="h-3 w-3" />
+                        System Files
+                      </div>
+                      <div className="text-muted-foreground ml-5">
+                        <div>{formatBytes(orphaned.systemDirectory.totalSizeBytes)} ({orphaned.systemDirectory.fileCount} files)</div>
+                        <div className="font-mono text-xs truncate">{orphaned.systemDirectory.path}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* User Directory */}
+                  {orphaned.userDirectory && (
+                    <div>
+                      <div className="font-medium flex items-center gap-2">
+                        <User className="h-3 w-3" />
+                        User Files
+                      </div>
+                      <div className="text-muted-foreground ml-5">
+                        <div>{formatBytes(orphaned.userDirectory.totalSizeBytes)} ({orphaned.userDirectory.fileCount} files)</div>
+                        <div className="font-mono text-xs truncate">{orphaned.userDirectory.path}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* System Task */}
+                  {orphaned.systemTask && (
+                    <div>
+                      <div className="font-medium flex items-center gap-2">
+                        <Shield className="h-3 w-3" />
+                        System Scheduled Task
+                      </div>
+                      <div className="text-muted-foreground ml-5">
+                        <div>State: {orphaned.systemTask.state}</div>
+                        {orphaned.systemTask.lastRunTime && (
+                          <div className="text-xs">Last run: {orphaned.systemTask.lastRunTime}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* User Task */}
+                  {orphaned.userTask && (
+                    <div>
+                      <div className="font-medium flex items-center gap-2">
+                        <User className="h-3 w-3" />
+                        User Scheduled Task
+                      </div>
+                      <div className="text-muted-foreground ml-5">
+                        <div>State: {orphaned.userTask.state}</div>
+                        {orphaned.userTask.lastRunTime && (
+                          <div className="text-xs">Last run: {orphaned.userTask.lastRunTime}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
         {/* Actions */}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {!status.isInstalled && (
-            <ConfirmationModal
-              title="Install Local Agent"
-              message="This will install the ManLab agent on this server machine, allowing you to monitor the server itself. The agent will run as a scheduled task."
-              confirmText="Install"
-              onConfirm={() => installMutation.mutate(false)}
-              trigger={
-                <Button
-                  className="flex-1"
-                  disabled={isOperationRunning || installMutation.isPending}
-                >
-                  {installMutation.isPending
-                    ? "Installing..."
-                    : "Install Agent"}
-                </Button>
-              }
-            />
+            <>
+              {/* System Mode Install (requires admin) */}
+              <ConfirmationModal
+                title="Install Local Agent (System Mode)"
+                message="This will install the ManLab agent system-wide, requiring administrator privileges. The agent will run as SYSTEM at startup and persist across all users."
+                confirmText="Install (Admin)"
+                onConfirm={() => installMutation.mutate({ force: false, userMode: false })}
+                trigger={
+                  <Button
+                    variant="default"
+                    className="flex-1"
+                    disabled={isOperationRunning || installMutation.isPending}
+                  >
+                    <Shield className="h-4 w-4 mr-2" />
+                    {installMutation.isPending ? "Installing..." : "System Install"}
+                  </Button>
+                }
+              />
+              {/* User Mode Install (no admin required) */}
+              <ConfirmationModal
+                title="Install Local Agent (User Mode)"
+                message="This will install the ManLab agent to your local user directory. No administrator privileges required. The agent will run when you log in."
+                confirmText="Install (User)"
+                onConfirm={() => installMutation.mutate({ force: false, userMode: true })}
+                trigger={
+                  <Button
+                    variant="secondary"
+                    className="flex-1"
+                    disabled={isOperationRunning || installMutation.isPending}
+                  >
+                    <User className="h-4 w-4 mr-2" />
+                    {installMutation.isPending ? "Installing..." : "User Install"}
+                  </Button>
+                }
+              />
+            </>
           )}
 
           {status.isInstalled && (
             <>
               <ConfirmationModal
-                title="Reinstall Local Agent"
-                message="This will reinstall the ManLab agent, replacing any existing installation. The agent configuration will be reset."
+                title={`Reinstall Local Agent (${status.installMode} Mode)`}
+                message={`This will reinstall the ManLab agent in ${status.installMode} mode, replacing any existing installation. The agent configuration will be reset.`}
                 confirmText="Reinstall"
-                onConfirm={() => installMutation.mutate(true)}
+                onConfirm={() =>
+                  installMutation.mutate({
+                    force: true,
+                    userMode: status.installMode === "User",
+                  })
+                }
                 trigger={
                   <Button
                     variant="secondary"
@@ -219,7 +394,11 @@ export function LocalAgentCard() {
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => setShowLogs(!showLogs)}
+          onClick={() => {
+            const next = !showLogs;
+            setShowLogs(next);
+            if (next) setIsFollowingLogs(true);
+          }}
           className="w-fit"
         >
           <ChevronRight
@@ -233,7 +412,19 @@ export function LocalAgentCard() {
         {/* Logs */}
         {showLogs && filteredLogs.length > 0 && (
           <Card>
-            <CardContent className="max-h-48 overflow-y-auto py-3 font-mono text-xs">
+            <CardContent
+              ref={logsContainerRef}
+              className="max-h-48 overflow-y-auto py-3 font-mono text-xs"
+              onScroll={() => {
+                const el = logsContainerRef.current;
+                if (!el) return;
+                // Consider the user "following" if they're close to the bottom.
+                const thresholdPx = 24;
+                const distanceFromBottom =
+                  el.scrollHeight - el.scrollTop - el.clientHeight;
+                setIsFollowingLogs(distanceFromBottom <= thresholdPx);
+              }}
+            >
               {filteredLogs.map((log, i) => (
                 <div
                   key={i}
@@ -254,11 +445,12 @@ export function LocalAgentCard() {
         )}
 
         {/* Error Display */}
-        {(installMutation.error || uninstallMutation.error) && (
+        {(installMutation.error || uninstallMutation.error || clearFilesMutation.error) && (
           <Alert variant="destructive">
             <AlertDescription>
               {installMutation.error?.message ||
-                uninstallMutation.error?.message}
+                uninstallMutation.error?.message ||
+                clearFilesMutation.error?.message}
             </AlertDescription>
           </Alert>
         )}

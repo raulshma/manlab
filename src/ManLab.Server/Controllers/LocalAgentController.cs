@@ -35,7 +35,43 @@ public sealed class LocalAgentController : ControllerBase
             status.IsRunning,
             status.LinkedNodeId,
             status.Status,
-            status.CurrentOperation));
+            status.CurrentOperation,
+            status.InstallMode,
+            status.HasSystemFiles,
+            status.HasUserFiles,
+            status.HasSystemTask,
+            status.HasUserTask,
+            status.OrphanedResources is not null
+                ? new OrphanedResourcesResponse(
+                    status.OrphanedResources.SystemDirectory is not null
+                        ? new FileDirectoryResponse(
+                            status.OrphanedResources.SystemDirectory.Path,
+                            status.OrphanedResources.SystemDirectory.TotalSizeBytes,
+                            status.OrphanedResources.SystemDirectory.FileCount,
+                            status.OrphanedResources.SystemDirectory.Files)
+                        : null,
+                    status.OrphanedResources.UserDirectory is not null
+                        ? new FileDirectoryResponse(
+                            status.OrphanedResources.UserDirectory.Path,
+                            status.OrphanedResources.UserDirectory.TotalSizeBytes,
+                            status.OrphanedResources.UserDirectory.FileCount,
+                            status.OrphanedResources.UserDirectory.Files)
+                        : null,
+                    status.OrphanedResources.SystemTask is not null
+                        ? new TaskResponse(
+                            status.OrphanedResources.SystemTask.Name,
+                            status.OrphanedResources.SystemTask.State,
+                            status.OrphanedResources.SystemTask.LastRunTime,
+                            status.OrphanedResources.SystemTask.NextRunTime)
+                        : null,
+                    status.OrphanedResources.UserTask is not null
+                        ? new TaskResponse(
+                            status.OrphanedResources.UserTask.Name,
+                            status.OrphanedResources.UserTask.State,
+                            status.OrphanedResources.UserTask.LastRunTime,
+                            status.OrphanedResources.UserTask.NextRunTime)
+                        : null)
+                : null));
     }
 
     /// <summary>
@@ -70,7 +106,7 @@ public sealed class LocalAgentController : ControllerBase
         // Build server base URL from request
         var serverBaseUrl = $"{Request.Scheme}://{Request.Host}";
 
-        var started = _installService.TryStartInstall(serverBaseUrl, request.Force);
+        var started = _installService.TryStartInstall(serverBaseUrl, request.Force, request.UserMode);
 
         if (!started)
         {
@@ -79,7 +115,8 @@ public sealed class LocalAgentController : ControllerBase
                 Error: "Failed to start installation."));
         }
 
-        _logger.LogInformation("Local agent installation started");
+        var modeLabel = request.UserMode ? "user" : "system";
+        _logger.LogInformation("Local agent installation started ({Mode} mode)", modeLabel);
         return Accepted(new LocalAgentInstallResponse(Started: true, Error: null));
     }
 
@@ -87,8 +124,9 @@ public sealed class LocalAgentController : ControllerBase
     /// Triggers uninstallation of the local agent from the server machine.
     /// </summary>
     [HttpPost("uninstall")]
-    public ActionResult<LocalAgentInstallResponse> Uninstall()
+    public ActionResult<LocalAgentInstallResponse> Uninstall([FromBody] LocalAgentUninstallRequest? request = null)
     {
+        var userMode = request?.UserMode ?? false;
         var status = _installService.GetStatus();
 
         if (!status.IsSupported)
@@ -112,7 +150,13 @@ public sealed class LocalAgentController : ControllerBase
                 Error: "Local agent is not installed."));
         }
 
-        var started = _installService.TryStartUninstall();
+        // Use the detected install mode if not explicitly specified
+        if (status.InstallMode is not null)
+        {
+            userMode = status.InstallMode == "User";
+        }
+
+        var started = _installService.TryStartUninstall(userMode);
 
         if (!started)
         {
@@ -121,7 +165,52 @@ public sealed class LocalAgentController : ControllerBase
                 Error: "Failed to start uninstallation."));
         }
 
-        _logger.LogInformation("Local agent uninstallation started");
+        var modeLabel = userMode ? "user" : "system";
+        _logger.LogInformation("Local agent uninstallation started ({Mode} mode)", modeLabel);
+        return Accepted(new LocalAgentInstallResponse(Started: true, Error: null));
+    }
+
+    /// <summary>
+    /// Clears leftover agent files from the server machine.
+    /// </summary>
+    [HttpPost("clear-files")]
+    public ActionResult<LocalAgentInstallResponse> ClearFiles([FromBody] LocalAgentClearFilesRequest? request = null)
+    {
+        var clearSystem = request?.ClearSystem ?? true;
+        var clearUser = request?.ClearUser ?? true;
+        var status = _installService.GetStatus();
+
+        if (!status.IsSupported)
+        {
+            return BadRequest(new LocalAgentInstallResponse(
+                Started: false,
+                Error: "Local agent operations are only supported on Windows."));
+        }
+
+        if (_installService.IsRunning)
+        {
+            return Conflict(new LocalAgentInstallResponse(
+                Started: false,
+                Error: "An operation is already in progress."));
+        }
+
+        if (!status.HasSystemFiles && !status.HasUserFiles)
+        {
+            return BadRequest(new LocalAgentInstallResponse(
+                Started: false,
+                Error: "No agent files found to clear."));
+        }
+
+        var started = _installService.TryStartClearFiles(clearSystem && status.HasSystemFiles, clearUser && status.HasUserFiles);
+
+        if (!started)
+        {
+            return Conflict(new LocalAgentInstallResponse(
+                Started: false,
+                Error: "Failed to start file cleanup."));
+        }
+
+        _logger.LogInformation("Local agent file cleanup started (system={ClearSystem}, user={ClearUser})", clearSystem, clearUser);
         return Accepted(new LocalAgentInstallResponse(Started: true, Error: null));
     }
 
@@ -131,9 +220,37 @@ public sealed class LocalAgentController : ControllerBase
         bool IsRunning,
         Guid? LinkedNodeId,
         string Status,
-        string? CurrentOperation);
+        string? CurrentOperation,
+        string? InstallMode,
+        bool HasSystemFiles,
+        bool HasUserFiles,
+        bool HasSystemTask,
+        bool HasUserTask,
+        OrphanedResourcesResponse? OrphanedResources);
 
-    public sealed record LocalAgentInstallRequest(bool Force = false);
+    public sealed record OrphanedResourcesResponse(
+        FileDirectoryResponse? SystemDirectory,
+        FileDirectoryResponse? UserDirectory,
+        TaskResponse? SystemTask,
+        TaskResponse? UserTask);
+
+    public sealed record FileDirectoryResponse(
+        string Path,
+        long TotalSizeBytes,
+        int FileCount,
+        string[] Files);
+
+    public sealed record TaskResponse(
+        string Name,
+        string State,
+        string? LastRunTime,
+        string? NextRunTime);
+
+    public sealed record LocalAgentInstallRequest(bool Force = false, bool UserMode = false);
+
+    public sealed record LocalAgentUninstallRequest(bool UserMode = false);
+
+    public sealed record LocalAgentClearFilesRequest(bool ClearSystem = true, bool ClearUser = true);
 
     public sealed record LocalAgentInstallResponse(bool Started, string? Error);
 }

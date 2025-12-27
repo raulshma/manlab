@@ -4,7 +4,13 @@
 
 .DESCRIPTION
   Downloads the staged ManLab.Agent native binary from the ManLab Server and
-  registers it to run at startup via Windows Task Scheduler (runs as SYSTEM).
+  registers it to run at startup via Windows Task Scheduler.
+
+  By default, this script requires administrator privileges and installs to
+  C:\ProgramData (runs as SYSTEM at startup).
+
+  Use -UserMode to install without admin privileges to %LOCALAPPDATA%
+  (runs as current user on logon).
 
   This script avoids Windows Service registration because a console app is not
   a true Windows service.
@@ -20,7 +26,12 @@
   Optional auth token used for the SignalR connection.
 
 .PARAMETER InstallDir
-  Install directory (default: C:\ProgramData\ManLab\Agent)
+  Install directory (default: C:\ProgramData\ManLab\Agent for admin mode,
+  %LOCALAPPDATA%\ManLab\Agent for user mode)
+
+.PARAMETER UserMode
+  Install without admin privileges to user-local directory.
+  Agent will run as current user on logon instead of SYSTEM at startup.
 
 .PARAMETER TaskName
   Scheduled task name (default: ManLab Agent)
@@ -56,11 +67,51 @@ param(
   [switch]$Force,
 
   [Parameter(Mandatory = $false)]
-  [switch]$Uninstall
+  [switch]$Uninstall,
+
+  [Parameter(Mandatory = $false)]
+  [switch]$UserMode
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Get-CurrentUserId {
+  # Returns DOMAIN\User (or MACHINE\User) which Task Scheduler APIs expect.
+  try {
+    return [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  } catch {
+    if (-not [string]::IsNullOrWhiteSpace($env:USERDOMAIN) -and -not [string]::IsNullOrWhiteSpace($env:USERNAME)) {
+      return "$env:USERDOMAIN\$env:USERNAME"
+    }
+    return $env:USERNAME
+  }
+}
+
+function Get-UserRunKeyPath {
+  return 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+}
+
+function Set-UserAutostart([string]$Name, [string]$CommandLine) {
+  $runKey = Get-UserRunKeyPath
+  if (-not (Test-Path $runKey)) {
+    New-Item -Path $runKey -Force | Out-Null
+  }
+
+  # Create/overwrite the Run value.
+  New-ItemProperty -Path $runKey -Name $Name -Value $CommandLine -PropertyType String -Force | Out-Null
+}
+
+function Remove-UserAutostart([string]$Name) {
+  $runKey = Get-UserRunKeyPath
+  if (-not (Test-Path $runKey)) { return }
+
+  try {
+    Remove-ItemProperty -Path $runKey -Name $Name -ErrorAction Stop
+  } catch {
+    # ignore if missing
+  }
+}
 
 function Trim-TrailingSlash([string]$s) {
   while ($s.EndsWith('/')) { $s = $s.Substring(0, $s.Length - 1) }
@@ -88,15 +139,124 @@ function Detect-Rid {
   }
 }
 
+function Format-FileSize([long]$bytes) {
+  if ($bytes -ge 1MB) { return "{0:N2} MB" -f ($bytes / 1MB) }
+  elseif ($bytes -ge 1KB) { return "{0:N2} KB" -f ($bytes / 1KB) }
+  else { return "$bytes B" }
+}
+
 function Download-File([string]$Url, [string]$OutFile) {
   $dir = Split-Path -Parent $OutFile
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
-  # -UseBasicParsing is needed on Windows PowerShell 5.1
-  Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+  # Use WebClient for progress tracking
+  $webClient = New-Object System.Net.WebClient
+  $fileName = Split-Path -Leaf $OutFile
+  
+  # Variables to track progress
+  $lastPercent = -1
+  $startTime = Get-Date
+  $lastReportTime = $startTime
+  
+  # Register progress event handler
+  $progressHandler = {
+    param($sender, $e)
+    
+    $now = Get-Date
+    $elapsed = ($now - $startTime).TotalSeconds
+    
+    # Only report progress every 500ms or when percentage changes significantly
+    if (($now - $lastReportTime).TotalMilliseconds -ge 500 -or $e.ProgressPercentage -ne $lastPercent) {
+      $lastReportTime = $now
+      $lastPercent = $e.ProgressPercentage
+      
+      $bytesReceived = $e.BytesReceived
+      $totalBytes = $e.TotalBytesToReceive
+      $percent = $e.ProgressPercentage
+      
+      # Calculate speed
+      $speed = if ($elapsed -gt 0) { $bytesReceived / $elapsed } else { 0 }
+      $speedStr = (Format-FileSize $speed) + "/s"
+      
+      # Format progress message
+      $receivedStr = Format-FileSize $bytesReceived
+      $totalStr = if ($totalBytes -gt 0) { Format-FileSize $totalBytes } else { "?" }
+      
+      # Build progress bar
+      $barWidth = 30
+      $filled = [math]::Floor($barWidth * $percent / 100)
+      $empty = $barWidth - $filled
+      $bar = ('#' * $filled) + ('-' * $empty)
+      
+      $msg = "  [$bar] ${percent}% ($receivedStr / $totalStr) @ $speedStr"
+      Write-Host "`r$msg" -NoNewline
+    }
+  }
+  
+  # Register the event
+  Register-ObjectEvent -InputObject $webClient -EventName DownloadProgressChanged -Action $progressHandler | Out-Null
+  
+  try {
+    Write-Host "  Starting download: $fileName"
+    $webClient.DownloadFile($Url, $OutFile)
+    Write-Host ""  # New line after progress bar
+    Write-Host "  Download complete: $fileName"
+  }
+  finally {
+    # Cleanup event handlers
+    Get-EventSubscriber | Where-Object { $_.SourceObject -eq $webClient } | Unregister-Event
+    $webClient.Dispose()
+  }
 }
 
-Assert-Admin
+function Try-CreateUserScheduledTask([
+  string]$Name,
+  [string]$RunnerPath,
+  [ref]$ErrorDetails
+) {
+  $ErrorDetails.Value = $null
+
+  # Prefer the ScheduledTasks module (Task Scheduler API) because schtasks.exe
+  # behavior varies by policy/locale and can emit scary "ERROR:" output.
+  try {
+    $null = Get-Command -Name Register-ScheduledTask -ErrorAction Stop
+  } catch {
+    $ErrorDetails.Value = "ScheduledTasks module not available: $($_.Exception.Message)"
+    return $false
+  }
+
+  $userId = Get-CurrentUserId
+  $psArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$RunnerPath`""
+
+  try {
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $psArgs
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
+    $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType InteractiveToken -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
+    $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+
+    Register-ScheduledTask -TaskName $Name -InputObject $task -Force | Out-Null
+    return $true
+  } catch {
+    $ErrorDetails.Value = $_.Exception.Message
+    return $false
+  }
+}
+
+# Override InstallDir if UserMode and no explicit path provided
+if ($UserMode -and $InstallDir -eq "C:\ProgramData\ManLab\Agent") {
+  $InstallDir = "$env:LOCALAPPDATA\ManLab\Agent"
+}
+
+# Use different task names for system vs user mode to avoid conflicts
+if ($UserMode -and $TaskName -eq "ManLab Agent") {
+  $TaskName = "ManLab Agent User"
+}
+
+# Only require admin if not in user mode
+if (-not $UserMode) {
+  Assert-Admin
+}
 
 if ($Uninstall) {
   Write-Host "Uninstalling ManLab Agent"
@@ -126,6 +286,12 @@ if ($Uninstall) {
     Write-Host "Scheduled task not found; skipping."
   }
 
+  if ($UserMode) {
+    # In user mode we may have used HKCU Run as a fallback for autostart.
+    Write-Host "Removing user autostart entry (best-effort): $TaskName"
+    Remove-UserAutostart -Name $TaskName
+  }
+
   # Remove install directory
   if (-not [string]::IsNullOrWhiteSpace($InstallDir) -and (Test-Path $InstallDir)) {
     # Basic safety guard
@@ -142,6 +308,8 @@ if ($Uninstall) {
   Write-Host "Uninstall complete."
   exit 0
 }
+
+try {
 
 # Support non-interactive configuration via environment variables as well.
 # This is useful for SSH bootstrap flows.
@@ -248,18 +416,33 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Forc
 
 "[$(Get-Date -Format o)] Starting ManLab Agent" | Add-Content -Path $logPath -Encoding UTF8
 
-# Run in foreground so the scheduled task stays alive.
-& $exe 1>> $logPath 2>> $logPath
+try {
+  # Run in foreground so the scheduled task stays alive.
+  # NOTE: When this runner is launched with -WindowStyle Hidden, PowerShell's
+  # native redirection operators (1>> / 2>>) can fail to capture output because
+  # there may be no attached console.
+  # Use cmd.exe for redirection so output is reliably appended to the log.
+  $cmd = "`"$exe`" >> `"$logPath`" 2>>&1"
+  & cmd.exe /d /c $cmd | Out-Null
+} catch {
+  "[$(Get-Date -Format o)] Runner failed: $($_.Exception.Message)" | Add-Content -Path $logPath -Encoding UTF8
+  throw
+}
 '@
 
 $runner | Set-Content -Path $runnerPath -Encoding UTF8
 
 # Register scheduled task
-# Use schtasks.exe for maximum compatibility.
+# Use Task Scheduler where possible; fall back to HKCU Run in user mode if blocked by policy.
+# Check if task exists by examining exit code (try/catch doesn't work with schtasks.exe errors)
 $taskExists = $false
 try {
-  schtasks /Query /TN "$TaskName" | Out-Null
-  $taskExists = $true
+  # Some environments/policies cause native command failures to surface as terminating errors
+  # (e.g., via $PSNativeCommandUseErrorActionPreference). Keep this best-effort.
+  & schtasks /Query /TN "$TaskName" 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    $taskExists = $true
+  }
 } catch {
   $taskExists = $false
 }
@@ -268,19 +451,92 @@ if ($taskExists) {
   if (-not $Force) {
     throw "Scheduled task '$TaskName' already exists. Re-run with -Force to recreate."
   }
-
-  Write-Host "Removing existing scheduled task: $TaskName"
-  schtasks /Delete /TN "$TaskName" /F | Out-Null
+  # Do NOT delete first: if creation fails (e.g., policy/ACL), we'd leave the machine with no task.
+  # Both schtasks.exe (/F) and Register-ScheduledTask (-Force) can overwrite in-place.
 }
 
 $taskCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runnerPath`""
 
 Write-Host "Creating scheduled task: $TaskName"
-# Run as SYSTEM at startup
-schtasks /Create /TN "$TaskName" /TR "$taskCommand" /SC ONSTART /RU "SYSTEM" /RL HIGHEST /F | Out-Null
+$createdScheduledTask = $false
+if ($UserMode) {
+  # User mode: Task Scheduler creation is sometimes blocked by local policy for standard users.
+  # Try the ScheduledTasks API first (less noisy, more reliable), then schtasks.exe.
+  $details = $null
+  if (Try-CreateUserScheduledTask -Name $TaskName -RunnerPath $runnerPath -ErrorDetails ([ref]$details)) {
+    $createdScheduledTask = $true
+  } else {
+    $createExitCode = 1
+    $createOutput = $null
+    try {
+      # Capture output for verbose diagnostics, but avoid echoing schtasks.exe "ERROR:" lines
+      # to normal logs (that tends to look like an installer failure even when we can fall back).
+      $createOutput = & schtasks /Create /TN "$TaskName" /TR "$taskCommand" /SC ONLOGON /RL LIMITED /F 2>&1
+      $createExitCode = $LASTEXITCODE
+    } catch {
+      $createOutput = $_
+      $createExitCode = 1
+    }
 
-Write-Host "Starting scheduled task: $TaskName"
-schtasks /Run /TN "$TaskName" | Out-Null
+    if ($createExitCode -eq 0) {
+      $createdScheduledTask = $true
+    } else {
+      $msg = "Scheduled task creation is blocked for this user (policy/ACL). Using per-user autostart instead."
+      Write-Warning $msg
+      if ($PSBoundParameters.ContainsKey('Verbose')) {
+        Write-Verbose "ScheduledTasks API error: $details"
+        Write-Verbose "schtasks.exe exit code: $createExitCode"
+        Write-Verbose "schtasks.exe output: $createOutput"
+      }
+
+      # Use a per-user Run entry (no admin required) as a robust fallback.
+      Set-UserAutostart -Name $TaskName -CommandLine $taskCommand
+    }
+  }
+} else {
+  # Admin mode: run as SYSTEM at startup (requires admin)
+  schtasks /Create /TN "$TaskName" /TR "$taskCommand" /SC ONSTART /RU "SYSTEM" /RL HIGHEST /F | Out-Null
+  $createdScheduledTask = $true
+}
+
+if ($createdScheduledTask) {
+  Write-Host "Starting scheduled task: $TaskName"
+  schtasks /Run /TN "$TaskName" | Out-Null
+} else {
+  Write-Host "Starting agent process (user mode fallback)"
+  Start-Process -FilePath "powershell.exe" -ArgumentList @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-WindowStyle", "Hidden",
+    "-File", $runnerPath
+  ) -WorkingDirectory $InstallDir | Out-Null
+}
 
 Write-Host "Installed. Logs will be written to: $logPath"
-Write-Host "To remove: schtasks /Delete /TN `"$TaskName`" /F and delete $InstallDir"
+if ($UserMode) {
+  Write-Host "To remove: .\\scripts\\install.ps1 -Uninstall -UserMode -TaskName `"$TaskName`" -InstallDir `"$InstallDir`""
+} else {
+  Write-Host "To remove: schtasks /Delete /TN `"$TaskName`" /F and delete $InstallDir"
+}
+
+} catch {
+  # IMPORTANT: Do not roll back partially completed installs. Leave any downloaded
+  # files/config in place for inspection or manual recovery.
+  $details = $null
+  try {
+    $details = $_.Exception.Message
+  } catch {
+    $details = $null
+  }
+
+  if ([string]::IsNullOrWhiteSpace($details)) {
+    # Fall back to the full error record string (includes inner exception details).
+    $details = (($_ | Out-String).Trim())
+  }
+
+  Write-Error "Installation failed: $details"
+  if ($PSBoundParameters.ContainsKey('Verbose')) {
+    Write-Verbose $_.Exception.ToString()
+  }
+  exit 1
+}

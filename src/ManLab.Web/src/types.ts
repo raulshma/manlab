@@ -148,6 +148,33 @@ export interface LocalAgentStatus {
   linkedNodeId: string | null;
   status: string;
   currentOperation: string | null;
+  installMode: "System" | "User" | null;
+  hasSystemFiles: boolean;
+  hasUserFiles: boolean;
+  hasSystemTask: boolean;
+  hasUserTask: boolean;
+  orphanedResources: OrphanedResources | null;
+}
+
+export interface OrphanedResources {
+  systemDirectory: FileDirectoryInfo | null;
+  userDirectory: FileDirectoryInfo | null;
+  systemTask: TaskInfo | null;
+  userTask: TaskInfo | null;
+}
+
+export interface FileDirectoryInfo {
+  path: string;
+  totalSizeBytes: number;
+  fileCount: number;
+  files: string[];
+}
+
+export interface TaskInfo {
+  name: string;
+  state: string;
+  lastRunTime: string | null;
+  nextRunTime: string | null;
 }
 
 export interface LocalAgentInstallResponse {
