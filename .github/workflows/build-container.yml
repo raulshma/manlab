@@ -12,6 +12,8 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: ${{ github.repository_owner }}/manlab-server
   IMAGE_NAME_WEB: ${{ github.repository_owner }}/manlab-web
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
   build-and-push:
@@ -24,6 +26,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -87,3 +94,41 @@ jobs:
           labels: ${{ steps.meta_web.outputs.labels }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,scope=web,mode=max
+
+      - name: Install Aspire CLI
+        shell: bash
+        run: |
+          curl -fsSL https://aspire.dev/install.sh | bash
+          echo "$HOME/.aspire/bin" >> "$GITHUB_PATH"
+          aspire --version
+
+      - name: Generate Compose bundle pinned to pushed images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVER_IMAGE="$(echo "${{ steps.meta_server.outputs.tags }}" | grep ':sha-' | head -n 1 || true)"
+          if [ -z "$SERVER_IMAGE" ]; then
+            SERVER_IMAGE="$(echo "${{ steps.meta_server.outputs.tags }}" | head -n 1)"
+          fi
+
+          WEB_IMAGE="$(echo "${{ steps.meta_web.outputs.tags }}" | grep ':sha-' | head -n 1 || true)"
+          if [ -z "$WEB_IMAGE" ]; then
+            WEB_IMAGE="$(echo "${{ steps.meta_web.outputs.tags }}" | head -n 1)"
+          fi
+
+          bash scripts/publish-compose-bundle.sh \
+            --output-dir aspire-output \
+            --server-image "$SERVER_IMAGE" \
+            --web-image "$WEB_IMAGE" \
+            --pgpassword "" \
+            --server-port 8081
+
+      - name: Upload Compose bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aspire-compose-bundle
+          path: |
+            aspire-output/docker-compose.yaml
+            aspire-output/.env
+            aspire-output/.env.example

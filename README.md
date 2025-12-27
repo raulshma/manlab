@@ -65,6 +65,11 @@ Copy the example file and fill in values:
 	- `WEB_IMAGE`
 	- `SERVER_PORT` (used for HTTPS endpoint metadata; set to `8081` if unsure)
 
+Tip: if you’re deploying using images already pushed to GHCR (for example from the `Build Container` GitHub Action), you can generate a bundle and stamp the image tags in one go:
+
+- Windows: `scripts/publish-compose-bundle.ps1 -ServerImage <ghcr-image> -WebImage <ghcr-image>`
+- Linux/macOS: `scripts/publish-compose-bundle.sh --server-image <ghcr-image> --web-image <ghcr-image>`
+
 ### 3) Build/pull images
 
 - Server image is built from `src/ManLab.Server/Dockerfile` (or pulled from your registry).

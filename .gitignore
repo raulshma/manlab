@@ -11,6 +11,7 @@
 
 # Aspire publish output (generated)
 aspire-output/*
+!aspire-output/.env.example
 
 # User-specific files
 *.rsuser
