@@ -405,6 +405,8 @@ public sealed class LocalAgentInstallationService
 
     private async Task RunUninstallAsync(bool userMode)
     {
+        Guid? linkedNodeId = null;
+        
         try
         {
             var modeLabel = userMode ? "user" : "system";
@@ -427,6 +429,20 @@ public sealed class LocalAgentInstallationService
             else
             {
                 await PublishLogAsync("Administrator privileges confirmed.");
+            }
+
+            // Find the linked node before uninstalling (by machine name)
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+            var linkedNode = await db.Nodes
+                .Where(n => n.Hostname == Environment.MachineName)
+                .OrderByDescending(n => n.LastSeen)
+                .FirstOrDefaultAsync();
+            
+            if (linkedNode is not null)
+            {
+                linkedNodeId = linkedNode.Id;
+                await PublishLogAsync($"Found linked node: {linkedNode.Hostname} (ID: {linkedNodeId})");
             }
 
             // Locate install.ps1 script
@@ -463,6 +479,36 @@ public sealed class LocalAgentInstallationService
             if (exitCode == 0)
             {
                 await PublishLogAsync("Uninstallation completed successfully.");
+                
+                // Delete the linked node from the database
+                if (linkedNodeId.HasValue)
+                {
+                    await PublishLogAsync($"Removing node from database: {linkedNodeId}");
+                    
+                    try
+                    {
+                        var nodeToDelete = await db.Nodes
+                            .Include(n => n.TelemetrySnapshots)
+                            .Include(n => n.Commands)
+                            .FirstOrDefaultAsync(n => n.Id == linkedNodeId.Value);
+                        
+                        if (nodeToDelete is not null)
+                        {
+                            db.Nodes.Remove(nodeToDelete);
+                            await db.SaveChangesAsync();
+                            await PublishLogAsync($"Node {nodeToDelete.Hostname} removed from database.");
+                            
+                            // Notify connected clients
+                            await _hub.Clients.All.SendAsync("NodeDeleted", linkedNodeId.Value);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        await PublishLogAsync($"WARNING: Failed to remove node from database: {ex.Message}");
+                        // Don't fail the uninstall just because node deletion failed
+                    }
+                }
+                
                 await PublishStatusAsync("NotInstalled", null);
             }
             else

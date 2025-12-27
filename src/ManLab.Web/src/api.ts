@@ -52,6 +52,21 @@ export async function fetchNodes(): Promise<Node[]> {
 }
 
 /**
+ * Deletes a specific node by ID.
+ */
+export async function deleteNode(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/devices/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("Node not found");
+    }
+    throw new Error(`Failed to delete node: ${response.statusText}`);
+  }
+}
+
+/**
  * Fetches a specific node by ID.
  */
 export async function fetchNode(id: string): Promise<Node> {

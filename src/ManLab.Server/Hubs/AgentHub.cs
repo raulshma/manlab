@@ -65,7 +65,7 @@ public class AgentHub : Hub
             throw new HubException("Unauthorized: missing bearer token.");
         }
 
-        var tokenHash = TokenHasher.Sha256Hex(bearerToken);
+        var tokenHash = TokenHasher.NormalizeToSha256Hex(bearerToken);
 
         _logger.LogInformation("Agent registering: {Hostname}", metadata.Hostname);
 
@@ -169,7 +169,7 @@ public class AgentHub : Hub
             throw new HubException("Unauthorized: missing bearer token.");
         }
 
-        var tokenHash = TokenHasher.Sha256Hex(bearerToken);
+        var tokenHash = TokenHasher.NormalizeToSha256Hex(bearerToken);
 
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
@@ -243,7 +243,7 @@ public class AgentHub : Hub
             throw new HubException("Unauthorized: missing bearer token.");
         }
 
-        var tokenHash = TokenHasher.Sha256Hex(bearerToken);
+        var tokenHash = TokenHasher.NormalizeToSha256Hex(bearerToken);
 
         _logger.LogInformation("Command status update: {CommandId} -> {Status}", commandId, status);
 

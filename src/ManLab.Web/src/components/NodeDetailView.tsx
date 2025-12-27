@@ -14,8 +14,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { ArrowLeft, AlertCircle } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, AlertCircle, Trash2 } from "lucide-react";
 import type { Container } from "../types";
 import {
   fetchNode,
@@ -24,6 +24,7 @@ import {
   requestDockerContainerList,
   restartContainer,
   triggerSystemUpdate,
+  deleteNode,
 } from "../api";
 import { TelemetryChart } from "./TelemetryChart";
 import { ContainerList } from "./ContainerList";
@@ -153,6 +154,17 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
     mutationFn: () => triggerSystemUpdate(nodeId),
     onSuccess: () => {
       // Could show success notification
+    },
+  });
+
+  // Delete node mutation
+  const queryClient = useQueryClient();
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteNode(nodeId),
+    onSuccess: () => {
+      // Invalidate nodes list and navigate back
+      queryClient.invalidateQueries({ queryKey: ["nodes"] });
+      onBack();
     },
   });
 
@@ -373,6 +385,50 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
                 <p className="text-xs text-muted-foreground mt-3">
                   ⚠️ System actions are only available when the node is online.
                 </p>
+              )}
+            </CardHeader>
+          </Card>
+          
+          {/* Delete Node */}
+          <Card className="mt-4 border-destructive/50">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                    Delete Node
+                  </CardTitle>
+                  <CardDescription>
+                    Permanently remove this node and all its telemetry data.
+                    This action cannot be undone.
+                  </CardDescription>
+                </div>
+                <ConfirmationModal
+                  trigger={
+                    <Button variant="destructive">
+                      Delete Node
+                    </Button>
+                  }
+                  title="Delete Node"
+                  message={`Are you sure you want to permanently delete "${node.hostname}"? This will remove all telemetry data and command history for this node. This action cannot be undone.`}
+                  confirmText="Delete"
+                  isDestructive
+                  isLoading={deleteMutation.isPending}
+                  onConfirm={async () => {
+                    await deleteMutation.mutateAsync();
+                  }}
+                />
+              </div>
+              {deleteMutation.isError && (
+                <Alert variant="destructive" className="mt-3">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Failed to delete node</AlertTitle>
+                  <AlertDescription>
+                    {deleteMutation.error instanceof Error
+                      ? deleteMutation.error.message
+                      : "Unknown error occurred"}
+                  </AlertDescription>
+                </Alert>
               )}
             </CardHeader>
           </Card>

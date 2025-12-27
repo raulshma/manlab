@@ -247,6 +247,33 @@ public class DevicesController : ControllerBase
             ExecutedAt = command.ExecutedAt
         });
     }
+
+    /// <summary>
+    /// Deletes a specific device node by ID.
+    /// Also removes all associated telemetry snapshots and commands.
+    /// </summary>
+    /// <param name="id">The node ID.</param>
+    /// <returns>No content if deleted, 404 if not found.</returns>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        var node = await _dbContext.Nodes
+            .Include(n => n.TelemetrySnapshots)
+            .Include(n => n.Commands)
+            .FirstOrDefaultAsync(n => n.Id == id);
+
+        if (node == null)
+        {
+            return NotFound();
+        }
+
+        _dbContext.Nodes.Remove(node);
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation("Deleted node: {NodeId} ({Hostname})", id, node.Hostname);
+
+        return NoContent();
+    }
 }
 
 /// <summary>

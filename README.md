@@ -1,14 +1,25 @@
 # ManLab (.NET 10)
 
-ManLab is a small hub-and-spoke system:
+ManLab is a hub-and-spoke home-lab / fleet management system:
 
-- **Server**: `src/ManLab.Server` (ASP.NET Core Web API + SignalR + EF Core / Postgres)
-- **Web dashboard**: `src/ManLab.Web` (Vite + React + TS)
-- **Agent**: `src/ManLab.Agent` (.NET console app, Native AOT)
+- **Server (hub)**: `src/ManLab.Server` — ASP.NET Core Web API + SignalR + EF Core (Postgres)
+- **Web dashboard**: `src/ManLab.Web` — Vite + React + TypeScript
+- **Agent (spoke)**: `src/ManLab.Agent` — .NET console app intended for Native AOT (`PublishAot=true`)
+
+The agent maintains a reverse connection to the server (SignalR) and periodically sends telemetry/heartbeats.
+
+## Repo layout
+
+- `src/ManLab.Server`: REST API (`/api/*`) + SignalR hub (`/hubs/agent`) + DB migrations
+- `src/ManLab.Web`: dashboard UI (dev server proxies `/api` and `/hubs`)
+- `src/ManLab.Agent`: agent app + command handlers
+- `src/ManLab.AppHost`: .NET Aspire local orchestration (recommended)
+- `src/ManLab.Build`: publishes/stages agent binaries for download from the server
+- `scripts/`: convenience scripts (install + publish helpers)
 
 ## Local development (recommended): .NET Aspire
 
-ManLab includes an Aspire AppHost that orchestrates:
+The Aspire AppHost orchestrates:
 
 - PostgreSQL (container)
 - `ManLab.Server`
@@ -23,21 +34,65 @@ ManLab includes an Aspire AppHost that orchestrates:
 
 ### Run
 
-- If you have the Aspire CLI installed: run the AppHost via `aspire run` from the repo root.
-- Otherwise: run the AppHost project (`src/ManLab.AppHost`) with `dotnet run`.
+- With Aspire CLI: run `aspire run` from the repo root
+- Without Aspire CLI: run the AppHost project `src/ManLab.AppHost` (e.g., from VS Code / Visual Studio)
 
-Once running, open the Aspire dashboard URL shown in the terminal to view logs/traces/metrics and the allocated endpoints.
+Open the Aspire dashboard URL shown in the terminal to view logs/traces/metrics and the allocated endpoints.
 
-## Notes
+## Manual local run (no Aspire)
 
-- The AppHost uses a Postgres *database resource name* of `manlab`. The server uses the same connection name via `builder.AddNpgsqlDbContext<DataContext>("manlab")`.
-- `src/ManLab.Web/vite.config.ts` is set up to proxy `/api` and `/hubs` to the backend using Aspire-injected endpoint environment variables when available, with a fallback to `http://localhost:5247`.
+If you prefer running pieces yourself:
 
-### Docker Compose vs Aspire
+1) Start PostgreSQL (container or local install)
+2) Run the server (`src/ManLab.Server`)
+	- Dev default URL: `http://localhost:5247`
+	- API reference (dev): `http://localhost:5247/scalar`
+	- On startup the server applies EF Core migrations (`Database.MigrateAsync()`)
+3) Run the web app (`src/ManLab.Web`)
+	- Vite dev server proxies `/api` and `/hubs` to the backend.
+	- Proxy target selection order is documented inline in `src/ManLab.Web/vite.config.ts` and falls back to `http://localhost:5247`.
+4) Run an agent (`src/ManLab.Agent`) pointed at the hub URL
 
-- **Aspire AppHost** is the preferred local-dev orchestrator.
-- **docker-compose** remains useful for non-Aspire environments and can be kept for deployment scenarios.
+## Agent configuration
 
-## Agent installation
+The SignalR hub endpoint is:
 
-See `INSTALLATION.md` for the one-line installer scripts and agent service registration.
+- `http(s)://<server-host>/hubs/agent`
+
+You can configure the agent via `src/ManLab.Agent/appsettings.json` or environment variables:
+
+- `MANLAB_SERVER_URL` (must include `/hubs/agent`)
+- `MANLAB_AUTH_TOKEN` (optional)
+
+Default dev config is:
+
+- `ServerUrl`: `http://localhost:5247/hubs/agent`
+
+## Publishing + staging agent binaries (server download API)
+
+The server exposes a small “binary distribution” API used by the installer scripts:
+
+- `GET /api/binaries/agent` (lists available RIDs)
+- `GET /api/binaries/agent/{rid}` (downloads `manlab-agent` / `manlab-agent.exe`)
+
+Binaries are served from the server’s distribution root:
+
+- Default: `src/ManLab.Server/Distribution/agent/{rid}/...`
+- Configurable via `BinaryDistribution:RootPath` (defaults to `{ContentRoot}/Distribution`)
+
+To publish and stage binaries for common RIDs, use the build tool (or the wrapper script):
+
+- `src/ManLab.Build` (authoritative implementation)
+- `scripts/publish-agent.ps1` (convenience wrapper that invokes `ManLab.Build`)
+
+## Installing the agent on machines
+
+See `INSTALLATION.md` for the installer scripts:
+
+- Linux: `scripts/install.sh` (systemd)
+- Windows: `scripts/install.ps1` (Task Scheduler)
+
+## Notes / gotchas
+
+- **Aspire connection name**: the AppHost uses a Postgres database resource name of `manlab`; the server uses the same connection name via `builder.AddNpgsqlDbContext<DataContext>("manlab")`.
+- **Docker Compose status**: `docker-compose.yml` currently references `src/ManLab.Server/Dockerfile`, which is not present in this repo. Aspire is the supported local-dev path until a server Dockerfile is added.
