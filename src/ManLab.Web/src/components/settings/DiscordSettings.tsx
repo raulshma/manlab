@@ -6,6 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/api";
+import { SettingKeys } from "@/constants/settingKeys";
+import { toast } from "sonner";
 
 interface SystemSetting {
   key: string;
@@ -30,7 +32,7 @@ export function DiscordSettings() {
 
   useEffect(() => {
     if (settings) {
-      const urlSetting = settings.find((s: SystemSetting) => s.key === "Discord.WebhookUrl");
+      const urlSetting = settings.find((s: SystemSetting) => s.key === SettingKeys.Discord.WebhookUrl);
       if (urlSetting?.value && urlSetting.value !== webhookUrl) {
         setWebhookUrl(urlSetting.value);
         setEnabled(true);
@@ -45,14 +47,18 @@ export function DiscordSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
+      toast.success("Discord settings saved successfully.");
     },
+    onError: (error) => {
+        toast.error("Failed to save settings: " + error.message);
+    }
   });
 
   const handleSave = () => {
     const valueToSave = enabled ? webhookUrl : "";
     mutation.mutate([
       {
-        key: "Discord.WebhookUrl",
+        key: SettingKeys.Discord.WebhookUrl,
         value: valueToSave,
         category: "Notifications",
         description: "Discord Webhook URL for alerts",
@@ -65,9 +71,9 @@ export function DiscordSettings() {
     setIsTestLoading(true);
     try {
       await api.post("/api/settings/test-discord", webhookUrl);
-      alert("Test message sent successfully!");
+      toast.success("Test message sent successfully!");
     } catch (err) {
-      alert("Failed to send test message: " + (err as Error).message);
+      toast.error("Failed to send test message: " + (err as Error).message);
     } finally {
       setIsTestLoading(false);
     }

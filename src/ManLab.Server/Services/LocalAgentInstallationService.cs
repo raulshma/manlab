@@ -358,10 +358,10 @@ public sealed class LocalAgentInstallationService
 
             // Add agent configuration parameters if provided or available in settings
             int heartbeatInterval = agentConfig?.HeartbeatIntervalSeconds 
-                ?? await _settingsService.GetValueAsync("Agent.Default.HeartbeatIntervalSeconds", 60);
+                ?? await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.HeartbeatIntervalSeconds, 10);
             
             int maxReconnectDelay = agentConfig?.MaxReconnectDelaySeconds 
-                ?? await _settingsService.GetValueAsync("Agent.Default.MaxReconnectDelaySeconds", 300);
+                ?? await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.MaxReconnectDelaySeconds, 120);
 
             args += $" -HeartbeatIntervalSeconds {heartbeatInterval}";
             args += $" -MaxReconnectDelaySeconds {maxReconnectDelay}";

@@ -7,6 +7,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { NodesPage } from "./pages/NodesPage";
 import { NodeDetailsPage } from "./pages/NodeDetailsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { Toaster } from "@/components/ui/sonner";
 
 // Create a client
 const queryClient = new QueryClient({
@@ -41,6 +42,7 @@ function App() {
       <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
         <SignalRProvider>
           <AppRoutes />
+          <Toaster />
         </SignalRProvider>
       </ThemeProvider>
     </QueryClientProvider>

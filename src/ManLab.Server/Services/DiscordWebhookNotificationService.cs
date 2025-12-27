@@ -29,7 +29,7 @@ public sealed class DiscordWebhookNotificationService : INotificationService
     public async Task NotifyNodeOfflineAsync(Node node, CancellationToken cancellationToken = default)
     {
         // Prioritize DB setting over appsettings
-        var webhookUrl = await _settingsService.GetValueAsync("Discord.WebhookUrl");
+        var webhookUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.Discord.WebhookUrl);
         if (string.IsNullOrWhiteSpace(webhookUrl))
         {
             webhookUrl = _options.CurrentValue.WebhookUrl;

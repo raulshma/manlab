@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { api } from "@/api";
+import { SettingKeys } from "@/constants/settingKeys";
+import { toast } from "sonner";
 
 interface SystemSetting {
   key: string;
@@ -15,8 +17,8 @@ interface SystemSetting {
 
 export function AgentDefaultsSettings() {
   const queryClient = useQueryClient();
-  const [heartbeat, setHeartbeat] = useState("60");
-  const [reconnectDelay, setReconnectDelay] = useState("300");
+  const [heartbeat, setHeartbeat] = useState("10");
+  const [reconnectDelay, setReconnectDelay] = useState("120");
 
   const { data: settings } = useQuery({
     queryKey: ["settings"],
@@ -28,10 +30,10 @@ export function AgentDefaultsSettings() {
 
   useEffect(() => {
     if (settings) {
-      const hb = settings.find((s: SystemSetting) => s.key === "Agent.Default.HeartbeatIntervalSeconds");
+      const hb = settings.find((s: SystemSetting) => s.key === SettingKeys.Agent.HeartbeatIntervalSeconds);
       if (hb?.value && hb.value !== heartbeat) setHeartbeat(hb.value);
       
-      const rd = settings.find((s: SystemSetting) => s.key === "Agent.Default.MaxReconnectDelaySeconds");
+      const rd = settings.find((s: SystemSetting) => s.key === SettingKeys.Agent.MaxReconnectDelaySeconds);
       if (rd?.value && rd.value !== reconnectDelay) setReconnectDelay(rd.value);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -43,19 +45,23 @@ export function AgentDefaultsSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
+      toast.success("Agent defaults saved successfully.");
     },
+    onError: (error) => {
+        toast.error("Failed to save settings: " + error.message);
+    }
   });
 
-  const handleSave = () => {
+    const handleSave = () => {
     mutation.mutate([
       {
-        key: "Agent.Default.HeartbeatIntervalSeconds",
+        key: SettingKeys.Agent.HeartbeatIntervalSeconds,
         value: heartbeat,
         category: "Agent",
         description: "Default heartbeat interval in seconds",
       },
       {
-        key: "Agent.Default.MaxReconnectDelaySeconds",
+        key: SettingKeys.Agent.MaxReconnectDelaySeconds,
         value: reconnectDelay,
         category: "Agent",
         description: "Default max reconnect delay in seconds",
