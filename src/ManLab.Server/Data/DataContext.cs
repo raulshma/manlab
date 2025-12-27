@@ -30,6 +30,9 @@ public class DataContext : DbContext
     /// <summary>Audit trail for SSH onboarding/provisioning.</summary>
     public DbSet<SshAuditEvent> SshAuditEvents => Set<SshAuditEvent>();
 
+    /// <summary>System-wide configuration settings.</summary>
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

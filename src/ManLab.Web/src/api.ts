@@ -19,6 +19,25 @@ import type {
 
 const API_BASE = "/api";
 
+export const api = {
+  get: async <T>(url: string): Promise<{ data: T }> => {
+    const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`);
+    if (!response.ok) throw new Error(response.statusText);
+    return { data: await response.json() };
+  },
+  post: async <T>(url: string, body?: unknown): Promise<{ data: T }> => {
+    const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(response.statusText);
+    // Handle empty response
+    const text = await response.text();
+    return { data: text ? JSON.parse(text) : null };
+  },
+};
+
 /**
  * Onboarding: suggests a server base URL that is reachable from the target machine.
  *

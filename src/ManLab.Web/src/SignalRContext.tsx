@@ -71,6 +71,12 @@ export function SignalRProvider({
   children,
   hubUrl = "/hubs/agent",
 }: SignalRProviderProps) {
+  // Check for override in localStorage
+  const storedUrl = localStorage.getItem("manlab:server_url");
+  const finalHubUrl = storedUrl 
+    ? `${storedUrl.replace(/\/$/, "")}/hubs/agent` 
+    : hubUrl;
+
   const [connection, setConnection] = useState<HubConnection | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("disconnected");
@@ -305,7 +311,7 @@ export function SignalRProvider({
   useEffect(() => {
     // Build the connection
     const newConnection = new HubConnectionBuilder()
-      .withUrl(hubUrl)
+      .withUrl(finalHubUrl)
       .withAutomaticReconnect({
         nextRetryDelayInMilliseconds: (retryContext) => {
           // Exponential backoff: 0s, 2s, 4s, 8s, 16s, then cap at 30s
@@ -428,7 +434,7 @@ export function SignalRProvider({
       newConnection.off("NodeDeleted", nodeDeletedHandler);
       newConnection.stop();
     };
-  }, [hubUrl, queryClient]);
+  }, [finalHubUrl, queryClient]);
 
   return (
     <SignalRContext.Provider

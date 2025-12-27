@@ -36,6 +36,7 @@ public sealed class LocalAgentInstallationService
     private readonly IHubContext<AgentHub> _hub;
     private readonly ILogger<LocalAgentInstallationService> _logger;
     private readonly IWebHostEnvironment _env;
+    private readonly ISettingsService _settingsService;
 
     private readonly ConcurrentDictionary<Guid, Task> _running = new();
 
@@ -43,14 +44,15 @@ public sealed class LocalAgentInstallationService
         IServiceScopeFactory scopeFactory,
         IHubContext<AgentHub> hub,
         ILogger<LocalAgentInstallationService> logger,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        ISettingsService settingsService)
     {
         _scopeFactory = scopeFactory;
         _hub = hub;
         _logger = logger;
         _env = env;
+        _settingsService = settingsService;
     }
-
     public bool IsRunning => _running.ContainsKey(LocalMachineId);
 
     /// <summary>
@@ -354,15 +356,15 @@ public sealed class LocalAgentInstallationService
                 args += " -UserMode";
             }
 
-            // Add agent configuration parameters if provided
-            if (agentConfig?.HeartbeatIntervalSeconds is not null)
-            {
-                args += $" -HeartbeatIntervalSeconds {agentConfig.HeartbeatIntervalSeconds}";
-            }
-            if (agentConfig?.MaxReconnectDelaySeconds is not null)
-            {
-                args += $" -MaxReconnectDelaySeconds {agentConfig.MaxReconnectDelaySeconds}";
-            }
+            // Add agent configuration parameters if provided or available in settings
+            int heartbeatInterval = agentConfig?.HeartbeatIntervalSeconds 
+                ?? await _settingsService.GetValueAsync("Agent.Default.HeartbeatIntervalSeconds", 60);
+            
+            int maxReconnectDelay = agentConfig?.MaxReconnectDelaySeconds 
+                ?? await _settingsService.GetValueAsync("Agent.Default.MaxReconnectDelaySeconds", 300);
+
+            args += $" -HeartbeatIntervalSeconds {heartbeatInterval}";
+            args += $" -MaxReconnectDelaySeconds {maxReconnectDelay}";
 
             await PublishLogAsync($"Running: powershell.exe {args.Replace(plainToken, "***")}");
 

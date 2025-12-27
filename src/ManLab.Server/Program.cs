@@ -62,6 +62,8 @@ builder.Services.AddOptions<DiscordOptions>()
 builder.Services.AddOptions<BinaryDistributionOptions>()
     .Bind(builder.Configuration.GetSection(BinaryDistributionOptions.SectionName));
 
+builder.Services.AddSingleton<ISettingsService, SettingsService>();
+
 builder.Services.AddSingleton<INotificationService, DiscordWebhookNotificationService>();
 
 // Agent connection tracking + command dispatch

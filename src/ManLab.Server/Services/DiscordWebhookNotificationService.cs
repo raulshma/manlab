@@ -11,21 +11,30 @@ public sealed class DiscordWebhookNotificationService : INotificationService
 {
     private readonly ILogger<DiscordWebhookNotificationService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISettingsService _settingsService;
     private readonly IOptionsMonitor<DiscordOptions> _options;
 
     public DiscordWebhookNotificationService(
         ILogger<DiscordWebhookNotificationService> logger,
         IHttpClientFactory httpClientFactory,
+        ISettingsService settingsService,
         IOptionsMonitor<DiscordOptions> options)
     {
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _settingsService = settingsService;
         _options = options;
     }
 
     public async Task NotifyNodeOfflineAsync(Node node, CancellationToken cancellationToken = default)
     {
-        var webhookUrl = _options.CurrentValue.WebhookUrl;
+        // Prioritize DB setting over appsettings
+        var webhookUrl = await _settingsService.GetValueAsync("Discord.WebhookUrl");
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            webhookUrl = _options.CurrentValue.WebhookUrl;
+        }
+
         if (string.IsNullOrWhiteSpace(webhookUrl))
         {
             _logger.LogDebug("Discord webhook not configured; skipping offline notification for node {NodeId} ({Hostname})",
@@ -41,6 +50,16 @@ public sealed class DiscordWebhookNotificationService : INotificationService
                       $"- OS: `{node.OS ?? "unknown"}`\n" +
                       $"- LastSeen (UTC): `{node.LastSeen:O}`";
 
+        await SendMessageInternalAsync(webhookUrl, content, cancellationToken);
+    }
+    
+    public async Task SendTestMessageAsync(string webhookUrl, CancellationToken cancellationToken = default)
+    {
+        await SendMessageInternalAsync(webhookUrl, "✅ **ManLab Test Alert**\nThis is a test notification from your ManLab dashboard.", cancellationToken);
+    }
+
+    private async Task SendMessageInternalAsync(string webhookUrl, string content, CancellationToken cancellationToken)
+    {
         var payload = new
         {
             content,
@@ -65,7 +84,8 @@ public sealed class DiscordWebhookNotificationService : INotificationService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send Discord offline alert for node {NodeId}", node.Id);
+            _logger.LogError(ex, "Failed to send Discord alert");
+            throw; // Re-throw for test endpoint to catch
         }
     }
 }
