@@ -139,12 +139,8 @@ await using (var scope = app.Services.CreateAsyncScope())
 // Map Aspire ServiceDefaults endpoints (/health and /alive in development).
 app.MapDefaultEndpoints();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-    app.MapScalarApiReference();
-}
+app.MapOpenApi();
+app.MapScalarApiReference();
 
 app.MapControllers();
 app.MapHub<AgentHub>("/hubs/agent");
