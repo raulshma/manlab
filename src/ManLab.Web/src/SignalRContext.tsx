@@ -253,6 +253,24 @@ export function SignalRProvider({
     [queryClient]
   );
 
+  // Handle node deleted events (sent when agent is uninstalled)
+  const handleNodeDeleted = useCallback(
+    (nodeId: string) => {
+      // Remove the deleted node from the cache
+      queryClient.setQueryData<Node[]>(["nodes"], (oldNodes) => {
+        if (!oldNodes) return oldNodes;
+        return oldNodes.filter((node) => node.id !== nodeId);
+      });
+      // Clear any backoff status for the deleted node
+      setAgentBackoffStatus((prev) => {
+        const newMap = new Map(prev);
+        newMap.delete(nodeId);
+        return newMap;
+      });
+    },
+    [queryClient]
+  );
+
   // Use ref to track if we've started connecting (to avoid synchronous setState in effect)
   const isConnectingRef = useRef(false);
 
@@ -266,6 +284,7 @@ export function SignalRProvider({
     handleLocalAgentStatusChanged,
     handleAgentBackoffStatus,
     handleAgentPingResponse,
+    handleNodeDeleted,
   });
 
   // Keep refs in sync with latest handlers
@@ -279,6 +298,7 @@ export function SignalRProvider({
       handleLocalAgentStatusChanged,
       handleAgentBackoffStatus,
       handleAgentPingResponse,
+      handleNodeDeleted,
     };
   });
 
@@ -363,6 +383,12 @@ export function SignalRProvider({
     newConnection.on("AgentBackoffStatus", agentBackoffStatusHandler);
     newConnection.on("AgentPingResponse", agentPingResponseHandler);
 
+    // Register node deleted handler
+    const nodeDeletedHandler = (
+      ...args: Parameters<typeof handleNodeDeleted>
+    ) => handlersRef.current.handleNodeDeleted(...args);
+    newConnection.on("NodeDeleted", nodeDeletedHandler);
+
     // Start the connection asynchronously
     // Wrap in an async IIFE to handle setState after the microtask
     const startConnection = async () => {
@@ -399,6 +425,7 @@ export function SignalRProvider({
       );
       newConnection.off("AgentBackoffStatus", agentBackoffStatusHandler);
       newConnection.off("AgentPingResponse", agentPingResponseHandler);
+      newConnection.off("NodeDeleted", nodeDeletedHandler);
       newConnection.stop();
     };
   }, [hubUrl, queryClient]);

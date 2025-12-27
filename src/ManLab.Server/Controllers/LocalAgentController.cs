@@ -82,8 +82,8 @@ public sealed class LocalAgentController : ControllerBase
     {
         // Return default values from AgentConfiguration class
         return Ok(new AgentConfigurationResponse(
-            HeartbeatIntervalSeconds: 5,
-            MaxReconnectDelaySeconds: 60));
+            HeartbeatIntervalSeconds: 10,
+            MaxReconnectDelaySeconds: 120));
     }
 
     /// <summary>

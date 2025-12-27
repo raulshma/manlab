@@ -73,10 +73,10 @@ param(
   [switch]$UserMode,
 
   [Parameter(Mandatory = $false)]
-  [int]$HeartbeatIntervalSeconds = 5,
+  [int]$HeartbeatIntervalSeconds = 10,
 
   [Parameter(Mandatory = $false)]
-  [int]$MaxReconnectDelaySeconds = 60
+  [int]$MaxReconnectDelaySeconds = 120
 )
 
 Set-StrictMode -Version Latest
@@ -213,6 +213,49 @@ function Download-File([string]$Url, [string]$OutFile) {
     Get-EventSubscriber | Where-Object { $_.SourceObject -eq $webClient } | Unregister-Event
     $webClient.Dispose()
   }
+}
+
+function Update-AgentAppSettings(
+  [string]$Path,
+  [string]$ServerUrl,
+  [string]$AuthToken,
+  [int]$HeartbeatIntervalSeconds,
+  [int]$MaxReconnectDelaySeconds
+) {
+  $obj = $null
+
+  if (Test-Path $Path) {
+    try {
+      $raw = Get-Content -Path $Path -Raw -ErrorAction Stop
+      if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+      }
+    } catch {
+      # If the existing file is malformed, do not fail the install.
+      Write-Warning "Existing appsettings.json is invalid JSON. Recreating it: $Path"
+      $obj = $null
+    }
+  }
+
+  if ($null -eq $obj) {
+    $obj = [ordered]@{}
+  }
+
+  if ($null -eq $obj.Agent) {
+    $obj | Add-Member -NotePropertyName 'Agent' -NotePropertyValue ([ordered]@{}) -Force
+  }
+
+  # Always set ServerUrl/intervals; set token only when provided.
+  $obj.Agent.ServerUrl = $ServerUrl
+  $obj.Agent.HeartbeatIntervalSeconds = $HeartbeatIntervalSeconds
+  $obj.Agent.MaxReconnectDelaySeconds = $MaxReconnectDelaySeconds
+
+  if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+    $obj.Agent.AuthToken = $AuthToken
+  }
+
+  $json = $obj | ConvertTo-Json -Depth 20
+  $json | Set-Content -Path $Path -Encoding UTF8
 }
 
 function Try-CreateUserScheduledTask([
@@ -458,6 +501,17 @@ try {
   }
 } catch {
   Write-Warning "appsettings.json not found on server for $Rid (continuing)."
+}
+
+# Persist settings into installed appsettings.json so the agent can authorize on restart
+# even if it's launched without the runner/env vars.
+try {
+  Update-AgentAppSettings -Path $appSettingsPath -ServerUrl $hubUrl -AuthToken $AuthToken -HeartbeatIntervalSeconds $HeartbeatIntervalSeconds -MaxReconnectDelaySeconds $MaxReconnectDelaySeconds
+  if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+    Write-Host "Saved auth token to appsettings.json."
+  }
+} catch {
+  Write-Warning "Failed to update installed appsettings.json (continuing): $($_.Exception.Message)"
 }
 
 # Write config used by the runner

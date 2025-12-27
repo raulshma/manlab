@@ -41,8 +41,8 @@ export function LocalAgentCard() {
   const [isFollowingLogs, setIsFollowingLogs] = useState(true);
 
   // Agent configuration state
-  const [heartbeatInterval, setHeartbeatInterval] = useState<number>(5);
-  const [maxReconnectDelay, setMaxReconnectDelay] = useState<number>(60);
+  const [heartbeatInterval, setHeartbeatInterval] = useState<number>(10);
+  const [maxReconnectDelay, setMaxReconnectDelay] = useState<number>(120);
 
   const {
     data: status,
@@ -61,10 +61,10 @@ export function LocalAgentCard() {
   });
 
   // Use default config values when available, otherwise use initial state
-  const effectiveHeartbeatInterval = heartbeatInterval === 5 && defaultConfig 
+  const effectiveHeartbeatInterval = heartbeatInterval === 10 && defaultConfig 
     ? defaultConfig.heartbeatIntervalSeconds 
     : heartbeatInterval;
-  const effectiveMaxReconnectDelay = maxReconnectDelay === 60 && defaultConfig 
+  const effectiveMaxReconnectDelay = maxReconnectDelay === 120 && defaultConfig 
     ? defaultConfig.maxReconnectDelaySeconds 
     : maxReconnectDelay;
 
@@ -355,7 +355,7 @@ export function LocalAgentCard() {
                         max={300}
                         value={heartbeatInterval}
                         onChange={(e) =>
-                          setHeartbeatInterval(parseInt(e.target.value) || 5)
+                          setHeartbeatInterval(parseInt(e.target.value) || 10)
                         }
                       />
                       <p className="text-xs text-muted-foreground">
@@ -373,7 +373,7 @@ export function LocalAgentCard() {
                         max={600}
                         value={maxReconnectDelay}
                         onChange={(e) =>
-                          setMaxReconnectDelay(parseInt(e.target.value) || 60)
+                          setMaxReconnectDelay(parseInt(e.target.value) || 120)
                         }
                       />
                       <p className="text-xs text-muted-foreground">

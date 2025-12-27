@@ -5,6 +5,7 @@ This repo includes simple installation scripts for the **ManLab Agent** that:
 - Detect OS/architecture (RID)
 - Download the staged Native AOT agent binary from the ManLab Server’s Binary API
 - Configure `MANLAB_SERVER_URL` (SignalR hub) and optional `MANLAB_AUTH_TOKEN`
+- Persist the hub URL + auth token into the installed agent's `appsettings.json` so the agent can authorize after reboot/restart
 - Register the agent to run automatically at boot (systemd on Linux, Task Scheduler on Windows)
 
 ## Prerequisites
@@ -20,6 +21,7 @@ This repo includes simple installation scripts for the **ManLab Agent** that:
 - Installs to `/opt/manlab-agent`
 - Creates a systemd unit: `manlab-agent.service`
 - Writes environment to `/etc/manlab-agent.env`
+- Writes/updates the installed config at `/opt/manlab-agent/appsettings.json` (includes `Agent:ServerUrl` and `Agent:AuthToken`)
 
 Example:
 
@@ -41,7 +43,8 @@ Uninstall / cleanup (removes systemd unit, env file, and install directory):
 - Installs to `C:\ProgramData\ManLab\Agent`
 - Creates a Scheduled Task named `ManLab Agent` (runs as `SYSTEM` at startup)
   - Uses the built-in PowerShell **ScheduledTasks** module (Task Scheduler API)
-- Writes a config file `agent-config.json` and logs to `agent.log`
+- Writes/updates `appsettings.json` in the install directory (includes `Agent:ServerUrl` and `Agent:AuthToken`)
+- Writes a config file `agent-config.json` (used by the runner) and logs to `agent.log`
 
 Example (elevated PowerShell):
 

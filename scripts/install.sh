@@ -91,6 +91,112 @@ download() {
   fi
 }
 
+backup_file() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    local ts
+    ts="$(date +%Y%m%d%H%M%S 2>/dev/null || true)"
+    if [[ -z "$ts" ]]; then ts="backup"; fi
+    cp -f "$path" "${path}.bak.${ts}" || true
+  fi
+}
+
+write_minimal_appsettings() {
+  local path="$1"
+  local hub_url="$2"
+  local token="$3"
+
+  cat > "$path" <<EOF
+{
+  "Agent": {
+    "ServerUrl": "${hub_url}",
+    "AuthToken": "${token}",
+    "HeartbeatIntervalSeconds": 10,
+    "MaxReconnectDelaySeconds": 120
+  }
+}
+EOF
+}
+
+update_appsettings_json() {
+  local path="$1"
+  local hub_url="$2"
+  local token="$3"
+
+  # Prefer python3 for robust JSON editing.
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$path" "$hub_url" "$token" <<'PY'
+import json
+import os
+import sys
+
+path, hub_url, token = sys.argv[1], sys.argv[2], sys.argv[3]
+
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            raw = f.read().strip()
+            if raw:
+                data = json.loads(raw)
+    except Exception:
+        data = {}
+
+if not isinstance(data, dict):
+    data = {}
+
+agent = data.get('Agent')
+if not isinstance(agent, dict):
+    agent = {}
+
+agent['ServerUrl'] = hub_url
+if token is not None and str(token).strip() != "":
+    agent['AuthToken'] = token
+
+data['Agent'] = agent
+
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+    return 0
+  fi
+
+  # Fall back to node if present.
+  if command -v node >/dev/null 2>&1; then
+    node - <<'JS' "$path" "$hub_url" "$token"
+const fs = require('fs');
+const path = process.argv[2];
+const hubUrl = process.argv[3];
+const token = process.argv[4];
+
+let data = {};
+try {
+  if (fs.existsSync(path)) {
+    const raw = fs.readFileSync(path, 'utf8').trim();
+    if (raw) data = JSON.parse(raw);
+  }
+} catch {
+  data = {};
+}
+
+if (typeof data !== 'object' || data === null || Array.isArray(data)) data = {};
+let agent = data.Agent;
+if (typeof agent !== 'object' || agent === null || Array.isArray(agent)) agent = {};
+
+agent.ServerUrl = hubUrl;
+if (token && token.trim()) agent.AuthToken = token;
+data.Agent = agent;
+
+fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n", 'utf8');
+JS
+    return 0
+  fi
+
+  # Last resort: overwrite with a minimal file.
+  return 1
+}
+
 SERVER=""
 TOKEN=""
 INSTALL_DIR="/opt/manlab-agent"
@@ -255,6 +361,30 @@ if [[ -f "$TMP_APPSETTINGS" ]]; then
   else
     cp -f "$TMP_APPSETTINGS" "$INSTALL_DIR/appsettings.json"
   fi
+fi
+
+# Persist hub URL + auth token in the installed appsettings.json so the agent can
+# authorize on restart even if it is launched without environment variables.
+APPSETTINGS_PATH="$INSTALL_DIR/appsettings.json"
+if [[ ! -f "$APPSETTINGS_PATH" ]]; then
+  # Ensure file exists so we can edit it.
+  write_minimal_appsettings "$APPSETTINGS_PATH" "$HUB_URL" "$TOKEN"
+else
+  if update_appsettings_json "$APPSETTINGS_PATH" "$HUB_URL" "$TOKEN"; then
+    :
+  else
+    echo "Warning: Could not JSON-edit existing appsettings.json (missing python3/node). Overwriting with a minimal config and creating a backup." >&2
+    backup_file "$APPSETTINGS_PATH"
+    write_minimal_appsettings "$APPSETTINGS_PATH" "$HUB_URL" "$TOKEN"
+  fi
+fi
+
+# If we created a dedicated user, lock down appsettings.json to that user.
+if id "$AGENT_USER" >/dev/null 2>&1; then
+  chown "$AGENT_USER:$AGENT_USER" "$APPSETTINGS_PATH" || true
+  chmod 0600 "$APPSETTINGS_PATH" || true
+else
+  chmod 0644 "$APPSETTINGS_PATH" || true
 fi
 
 # Write environment file.
