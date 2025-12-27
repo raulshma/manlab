@@ -20,19 +20,22 @@ $ErrorActionPreference = 'Stop'
 
 function Resolve-AspireCommand {
     if (Get-Command aspire -ErrorAction SilentlyContinue) {
-        return @('aspire')
+        # NOTE: PowerShell will unwrap a single-item array when written to the pipeline.
+        # Use the unary comma to force the caller to receive a true 1-element array.
+        return ,@('aspire')
     }
 
     # Some environments may have the Aspire CLI available as a dotnet global tool.
     if (Get-Command dotnet -ErrorAction SilentlyContinue) {
         # dotnet aspire is not guaranteed, but try it if present.
-        return @('dotnet', 'aspire')
+        return ,@('dotnet', 'aspire')
     }
 
     throw "Unable to find the Aspire CLI. Install it (https://aspire.dev/get-started/install-cli/) so the 'aspire' command is available."
 }
 
-$aspireCmd = Resolve-AspireCommand
+# Ensure we always end up with a string[] even when the resolver returns a single string.
+$aspireCmd = @((Resolve-AspireCommand))
 
 Write-Host "Publishing Docker Compose bundle to '$OutputDir'..."
 

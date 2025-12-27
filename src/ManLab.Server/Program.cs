@@ -142,7 +142,34 @@ await using (var scope = app.Services.CreateAsyncScope())
     try
     {
         var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
-        await dbContext.Database.MigrateAsync();
+        // In container orchestrators (Docker Compose, K8s, etc.) the DB container may be started
+        // but not yet accepting TCP connections. Retry for a short window to avoid hard-failing
+        // on a transient startup race.
+        const int maxAttempts = 12;
+        var delay = TimeSpan.FromSeconds(1);
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                await dbContext.Database.MigrateAsync();
+                logger.LogInformation("Database migration completed successfully (attempt {Attempt}/{MaxAttempts})", attempt, maxAttempts);
+                break;
+            }
+            catch (Exception ex) when (attempt < maxAttempts)
+            {
+                logger.LogWarning(ex,
+                    "Database migration attempt {Attempt}/{MaxAttempts} failed; retrying in {Delay}s",
+                    attempt,
+                    maxAttempts,
+                    delay.TotalSeconds);
+
+                await Task.Delay(delay);
+
+                // Cap the delay so we don't stall startup for too long.
+                delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 1.5, 10));
+            }
+        }
     }
     catch (Exception ex)
     {
