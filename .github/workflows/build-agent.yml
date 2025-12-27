@@ -36,10 +36,11 @@ jobs:
           - os: ubuntu-latest
             rid: linux-arm64
             artifact: manlab-agent
-          - os: macos-latest
+          # macos-13 is x64; macos-14 is arm64 (Apple Silicon).
+          - os: macos-13
             rid: osx-x64
             artifact: manlab-agent
-          - os: macos-latest
+          - os: macos-14
             rid: osx-arm64
             artifact: manlab-agent
     runs-on: ${{ matrix.os }}
@@ -59,7 +60,7 @@ jobs:
         run: dotnet restore src/ManLab.Agent/ManLab.Agent.csproj
 
       - name: Set up QEMU for cross-compilation
-        if: runner.os != 'Windows' && (matrix.rid == 'linux-arm64' || matrix.rid == 'osx-arm64')
+        if: runner.os == 'Linux' && matrix.rid == 'linux-arm64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
@@ -67,12 +68,60 @@ jobs:
       - name: Build and Publish Agent (Native AOT)
         shell: bash
         run: |
-          dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
-            -c Release \
-            -r ${{ matrix.rid }} \
-            --self-contained true \
-            -p:PublishAot=true \
-            -o ./publish/${{ matrix.rid }}
+          set -euo pipefail
+
+          if [ "${{ matrix.rid }}" = "linux-arm64" ]; then
+            # NativeAOT cross-arch linking on x64 runners is fragile.
+            # Build inside an arm64 container under QEMU instead.
+            docker run --rm --platform linux/arm64 \
+              -v "${GITHUB_WORKSPACE}":/src \
+              -w /src \
+              mcr.microsoft.com/dotnet/sdk:10.0 \
+              bash -lc "\
+                set -euo pipefail && \
+                apt-get update && \
+                apt-get install -y --no-install-recommends clang lld zlib1g-dev && \
+                dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
+                  -c Release \
+                  -r linux-arm64 \
+                  --self-contained true \
+                  -p:PublishAot=true \
+                  -o /src/publish/linux-arm64\
+              "
+          else
+            dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
+              -c Release \
+              -r ${{ matrix.rid }} \
+              --self-contained true \
+              -p:PublishAot=true \
+              -o ./publish/${{ matrix.rid }}
+          fi
+
+      - name: Normalize published binary name (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="./publish/${{ matrix.rid }}/ManLab.Agent"
+          dest="./publish/${{ matrix.rid }}/${{ matrix.artifact }}"
+          if [ ! -f "$src" ]; then
+            echo "Expected published binary not found: $src" >&2
+            ls -la "./publish/${{ matrix.rid }}" || true
+            exit 1
+          fi
+          cp "$src" "$dest"
+          chmod +x "$dest" || true
+
+      - name: Normalize published binary name (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $src = "./publish/${{ matrix.rid }}/ManLab.Agent.exe"
+          $dest = "./publish/${{ matrix.rid }}/${{ matrix.artifact }}"
+          if (-not (Test-Path $src)) {
+            Write-Error "Expected published binary not found: $src"
+          }
+          Copy-Item $src $dest -Force
 
       - name: Create artifact archive (Linux/macOS)
         if: runner.os != 'Windows'
