@@ -3,18 +3,32 @@
  * Shows telemetry charts, Docker containers, and system actions.
  */
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Spinner } from '@/components/ui/spinner';
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { ArrowLeft, AlertCircle } from 'lucide-react';
-import type { Container } from '../types';
-import { fetchNode, fetchNodeTelemetry, restartContainer, triggerSystemUpdate } from '../api';
-import { TelemetryChart } from './TelemetryChart';
-import { ContainerList } from './ContainerList';
-import { ConfirmationModal } from './ConfirmationModal';
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { ArrowLeft, AlertCircle } from "lucide-react";
+import type { Container } from "../types";
+import {
+  fetchNode,
+  fetchNodeTelemetry,
+  fetchNodeCommands,
+  requestDockerContainerList,
+  restartContainer,
+  triggerSystemUpdate,
+} from "../api";
+import { TelemetryChart } from "./TelemetryChart";
+import { ContainerList } from "./ContainerList";
+import { ConfirmationModal } from "./ConfirmationModal";
+import { NodeCommandsPanel } from "./NodeCommandsPanel";
 
 interface NodeDetailViewProps {
   nodeId: string;
@@ -24,16 +38,18 @@ interface NodeDetailViewProps {
 /**
  * Returns badge variant based on node status.
  */
-function getStatusVariant(status: string): 'default' | 'destructive' | 'secondary' | 'outline' {
+function getStatusVariant(
+  status: string
+): "default" | "destructive" | "secondary" | "outline" {
   switch (status) {
-    case 'Online':
-      return 'default';
-    case 'Offline':
-      return 'destructive';
-    case 'Maintenance':
-      return 'secondary';
+    case "Online":
+      return "default";
+    case "Offline":
+      return "destructive";
+    case "Maintenance":
+      return "secondary";
     default:
-      return 'outline';
+      return "outline";
   }
 }
 
@@ -50,13 +66,13 @@ function formatRelativeTime(dateString: string): string {
   const diffDays = Math.floor(diffHours / 24);
 
   if (diffSeconds < 60) {
-    return 'Just now';
+    return "Just now";
   } else if (diffMinutes < 60) {
-    return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`;
+    return `${diffMinutes} minute${diffMinutes > 1 ? "s" : ""} ago`;
   } else if (diffHours < 24) {
-    return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`;
   } else {
-    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+    return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`;
   }
 }
 
@@ -65,27 +81,70 @@ function formatRelativeTime(dateString: string): string {
  */
 export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
   // Fetch node details
-  const { data: node, isLoading: nodeLoading, error: nodeError } = useQuery({
-    queryKey: ['node', nodeId],
+  const {
+    data: node,
+    isLoading: nodeLoading,
+    error: nodeError,
+  } = useQuery({
+    queryKey: ["node", nodeId],
     queryFn: () => fetchNode(nodeId),
   });
 
   // Fetch telemetry history
   const { data: telemetry } = useQuery({
-    queryKey: ['telemetry', nodeId],
+    queryKey: ["telemetry", nodeId],
     queryFn: () => fetchNodeTelemetry(nodeId, 30),
     refetchInterval: 10000, // Refetch every 10 seconds
   });
 
-  // For now, we'll use mock containers - in a real app, this would come from the server
-  // via a SignalR command to query the agent
-  const mockContainers: Container[] = [];
+  // Fetch command history (used for docker container list + command panel)
+  const { data: commands } = useQuery({
+    queryKey: ["commands", nodeId],
+    queryFn: () => fetchNodeCommands(nodeId, 50),
+    refetchInterval: 5000,
+  });
+
+  const dockerListCommand = (commands ?? []).find(
+    (c) => c.commandType === "DockerList" && c.status !== "Failed"
+  );
+  const latestSuccessfulDockerList = (commands ?? []).find(
+    (c) =>
+      c.commandType === "DockerList" && c.status === "Success" && !!c.outputLog
+  );
+
+  let dockerContainers: Container[] = [];
+  let dockerListError: string | null = null;
+  if (latestSuccessfulDockerList?.outputLog) {
+    try {
+      const parsed = JSON.parse(latestSuccessfulDockerList.outputLog);
+      if (Array.isArray(parsed)) {
+        dockerContainers = parsed as Container[];
+      } else if (
+        parsed &&
+        typeof parsed === "object" &&
+        typeof parsed.error === "string"
+      ) {
+        dockerListError = parsed.error;
+      }
+    } catch {
+      dockerListError = "Failed to parse docker list output.";
+    }
+  }
+
+  const isDockerListRunning =
+    dockerListCommand?.status === "Queued" ||
+    dockerListCommand?.status === "InProgress";
+
+  const dockerListMutation = useMutation({
+    mutationFn: () => requestDockerContainerList(nodeId),
+  });
 
   // Restart container mutation
   const restartMutation = useMutation({
     mutationFn: (containerId: string) => restartContainer(nodeId, containerId),
     onSuccess: () => {
-      // Could invalidate/refetch containers query when implemented
+      // Refresh the container list after restart
+      dockerListMutation.mutate();
     },
   });
 
@@ -115,11 +174,11 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Node Not Found</AlertTitle>
-            <AlertDescription>The requested node could not be found.</AlertDescription>
+            <AlertDescription>
+              The requested node could not be found.
+            </AlertDescription>
           </Alert>
-          <Button onClick={onBack}>
-            Back to Dashboard
-          </Button>
+          <Button onClick={onBack}>Back to Dashboard</Button>
         </div>
       </div>
     );
@@ -138,15 +197,19 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
             </Button>
             <div className="flex-1">
               <div className="flex items-center gap-3">
-                <div className={`w-3 h-3 rounded-full ${
-                  node.status === 'Online' ? 'bg-primary animate-pulse' :
-                  node.status === 'Offline' ? 'bg-destructive' :
-                  node.status === 'Maintenance' ? 'bg-secondary animate-pulse' : 'bg-muted'
-                }`} />
+                <div
+                  className={`w-3 h-3 rounded-full ${
+                    node.status === "Online"
+                      ? "bg-primary animate-pulse"
+                      : node.status === "Offline"
+                      ? "bg-destructive"
+                      : node.status === "Maintenance"
+                      ? "bg-secondary animate-pulse"
+                      : "bg-muted"
+                  }`}
+                />
                 <h1 className="text-xl font-semibold">{node.hostname}</h1>
-                <Badge variant={statusVariant}>
-                  {node.status}
-                </Badge>
+                <Badge variant={statusVariant}>{node.status}</Badge>
               </div>
               <p className="text-sm text-muted-foreground mt-1">
                 Last seen: {formatRelativeTime(node.lastSeen)}
@@ -162,33 +225,51 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <Card>
             <CardContent className="pt-4">
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">IP Address</dt>
-              <dd className="text-sm font-mono text-foreground mt-1">{node.ipAddress || 'N/A'}</dd>
+              <dt className="text-xs text-muted-foreground uppercase tracking-wider">
+                IP Address
+              </dt>
+              <dd className="text-sm font-mono text-foreground mt-1">
+                {node.ipAddress || "N/A"}
+              </dd>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">Operating System</dt>
-              <dd className="text-sm text-foreground mt-1 truncate">{node.os || 'N/A'}</dd>
+              <dt className="text-xs text-muted-foreground uppercase tracking-wider">
+                Operating System
+              </dt>
+              <dd className="text-sm text-foreground mt-1 truncate">
+                {node.os || "N/A"}
+              </dd>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">Agent Version</dt>
-              <dd className="text-sm text-foreground mt-1">{node.agentVersion ? `v${node.agentVersion}` : 'N/A'}</dd>
+              <dt className="text-xs text-muted-foreground uppercase tracking-wider">
+                Agent Version
+              </dt>
+              <dd className="text-sm text-foreground mt-1">
+                {node.agentVersion ? `v${node.agentVersion}` : "N/A"}
+              </dd>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">Registered</dt>
-              <dd className="text-sm text-foreground mt-1">{new Date(node.createdAt).toLocaleDateString()}</dd>
+              <dt className="text-xs text-muted-foreground uppercase tracking-wider">
+                Registered
+              </dt>
+              <dd className="text-sm text-foreground mt-1">
+                {new Date(node.createdAt).toLocaleDateString()}
+              </dd>
             </CardContent>
           </Card>
         </div>
 
         {/* Telemetry Charts */}
         <section className="mb-8">
-          <h2 className="text-lg font-semibold text-foreground mb-4">System Telemetry</h2>
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            System Telemetry
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <TelemetryChart
               data={telemetry || []}
@@ -214,31 +295,66 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
         {/* Docker Containers */}
         <section className="mb-8">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-foreground">Docker Containers</h2>
+            <h2 className="text-lg font-semibold text-foreground">
+              Docker Containers
+            </h2>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={
+                node.status !== "Online" || dockerListMutation.isPending
+              }
+              onClick={() => dockerListMutation.mutate()}
+            >
+              Refresh
+            </Button>
           </div>
+          {dockerListError && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Docker list failed</AlertTitle>
+              <AlertDescription>{dockerListError}</AlertDescription>
+            </Alert>
+          )}
           <ContainerList
-            containers={mockContainers}
-            onRestart={async (containerId) => { await restartMutation.mutateAsync(containerId); }}
+            containers={dockerContainers}
+            isLoading={isDockerListRunning || dockerListMutation.isPending}
+            onRestart={async (containerId) => {
+              await restartMutation.mutateAsync(containerId);
+            }}
           />
+          {node.status !== "Online" && (
+            <p className="text-xs text-muted-foreground mt-3">
+              Docker queries are only available when the node is online.
+            </p>
+          )}
+        </section>
+
+        {/* Commands */}
+        <section className="mb-8">
+          <NodeCommandsPanel nodeId={nodeId} />
         </section>
 
         {/* System Actions */}
         <section>
-          <h2 className="text-lg font-semibold text-foreground mb-4">System Actions</h2>
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            System Actions
+          </h2>
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-sm">System Update</CardTitle>
                   <CardDescription>
-                    Run system package updates on this node. This will update all installed packages.
+                    Run system package updates on this node. This will update
+                    all installed packages.
                   </CardDescription>
                 </div>
                 <ConfirmationModal
                   trigger={
                     <Button
                       variant="secondary"
-                      disabled={node.status !== 'Online'}
+                      disabled={node.status !== "Online"}
                     >
                       Update System
                     </Button>
@@ -248,10 +364,12 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
                   confirmText="Run Update"
                   isDestructive
                   isLoading={updateMutation.isPending}
-                  onConfirm={async () => { await updateMutation.mutateAsync(); }}
+                  onConfirm={async () => {
+                    await updateMutation.mutateAsync();
+                  }}
                 />
               </div>
-              {node.status !== 'Online' && (
+              {node.status !== "Online" && (
                 <p className="text-xs text-muted-foreground mt-3">
                   ⚠️ System actions are only available when the node is online.
                 </p>

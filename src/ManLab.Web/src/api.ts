@@ -3,9 +3,20 @@
  * Provides functions for fetching data from the server REST API.
  */
 
-import type { Node, Telemetry, Command, OnboardingMachine, SshTestResponse, StartInstallResponse, StartUninstallResponse, SshAuthMode, LocalAgentStatus, LocalAgentInstallResponse } from './types';
+import type {
+  Node,
+  Telemetry,
+  Command,
+  OnboardingMachine,
+  SshTestResponse,
+  StartInstallResponse,
+  StartUninstallResponse,
+  SshAuthMode,
+  LocalAgentStatus,
+  LocalAgentInstallResponse,
+} from "./types";
 
-const API_BASE = '/api';
+const API_BASE = "/api";
 
 /**
  * Onboarding: suggests a server base URL that is reachable from the target machine.
@@ -14,12 +25,19 @@ const API_BASE = '/api';
  * and `window.location.origin` would point to the UI, not the backend server.
  */
 export async function fetchSuggestedServerBaseUrl(): Promise<string> {
-  const response = await fetch(`${API_BASE}/onboarding/suggested-server-base-url`);
+  const response = await fetch(
+    `${API_BASE}/onboarding/suggested-server-base-url`
+  );
   if (!response.ok) {
-    throw new Error(`Failed to fetch suggested server base URL: ${response.statusText}`);
+    throw new Error(
+      `Failed to fetch suggested server base URL: ${response.statusText}`
+    );
   }
-  const data = (await response.json()) as { serverBaseUrl?: string; ServerBaseUrl?: string };
-  return (data.serverBaseUrl ?? data.ServerBaseUrl ?? '').toString();
+  const data = (await response.json()) as {
+    serverBaseUrl?: string;
+    ServerBaseUrl?: string;
+  };
+  return (data.serverBaseUrl ?? data.ServerBaseUrl ?? "").toString();
 }
 
 /**
@@ -40,7 +58,7 @@ export async function fetchNode(id: string): Promise<Node> {
   const response = await fetch(`${API_BASE}/devices/${id}`);
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error('Node not found');
+      throw new Error("Node not found");
     }
     throw new Error(`Failed to fetch node: ${response.statusText}`);
   }
@@ -54,10 +72,12 @@ export async function fetchNodeTelemetry(
   id: string,
   count: number = 10
 ): Promise<Telemetry[]> {
-  const response = await fetch(`${API_BASE}/devices/${id}/telemetry?count=${count}`);
+  const response = await fetch(
+    `${API_BASE}/devices/${id}/telemetry?count=${count}`
+  );
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error('Node not found');
+      throw new Error("Node not found");
     }
     throw new Error(`Failed to fetch telemetry: ${response.statusText}`);
   }
@@ -71,10 +91,12 @@ export async function fetchNodeCommands(
   id: string,
   count: number = 20
 ): Promise<Command[]> {
-  const response = await fetch(`${API_BASE}/devices/${id}/commands?count=${count}`);
+  const response = await fetch(
+    `${API_BASE}/devices/${id}/commands?count=${count}`
+  );
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error('Node not found');
+      throw new Error("Node not found");
     }
     throw new Error(`Failed to fetch commands: ${response.statusText}`);
   }
@@ -90,9 +112,9 @@ export async function createCommand(
   payload?: object
 ): Promise<Command> {
   const response = await fetch(`${API_BASE}/devices/${nodeId}/commands`, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({
       commandType,
@@ -101,7 +123,7 @@ export async function createCommand(
   });
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error('Node not found');
+      throw new Error("Node not found");
     }
     throw new Error(`Failed to create command: ${response.statusText}`);
   }
@@ -115,14 +137,24 @@ export async function restartContainer(
   nodeId: string,
   containerId: string
 ): Promise<Command> {
-  return createCommand(nodeId, 'DockerRestart', { containerId });
+  return createCommand(nodeId, "DockerRestart", { containerId });
 }
 
 /**
  * Triggers a system update on a node.
  */
 export async function triggerSystemUpdate(nodeId: string): Promise<Command> {
-  return createCommand(nodeId, 'Update');
+  return createCommand(nodeId, "Update");
+}
+
+/**
+ * Requests a Docker container list from a node.
+ * The server will dispatch this to the agent and store the output in the command log.
+ */
+export async function requestDockerContainerList(
+  nodeId: string
+): Promise<Command> {
+  return createCommand(nodeId, "DockerList");
 }
 
 /**
@@ -131,7 +163,9 @@ export async function triggerSystemUpdate(nodeId: string): Promise<Command> {
 export async function fetchOnboardingMachines(): Promise<OnboardingMachine[]> {
   const response = await fetch(`${API_BASE}/onboarding/machines`);
   if (!response.ok) {
-    throw new Error(`Failed to fetch onboarding machines: ${response.statusText}`);
+    throw new Error(
+      `Failed to fetch onboarding machines: ${response.statusText}`
+    );
   }
   return response.json();
 }
@@ -143,73 +177,97 @@ export async function createOnboardingMachine(input: {
   authMode: SshAuthMode;
 }): Promise<OnboardingMachine> {
   const response = await fetch(`${API_BASE}/onboarding/machines`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
   if (!response.ok) {
-    throw new Error(`Failed to create onboarding machine: ${await response.text()}`);
+    throw new Error(
+      `Failed to create onboarding machine: ${await response.text()}`
+    );
   }
   return response.json();
 }
 
-export async function deleteOnboardingMachine(machineId: string): Promise<void> {
+export async function deleteOnboardingMachine(
+  machineId: string
+): Promise<void> {
   const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}`, {
-    method: 'DELETE',
+    method: "DELETE",
   });
   if (!response.ok) {
-    throw new Error(`Failed to delete onboarding machine: ${await response.text()}`);
+    throw new Error(
+      `Failed to delete onboarding machine: ${await response.text()}`
+    );
   }
 }
 
-export async function testSshConnection(machineId: string, input: {
-  password?: string;
-  privateKeyPem?: string;
-  privateKeyPassphrase?: string;
-  trustHostKey: boolean;
-}): Promise<SshTestResponse> {
-  const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}/ssh/test`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
+export async function testSshConnection(
+  machineId: string,
+  input: {
+    password?: string;
+    privateKeyPem?: string;
+    privateKeyPassphrase?: string;
+    trustHostKey: boolean;
+  }
+): Promise<SshTestResponse> {
+  const response = await fetch(
+    `${API_BASE}/onboarding/machines/${machineId}/ssh/test`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
   if (!response.ok) {
     throw new Error(`SSH test failed: ${await response.text()}`);
   }
   return response.json();
 }
 
-export async function installAgent(machineId: string, input: {
-  serverBaseUrl: string;
-  force: boolean;
-  trustHostKey: boolean;
-  password?: string;
-  privateKeyPem?: string;
-  privateKeyPassphrase?: string;
-}): Promise<StartInstallResponse> {
-  const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}/install`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
+export async function installAgent(
+  machineId: string,
+  input: {
+    serverBaseUrl: string;
+    force: boolean;
+    trustHostKey: boolean;
+    password?: string;
+    privateKeyPem?: string;
+    privateKeyPassphrase?: string;
+  }
+): Promise<StartInstallResponse> {
+  const response = await fetch(
+    `${API_BASE}/onboarding/machines/${machineId}/install`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
   if (!response.ok) {
     throw new Error(`Install start failed: ${await response.text()}`);
   }
   return response.json();
 }
 
-export async function uninstallAgent(machineId: string, input: {
-  serverBaseUrl: string;
-  trustHostKey: boolean;
-  password?: string;
-  privateKeyPem?: string;
-  privateKeyPassphrase?: string;
-}): Promise<StartUninstallResponse> {
-  const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}/uninstall`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  });
+export async function uninstallAgent(
+  machineId: string,
+  input: {
+    serverBaseUrl: string;
+    trustHostKey: boolean;
+    password?: string;
+    privateKeyPem?: string;
+    privateKeyPassphrase?: string;
+  }
+): Promise<StartUninstallResponse> {
+  const response = await fetch(
+    `${API_BASE}/onboarding/machines/${machineId}/uninstall`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
   if (!response.ok) {
     throw new Error(`Uninstall start failed: ${await response.text()}`);
   }
@@ -222,7 +280,9 @@ export async function uninstallAgent(machineId: string, input: {
 export async function fetchLocalAgentStatus(): Promise<LocalAgentStatus> {
   const response = await fetch(`${API_BASE}/localagent/status`);
   if (!response.ok) {
-    throw new Error(`Failed to fetch local agent status: ${response.statusText}`);
+    throw new Error(
+      `Failed to fetch local agent status: ${response.statusText}`
+    );
   }
   return response.json();
 }
@@ -230,14 +290,18 @@ export async function fetchLocalAgentStatus(): Promise<LocalAgentStatus> {
 /**
  * Local Agent: Triggers installation of the agent on the server machine.
  */
-export async function installLocalAgent(force: boolean = false): Promise<LocalAgentInstallResponse> {
+export async function installLocalAgent(
+  force: boolean = false
+): Promise<LocalAgentInstallResponse> {
   const response = await fetch(`${API_BASE}/localagent/install`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ force }),
   });
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ error: response.statusText }));
+    const errorData = await response
+      .json()
+      .catch(() => ({ error: response.statusText }));
     return { started: false, error: errorData.error ?? response.statusText };
   }
   return response.json();
@@ -248,14 +312,15 @@ export async function installLocalAgent(force: boolean = false): Promise<LocalAg
  */
 export async function uninstallLocalAgent(): Promise<LocalAgentInstallResponse> {
   const response = await fetch(`${API_BASE}/localagent/uninstall`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
   });
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ error: response.statusText }));
+    const errorData = await response
+      .json()
+      .catch(() => ({ error: response.statusText }));
     return { started: false, error: errorData.error ?? response.statusText };
   }
   return response.json();
 }
-

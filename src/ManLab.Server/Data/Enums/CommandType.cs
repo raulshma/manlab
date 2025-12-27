@@ -12,5 +12,8 @@ public enum CommandType
     DockerRestart,
     
     /// <summary>Generic shell command execution.</summary>
-    Shell
+    Shell,
+
+    /// <summary>List Docker containers on the node.</summary>
+    DockerList
 }

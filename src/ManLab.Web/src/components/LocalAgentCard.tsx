@@ -3,74 +3,71 @@
  * Provides install/uninstall buttons and shows real-time logs.
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchLocalAgentStatus, installLocalAgent, uninstallLocalAgent } from '../api';
-import { useSignalR } from '../SignalRContext';
-import type { LocalAgentStatus } from '../types';
-import { ConfirmationModal } from './ConfirmationModal';
-import { ChevronRight, Server } from 'lucide-react';
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  fetchLocalAgentStatus,
+  installLocalAgent,
+  uninstallLocalAgent,
+} from "../api";
+import { useSignalR } from "../SignalRContext";
+import type { LocalAgentStatus } from "../types";
+import { ConfirmationModal } from "./ConfirmationModal";
+import { ChevronRight, Server } from "lucide-react";
 
-const LOCAL_MACHINE_ID = '00000000-0000-0000-0000-000000000001';
-
-interface LogEntry {
-  timestamp: string;
-  message: string;
-}
+const LOCAL_MACHINE_ID = "00000000-0000-0000-0000-000000000001";
 
 export function LocalAgentCard() {
   const queryClient = useQueryClient();
-  const { connection, connectionStatus } = useSignalR();
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const { localAgentLogs, subscribeToLocalAgentLogs } = useSignalR();
   const [showLogs, setShowLogs] = useState(false);
 
-  const { data: status, isLoading, error } = useQuery<LocalAgentStatus>({
-    queryKey: ['localAgentStatus'],
+  const {
+    data: status,
+    isLoading,
+    error,
+  } = useQuery<LocalAgentStatus>({
+    queryKey: ["localAgentStatus"],
     queryFn: fetchLocalAgentStatus,
     refetchInterval: 5000,
   });
 
-  // Subscribe to local agent SignalR events
-  const handleLog = useCallback((machineId: string, timestamp: string, message: string) => {
-    if (machineId === LOCAL_MACHINE_ID) {
-      setLogs((prev) => [...prev, { timestamp, message }].slice(-100));
-      setShowLogs(true);
-    }
-  }, []);
+  // Filter logs for local machine
+  const filteredLogs = localAgentLogs
+    .filter((log) => log.machineId === LOCAL_MACHINE_ID)
+    .map((log) => ({ timestamp: log.timestamp, message: log.message }));
 
-  const handleStatusChanged = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['localAgentStatus'] });
-  }, [queryClient]);
-
+  // Auto-show logs when new local agent logs arrive
   useEffect(() => {
-    if (connection && connectionStatus === 'connected') {
-      connection.on('LocalAgentLog', handleLog);
-      connection.on('LocalAgentStatusChanged', handleStatusChanged);
-
-      return () => {
-        connection.off('LocalAgentLog', handleLog);
-        connection.off('LocalAgentStatusChanged', handleStatusChanged);
-      };
-    }
-  }, [connection, connectionStatus, handleLog, handleStatusChanged]);
+    const unsubscribe = subscribeToLocalAgentLogs((log) => {
+      if (log.machineId === LOCAL_MACHINE_ID) {
+        setShowLogs(true);
+      }
+    });
+    return unsubscribe;
+  }, [subscribeToLocalAgentLogs]);
 
   const installMutation = useMutation({
     mutationFn: (force: boolean) => installLocalAgent(force),
     onSuccess: () => {
-      setLogs([]);
-      queryClient.invalidateQueries({ queryKey: ['localAgentStatus'] });
+      queryClient.invalidateQueries({ queryKey: ["localAgentStatus"] });
     },
   });
 
   const uninstallMutation = useMutation({
     mutationFn: () => uninstallLocalAgent(),
     onSuccess: () => {
-      setLogs([]);
-      queryClient.invalidateQueries({ queryKey: ['localAgentStatus'] });
+      queryClient.invalidateQueries({ queryKey: ["localAgentStatus"] });
     },
   });
 
@@ -100,10 +97,22 @@ export function LocalAgentCard() {
       <Card>
         <CardContent className="pt-6">
           <div className="flex items-center gap-3 text-muted-foreground">
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+              />
             </svg>
-            <span className="text-sm">Local agent not supported on this platform</span>
+            <span className="text-sm">
+              Local agent not supported on this platform
+            </span>
           </div>
         </CardContent>
       </Card>
@@ -111,11 +120,11 @@ export function LocalAgentCard() {
   }
 
   const isOperationRunning = status.currentOperation != null;
-  const statusVariant = status.isRunning 
-    ? 'default' 
-    : status.isInstalled 
-      ? 'secondary' 
-      : 'outline';
+  const statusVariant = status.isRunning
+    ? "default"
+    : status.isInstalled
+    ? "secondary"
+    : "outline";
 
   return (
     <Card>
@@ -128,10 +137,8 @@ export function LocalAgentCard() {
               <CardDescription>Monitor this server machine</CardDescription>
             </div>
           </div>
-          
-          <Badge variant={statusVariant}>
-            {status.status}
-          </Badge>
+
+          <Badge variant={statusVariant}>{status.status}</Badge>
         </div>
       </CardHeader>
 
@@ -149,7 +156,9 @@ export function LocalAgentCard() {
                   className="flex-1"
                   disabled={isOperationRunning || installMutation.isPending}
                 >
-                  {installMutation.isPending ? 'Installing...' : 'Install Agent'}
+                  {installMutation.isPending
+                    ? "Installing..."
+                    : "Install Agent"}
                 </Button>
               }
             />
@@ -184,7 +193,7 @@ export function LocalAgentCard() {
                     className="flex-1"
                     disabled={isOperationRunning || uninstallMutation.isPending}
                   >
-                    {uninstallMutation.isPending ? 'Removing...' : 'Uninstall'}
+                    {uninstallMutation.isPending ? "Removing..." : "Uninstall"}
                   </Button>
                 }
               />
@@ -213,18 +222,30 @@ export function LocalAgentCard() {
           onClick={() => setShowLogs(!showLogs)}
           className="w-fit"
         >
-          <ChevronRight className={`h-4 w-4 transition-transform ${showLogs ? 'rotate-90' : ''}`} />
-          {showLogs ? 'Hide' : 'Show'} installation logs ({logs.length})
+          <ChevronRight
+            className={`h-4 w-4 transition-transform ${
+              showLogs ? "rotate-90" : ""
+            }`}
+          />
+          {showLogs ? "Hide" : "Show"} installation logs ({filteredLogs.length})
         </Button>
 
         {/* Logs */}
-        {showLogs && logs.length > 0 && (
+        {showLogs && filteredLogs.length > 0 && (
           <Card>
             <CardContent className="max-h-48 overflow-y-auto py-3 font-mono text-xs">
-              {logs.map((log, i) => (
-                <div key={i} className={log.message.includes('ERROR') ? 'text-destructive' : 'text-muted-foreground'}>
-                  <span className="text-muted-foreground/70">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                  {' '}
+              {filteredLogs.map((log, i) => (
+                <div
+                  key={i}
+                  className={
+                    log.message.includes("ERROR")
+                      ? "text-destructive"
+                      : "text-muted-foreground"
+                  }
+                >
+                  <span className="text-muted-foreground/70">
+                    {new Date(log.timestamp).toLocaleTimeString()}
+                  </span>{" "}
                   {log.message}
                 </div>
               ))}
@@ -236,7 +257,8 @@ export function LocalAgentCard() {
         {(installMutation.error || uninstallMutation.error) && (
           <Alert variant="destructive">
             <AlertDescription>
-              {installMutation.error?.message || uninstallMutation.error?.message}
+              {installMutation.error?.message ||
+                uninstallMutation.error?.message}
             </AlertDescription>
           </Alert>
         )}

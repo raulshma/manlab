@@ -1,6 +1,8 @@
 using ManLab.Server.Data;
 using ManLab.Server.Hubs;
 using ManLab.Server.Services;
+using ManLab.Server.Services.Agents;
+using ManLab.Server.Services.Commands;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -37,6 +39,10 @@ builder.Services.AddOptions<BinaryDistributionOptions>()
     .Bind(builder.Configuration.GetSection(BinaryDistributionOptions.SectionName));
 
 builder.Services.AddSingleton<INotificationService, DiscordWebhookNotificationService>();
+
+// Agent connection tracking + command dispatch
+builder.Services.AddSingleton<AgentConnectionRegistry>();
+builder.Services.AddHostedService<CommandDispatchService>();
 
 // Background services
 builder.Services.AddHostedService<HealthMonitorService>();

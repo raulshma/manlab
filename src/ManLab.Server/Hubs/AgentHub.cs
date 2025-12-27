@@ -2,6 +2,7 @@ using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Services.Security;
+using ManLab.Server.Services.Agents;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -16,11 +17,16 @@ public class AgentHub : Hub
 {
     private readonly ILogger<AgentHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly AgentConnectionRegistry _connectionRegistry;
 
-    public AgentHub(ILogger<AgentHub> logger, IServiceScopeFactory scopeFactory)
+    public AgentHub(
+        ILogger<AgentHub> logger,
+        IServiceScopeFactory scopeFactory,
+        AgentConnectionRegistry connectionRegistry)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
+        _connectionRegistry = connectionRegistry;
     }
 
     /// <summary>
@@ -40,6 +46,9 @@ public class AgentHub : Hub
     {
         _logger.LogInformation("Agent disconnected: {ConnectionId}, Reason: {Reason}",
             Context.ConnectionId, exception?.Message ?? "Normal disconnect");
+
+        _connectionRegistry.TryRemoveByConnectionId(Context.ConnectionId, out _);
+
         await base.OnDisconnectedAsync(exception);
     }
 
@@ -79,6 +88,9 @@ public class AgentHub : Hub
             authedNode.Status = NodeStatus.Online;
 
             await dbContext.SaveChangesAsync();
+
+            // Bind the latest connectionId to this nodeId for targeted server->agent calls.
+            _connectionRegistry.Set(authedNode.Id, Context.ConnectionId);
 
             if (previousStatus != authedNode.Status)
             {
@@ -122,6 +134,22 @@ public class AgentHub : Hub
         await dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Registered new node: {NodeId} ({Hostname})", newNode.Id, metadata.Hostname);
+
+        // Bind the latest connectionId to this nodeId for targeted server->agent calls.
+        _connectionRegistry.Set(newNode.Id, Context.ConnectionId);
+
+        // Let dashboards upsert immediately without waiting for a REST poll.
+        await Clients.All.SendAsync("NodeRegistered", new
+        {
+            id = newNode.Id,
+            hostname = newNode.Hostname,
+            ipAddress = newNode.IpAddress,
+            os = newNode.OS,
+            agentVersion = newNode.AgentVersion,
+            lastSeen = newNode.LastSeen,
+            status = newNode.Status.ToString(),
+            createdAt = newNode.CreatedAt
+        });
 
         await Clients.All.SendAsync("NodeStatusChanged", newNode.Id, newNode.Status.ToString(), newNode.LastSeen);
 
@@ -263,6 +291,9 @@ public class AgentHub : Hub
         }
 
         await dbContext.SaveChangesAsync();
+
+        // Notify connected dashboard clients that commands for this node changed.
+        await Clients.All.SendAsync("CommandUpdated", command.NodeId, command.Id, command.Status.ToString());
     }
 
     private bool TryGetBearerToken(out string token)

@@ -13,8 +13,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { type ReactNode, useState } from 'react';
+} from "@/components/ui/alert-dialog";
+import { type ReactNode, useState } from "react";
 
 interface ConfirmationModalProps {
   /** The trigger element that opens the modal */
@@ -42,8 +42,8 @@ export function ConfirmationModal({
   trigger,
   title,
   message,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
+  confirmText = "Confirm",
+  cancelText = "Cancel",
   isDestructive = false,
   isLoading = false,
   onConfirm,
@@ -65,22 +65,18 @@ export function ConfirmationModal({
 
   return (
     <AlertDialog open={isOpen} onOpenChange={setIsOpen}>
-      <AlertDialogTrigger>
-        {trigger}
-      </AlertDialogTrigger>
+      <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={loading}>
-            {cancelText}
-          </AlertDialogCancel>
+          <AlertDialogCancel disabled={loading}>{cancelText}</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
             disabled={loading}
-            variant={isDestructive ? 'destructive' : 'default'}
+            variant={isDestructive ? "destructive" : "default"}
             className="flex items-center gap-2"
           >
             {loading && (
