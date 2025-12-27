@@ -28,12 +28,19 @@ import { useSignalR } from "../SignalRContext";
 import type { LocalAgentStatus, AgentConfiguration } from "../types";
 import { ConfirmationModal } from "./ConfirmationModal";
 import { ChevronRight, Server, Shield, User, Trash2, AlertTriangle, Settings } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 const LOCAL_MACHINE_ID = "00000000-0000-0000-0000-000000000001";
 
 export function LocalAgentCard() {
   const queryClient = useQueryClient();
   const { localAgentLogs, subscribeToLocalAgentLogs } = useSignalR();
+  // Collapsed by default on initial page load.
+  const [isExpanded, setIsExpanded] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [showOrphanedDetails, setShowOrphanedDetails] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
@@ -197,21 +204,32 @@ export function LocalAgentCard() {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Server className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <CardTitle>Local Server Agent</CardTitle>
-              <CardDescription>Monitor this server machine</CardDescription>
+      <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+        <CardHeader>
+          <CollapsibleTrigger className="w-full text-left">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Server className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <CardTitle>Local Server Agent</CardTitle>
+                  <CardDescription>Monitor this server machine</CardDescription>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Badge variant={statusVariant}>{status.status}</Badge>
+                <ChevronRight
+                  className={`h-4 w-4 text-muted-foreground transition-transform ${
+                    isExpanded ? "rotate-90" : ""
+                  }`}
+                />
+              </div>
             </div>
-          </div>
+          </CollapsibleTrigger>
+        </CardHeader>
 
-          <Badge variant={statusVariant}>{status.status}</Badge>
-        </div>
-      </CardHeader>
-
-      <CardContent className="space-y-4">
+        <CollapsibleContent>
+          <CardContent className="space-y-4">
         {/* Orphaned Resources Warning */}
         {hasOrphanedResources && (
           <div className="space-y-3">
@@ -548,7 +566,9 @@ export function LocalAgentCard() {
             </AlertDescription>
           </Alert>
         )}
-      </CardContent>
+          </CardContent>
+        </CollapsibleContent>
+      </Collapsible>
     </Card>
   );
 }
