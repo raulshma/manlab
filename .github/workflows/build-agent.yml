@@ -55,6 +55,16 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ matrix.rid }}-${{ hashFiles('**/*.csproj', '**/*.props', '**/*.targets', '**/NuGet.config', 'global.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-${{ matrix.rid }}-
+            nuget-${{ runner.os }}-
+
       - name: Restore dependencies
         run: dotnet restore src/ManLab.Agent/ManLab.Agent.csproj
 
@@ -68,64 +78,28 @@ jobs:
             sudo apt-get install -y --no-install-recommends clang lld zlib1g-dev
           fi
 
-      - name: Set up QEMU for cross-compilation
-        if: runner.os == 'Linux' && runner.arch != 'ARM64' && matrix.rid == 'linux-arm64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Build and Publish Agent (Native AOT)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
+          dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishAot=true \
+            -o ./publish/${{ matrix.rid }}
 
-          if [ "${{ matrix.rid }}" = "linux-arm64" ]; then
-            if [ "${{ runner.arch }}" = "ARM64" ]; then
-              # Fast path: native arm64 runner.
-              dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
-                -c Release \
-                -r linux-arm64 \
-                --self-contained true \
-                -p:PublishAot=true \
-                -o ./publish/linux-arm64
-            else
-              # Fallback: build inside an arm64 container under QEMU.
-              mkdir -p "./publish/linux-arm64"
-
-              # Reuse the host NuGet cache to avoid downloading/restoring packages under QEMU.
-              # (Host restore already ran above, so this is usually a big win.)
-              mkdir -p "$HOME/.nuget/packages"
-
-              docker run --rm --platform linux/arm64 \
-                -v "${GITHUB_WORKSPACE}":/src \
-                -v "$HOME/.nuget/packages":/nuget/packages \
-                -e NUGET_PACKAGES=/nuget/packages \
-                -w /src \
-                mcr.microsoft.com/dotnet/sdk:10.0 \
-                bash -lc "\
-                  set -euo pipefail && \
-                  apt-get update && \
-                  apt-get install -y --no-install-recommends clang lld zlib1g-dev && \
-                  dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
-                    -c Release \
-                    -r linux-arm64 \
-                    --self-contained true \
-                    -p:PublishAot=true \
-                    -o /src/publish/linux-arm64\
-                "
-
-              # The container runs as root, so it may leave root-owned files in the workspace.
-              # Reset ownership so subsequent steps (cp/tar/upload) can write.
-              sudo chown -R "$(id -u):$(id -g)" ./publish/linux-arm64 || true
-            fi
-          else
-            dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
-              -c Release \
-              -r ${{ matrix.rid }} \
-              --self-contained true \
-              -p:PublishAot=true \
-              -o ./publish/${{ matrix.rid }}
-          fi
+      - name: Build and Publish Agent (Native AOT)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet publish src/ManLab.Agent/ManLab.Agent.csproj `
+            -c Release `
+            -r ${{ matrix.rid }} `
+            --self-contained true `
+            -p:PublishAot=true `
+            -o ./publish/${{ matrix.rid }}
 
       - name: Normalize published binary name (Linux/macOS)
         if: runner.os != 'Windows'
