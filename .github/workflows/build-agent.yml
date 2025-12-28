@@ -33,10 +33,10 @@ jobs:
           - os: ubuntu-latest
             rid: linux-x64
             artifact: manlab-agent
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             rid: linux-arm64
             artifact: manlab-agent
-          - os: macos-latest
+          - os: macos-15-intel
             rid: osx-x64
             artifact: manlab-agent
           - os: macos-latest
@@ -50,17 +50,39 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET for ${{ matrix.rid }}
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ matrix.rid }}-${{ hashFiles('**/*.csproj', '**/*.props', '**/*.targets', '**/NuGet.config', 'global.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-${{ matrix.rid }}-
+            nuget-${{ runner.os }}-
 
       - name: Restore dependencies
         run: dotnet restore src/ManLab.Agent/ManLab.Agent.csproj
 
-      - name: Build and Publish Agent (Native AOT)
+      - name: Ensure NativeAOT toolchain (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: |
+          set -euo pipefail
+          if ! command -v clang >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends clang lld zlib1g-dev
+          fi
+
+      - name: Build and Publish Agent (Native AOT)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
           dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
             -c Release \
             -r ${{ matrix.rid }} \
@@ -68,11 +90,54 @@ jobs:
             -p:PublishAot=true \
             -o ./publish/${{ matrix.rid }}
 
+      - name: Build and Publish Agent (Native AOT)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet publish src/ManLab.Agent/ManLab.Agent.csproj `
+            -c Release `
+            -r ${{ matrix.rid }} `
+            --self-contained true `
+            -p:PublishAot=true `
+            -o ./publish/${{ matrix.rid }}
+
+      - name: Normalize published binary name (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="./publish/${{ matrix.rid }}/ManLab.Agent"
+          dest="./publish/${{ matrix.rid }}/${{ matrix.artifact }}"
+          if [ ! -f "$src" ]; then
+            echo "Expected published binary not found: $src" >&2
+            ls -la "./publish/${{ matrix.rid }}" || true
+            exit 1
+          fi
+          cp "$src" "$dest"
+          chmod +x "$dest" || true
+
+      - name: Normalize published binary name (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $src = "./publish/${{ matrix.rid }}/ManLab.Agent.exe"
+          $dest = "./publish/${{ matrix.rid }}/${{ matrix.artifact }}"
+          if (-not (Test-Path $src)) {
+            Write-Error "Expected published binary not found: $src"
+          }
+          Copy-Item $src $dest -Force
+
       - name: Create artifact archive (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
+          set -e
           cd ./publish/${{ matrix.rid }}
-          tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }} appsettings.json 2>/dev/null || tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }}
+          if [ -f "appsettings.json" ]; then
+            tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }} appsettings.json
+          else
+            tar -czvf ../../manlab-agent-${{ matrix.rid }}.tar.gz ${{ matrix.artifact }}
+            echo "Warning: appsettings.json not found in build output" >&2
+          fi
 
       - name: Create artifact archive (Windows)
         if: runner.os == 'Windows'
@@ -80,7 +145,11 @@ jobs:
         run: |
           $files = @("./publish/${{ matrix.rid }}/${{ matrix.artifact }}")
           $appsettings = "./publish/${{ matrix.rid }}/appsettings.json"
-          if (Test-Path $appsettings) { $files += $appsettings }
+          if (Test-Path $appsettings) { 
+            $files += $appsettings
+          } else {
+            Write-Host "Warning: appsettings.json not found in build output" -ForegroundColor Yellow
+          }
           Compress-Archive -Path $files -DestinationPath "manlab-agent-${{ matrix.rid }}.zip" -Force
 
       - name: Upload build artifact
@@ -103,10 +172,9 @@ jobs:
 
   # Create a manifest of all built artifacts
   create-manifest:
-    name: Create Release Manifest
+    name: Create Manifest
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
     permissions:
       contents: write
     
@@ -116,25 +184,93 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create manifest
-        run: |
-          echo "# ManLab Agent Release Manifest" > manifest.md
-          echo "" >> manifest.md
-          echo "**Release:** ${{ github.ref_name }}" >> manifest.md
-          echo "**Built at:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> manifest.md
-          echo "" >> manifest.md
-          echo "## Available Binaries" >> manifest.md
-          echo "" >> manifest.md
-          echo "| Platform | Architecture | File |" >> manifest.md
-          echo "|----------|--------------|------|" >> manifest.md
-          echo "| Windows | x64 | manlab-agent-win-x64.zip |" >> manifest.md
-          echo "| Windows | ARM64 | manlab-agent-win-arm64.zip |" >> manifest.md
-          echo "| Linux | x64 | manlab-agent-linux-x64.tar.gz |" >> manifest.md
-          echo "| Linux | ARM64 | manlab-agent-linux-arm64.tar.gz |" >> manifest.md
-          echo "| macOS | x64 | manlab-agent-osx-x64.tar.gz |" >> manifest.md
-          echo "| macOS | ARM64 | manlab-agent-osx-arm64.tar.gz |" >> manifest.md
+      - name: Create manifest (with URLs)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const refName = context.ref.replace('refs/heads/', '').replace('refs/tags/', '');
+            const runId = context.runId;
+            const builtAt = new Date().toISOString();
+
+            const files = [
+              { platform: 'Windows', arch: 'x64',   file: 'manlab-agent-win-x64.zip' },
+              { platform: 'Windows', arch: 'ARM64', file: 'manlab-agent-win-arm64.zip' },
+              { platform: 'Linux',   arch: 'x64',   file: 'manlab-agent-linux-x64.tar.gz' },
+              { platform: 'Linux',   arch: 'ARM64', file: 'manlab-agent-linux-arm64.tar.gz' },
+              { platform: 'macOS',   arch: 'x64',   file: 'manlab-agent-osx-x64.tar.gz' },
+              { platform: 'macOS',   arch: 'ARM64', file: 'manlab-agent-osx-arm64.tar.gz' },
+            ];
+
+            const isRelease = context.eventName === 'release';
+
+            // Map artifact name -> artifact id so we can link to the Actions UI.
+            // Build job uploads artifacts named "manlab-agent-${rid}".
+            const expectedArtifactNames = new Map([
+              ['manlab-agent-win-x64.zip', 'manlab-agent-win-x64'],
+              ['manlab-agent-win-arm64.zip', 'manlab-agent-win-arm64'],
+              ['manlab-agent-linux-x64.tar.gz', 'manlab-agent-linux-x64'],
+              ['manlab-agent-linux-arm64.tar.gz', 'manlab-agent-linux-arm64'],
+              ['manlab-agent-osx-x64.tar.gz', 'manlab-agent-osx-x64'],
+              ['manlab-agent-osx-arm64.tar.gz', 'manlab-agent-osx-arm64'],
+            ]);
+
+            let artifactIdByName = {};
+            if (!isRelease) {
+              const artifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                { owner, repo, run_id: runId, per_page: 100 }
+              );
+              for (const a of artifacts) {
+                artifactIdByName[a.name] = a.id;
+              }
+            }
+
+            const lines = [];
+            lines.push('# ManLab Agent Release Manifest');
+            lines.push('');
+            lines.push(`**Ref:** ${refName}`);
+            lines.push(`**Built at:** ${builtAt}`);
+            lines.push(`**Run:** https://github.com/${owner}/${repo}/actions/runs/${runId}`);
+            lines.push('');
+            lines.push('## Available Binaries');
+            lines.push('');
+            lines.push('| Platform | Architecture | File | URL |');
+            lines.push('|----------|--------------|------|-----|');
+
+            for (const entry of files) {
+              let url = '';
+
+              if (isRelease) {
+                // Public release asset URL format.
+                // NOTE: This assumes the release upload step attaches assets with these exact filenames.
+                url = `https://github.com/${owner}/${repo}/releases/download/${context.ref.replace('refs/tags/', '')}/${entry.file}`;
+              } else {
+                const artifactName = expectedArtifactNames.get(entry.file);
+                const artifactId = artifactName ? artifactIdByName[artifactName] : undefined;
+                if (artifactId) {
+                  // Link to the Actions UI artifact page (requires auth to download).
+                  url = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${artifactId}`;
+                }
+              }
+
+              const urlCell = url ? `[download](${url})` : '';
+              lines.push(`| ${entry.platform} | ${entry.arch} | ${entry.file} | ${urlCell} |`);
+            }
+
+            const fs = require('fs');
+            fs.writeFileSync('manifest.md', lines.join('\n') + '\n');
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: manlab-agent-manifest
+          path: manifest.md
+          retention-days: 30
 
       - name: Upload manifest to release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: manifest.md

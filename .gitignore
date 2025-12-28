@@ -490,3 +490,7 @@ $RECYCLE.BIN/
 
 spec/
 
+spec/initial/
+# Removed .github/ to allow GitHub Actions workflows
+.github/copilot-instructions.md
+.agent/
