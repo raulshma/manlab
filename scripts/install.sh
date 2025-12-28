@@ -22,6 +22,7 @@ ManLab Agent installer (Linux/macOS)
 
 Usage:
   install.sh --server <http(s)://host:port> [--token <token>] [--install-dir <dir>] [--rid <rid>] [--force]
+            [--prefer-github --github-release-base-url <url> --github-version <tag>]
   install.sh --uninstall [--install-dir <dir>]
 
 Options:
@@ -30,12 +31,19 @@ Options:
   --install-dir   Install directory (default: /opt/manlab-agent)
   --rid           Override runtime identifier (default: auto-detected)
   --force         Overwrite existing files and reinstall service
+  --prefer-github Prefer downloading the agent binary from GitHub Releases
+  --github-release-base-url  Base URL like https://github.com/owner/repo/releases/download
+  --github-version           Version tag like v0.0.1-alpha
   --uninstall     Stop/disable the agent and remove installed files
   -h, --help      Show help
 
 Notes:
   - ServerUrl passed to the agent is "<server>/hubs/agent".
   - Requires systemd on Linux or launchd on macOS.
+  - You can also set env vars instead of flags:
+      MANLAB_PREFER_GITHUB_DOWNLOAD=1
+      MANLAB_GITHUB_RELEASE_BASE_URL=...
+      MANLAB_GITHUB_VERSION=...
 EOF
 }
 
@@ -124,6 +132,60 @@ try_download_from_github() {
   local server_url="$1"
   local rid="$2"
   local out="$3"
+
+  # Explicit override (flags/env) takes precedence.
+  local prefer_override="${PREFER_GITHUB:-}"
+  local override_base="${GITHUB_RELEASE_BASE_URL:-}"
+  local override_version="${GITHUB_VERSION:-}"
+
+  if [[ -z "$prefer_override" && -n "${MANLAB_PREFER_GITHUB_DOWNLOAD:-}" ]]; then
+    prefer_override="${MANLAB_PREFER_GITHUB_DOWNLOAD}"
+  fi
+  if [[ -z "$override_base" && -n "${MANLAB_GITHUB_RELEASE_BASE_URL:-}" ]]; then
+    override_base="${MANLAB_GITHUB_RELEASE_BASE_URL}"
+  fi
+  if [[ -z "$override_version" && -n "${MANLAB_GITHUB_VERSION:-}" ]]; then
+    override_version="${MANLAB_GITHUB_VERSION}"
+  fi
+
+  local prefer_is_true=0
+  if [[ "$prefer_override" == "1" || "$prefer_override" == "true" || "$prefer_override" == "True" ]]; then
+    prefer_is_true=1
+  fi
+
+  if [[ $prefer_is_true -eq 1 && -n "$override_base" && -n "$override_version" ]]; then
+    local archive_url
+    archive_url="${override_base%/}/${override_version}/manlab-agent-${rid}.tar.gz"
+    local binary_name="manlab-agent"
+
+    echo "Attempting download from GitHub release: $archive_url"
+    local temp_dir
+    temp_dir="$(mktemp -d)"
+    local archive_path="$temp_dir/agent-archive.tar.gz"
+
+    if download "$archive_url" "$archive_path"; then
+      echo "  Extracting archive..."
+      if tar -xzf "$archive_path" -C "$temp_dir"; then
+        local extracted_binary
+        extracted_binary="$(find "$temp_dir" -type f -name "$binary_name" -print -quit 2>/dev/null || true)"
+        if [[ -n "$extracted_binary" && -f "$extracted_binary" ]]; then
+          cp -f "$extracted_binary" "$out"
+          chmod +x "$out"
+          rm -rf "$temp_dir"
+          echo "  Downloaded and extracted from GitHub successfully"
+          return 0
+        else
+          echo "  Binary '$binary_name' not found in extracted archive" >&2
+        fi
+      else
+        echo "  Failed to extract archive" >&2
+      fi
+    fi
+
+    rm -rf "$temp_dir"
+    echo "  GitHub download failed, falling back to server..." >&2
+    return 1
+  fi
   
   local release_info
   release_info="$(get_github_release_info "$server_url")"
@@ -163,8 +225,9 @@ try_download_from_github() {
   if download "$archive_url" "$archive_path"; then
     echo "  Extracting archive..."
     if tar -xzf "$archive_path" -C "$temp_dir"; then
-      local extracted_binary="$temp_dir/$binary_name"
-      if [[ -f "$extracted_binary" ]]; then
+      local extracted_binary
+      extracted_binary="$(find "$temp_dir" -type f -name "$binary_name" -print -quit 2>/dev/null || true)"
+      if [[ -n "$extracted_binary" && -f "$extracted_binary" ]]; then
         cp -f "$extracted_binary" "$out"
         chmod +x "$out"
         rm -rf "$temp_dir"
@@ -295,6 +358,9 @@ INSTALL_DIR="/opt/manlab-agent"
 RID=""
 FORCE=0
 UNINSTALL=0
+PREFER_GITHUB=""
+GITHUB_RELEASE_BASE_URL=""
+GITHUB_VERSION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -308,6 +374,12 @@ while [[ $# -gt 0 ]]; do
       RID="${2:-}"; shift 2 ;;
     --force)
       FORCE=1; shift 1 ;;
+    --prefer-github)
+      PREFER_GITHUB="1"; shift 1 ;;
+    --github-release-base-url)
+      GITHUB_RELEASE_BASE_URL="${2:-}"; shift 2 ;;
+    --github-version)
+      GITHUB_VERSION="${2:-}"; shift 2 ;;
     --uninstall)
       UNINSTALL=1; shift 1 ;;
     -h|--help)

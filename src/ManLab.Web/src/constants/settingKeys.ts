@@ -6,4 +6,9 @@ export const SettingKeys = {
   Discord: {
     WebhookUrl: "Discord.WebhookUrl",
   },
+  GitHub: {
+    EnableGitHubDownload: "GitHub.EnableGitHubDownload",
+    ReleaseBaseUrl: "GitHub.ReleaseBaseUrl",
+    LatestVersion: "GitHub.LatestVersion",
+  },
 } as const;

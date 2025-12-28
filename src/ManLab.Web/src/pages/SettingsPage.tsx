@@ -16,6 +16,7 @@ import { useTheme } from "@/components/use-theme";
 import { DiscordSettings } from "@/components/settings/DiscordSettings";
 import { AgentDefaultsSettings } from "@/components/settings/AgentDefaultsSettings";
 import { ScriptsSettings } from "@/components/settings/ScriptsSettings";
+import { GitHubReleaseSettings } from "@/components/settings/GitHubReleaseSettings";
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -81,7 +82,7 @@ export function SettingsPage() {
               <div className="grid gap-2">
                 <Label htmlFor="theme">Interface Theme</Label>
                 <Select value={theme} onValueChange={(val) => setTheme(val as "light" | "dark" | "system")}>
-                  <SelectTrigger id="theme" className="w-[200px]">
+                  <SelectTrigger id="theme" className="w-50">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -124,6 +125,7 @@ export function SettingsPage() {
         </TabsContent>
         <TabsContent value="agents" className="space-y-4">
             <AgentDefaultsSettings />
+          <GitHubReleaseSettings />
         </TabsContent>
         <TabsContent value="notifications" className="space-y-4">
             <DiscordSettings />

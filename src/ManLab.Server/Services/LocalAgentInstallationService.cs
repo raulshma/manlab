@@ -366,6 +366,20 @@ public sealed class LocalAgentInstallationService
             args += $" -HeartbeatIntervalSeconds {heartbeatInterval}";
             args += $" -MaxReconnectDelaySeconds {maxReconnectDelay}";
 
+            // Optional: prefer downloading the agent binary from GitHub Releases.
+            // This is useful for local agent installation where the server machine can reach GitHub,
+            // and you want the installer to pull official release assets instead of server-staged binaries.
+            var githubEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
+            var githubBaseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
+            var githubVersion = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
+
+            if (githubEnabled && !string.IsNullOrWhiteSpace(githubBaseUrl) && !string.IsNullOrWhiteSpace(githubVersion))
+            {
+                args += " -PreferGitHub";
+                args += $" -GitHubReleaseBaseUrl \"{githubBaseUrl}\"";
+                args += $" -GitHubVersion \"{githubVersion}\"";
+            }
+
             await PublishLogAsync($"Running: powershell.exe {args.Replace(plainToken, "***")}");
 
             // Run PowerShell with timeout

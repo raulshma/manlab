@@ -76,7 +76,20 @@ param(
   [int]$HeartbeatIntervalSeconds = 10,
 
   [Parameter(Mandatory = $false)]
-  [int]$MaxReconnectDelaySeconds = 120
+  [int]$MaxReconnectDelaySeconds = 120,
+
+  # Optional: force the installer to download the agent from GitHub Releases.
+  # This bypasses the server's /api/binaries staging when you want the official release assets.
+  # Example base URL: https://github.com/owner/repo/releases/download
+  [Parameter(Mandatory = $false)]
+  [string]$GitHubReleaseBaseUrl,
+
+  # Example version: v0.0.1-alpha
+  [Parameter(Mandatory = $false)]
+  [string]$GitHubVersion,
+
+  [Parameter(Mandatory = $false)]
+  [switch]$PreferGitHub
 )
 
 Set-StrictMode -Version Latest
@@ -227,34 +240,64 @@ function Get-GitHubReleaseInfo([string]$ServerUrl) {
   }
 }
 
+function Get-EffectiveGitHubReleaseOverride {
+  # Allow explicit script args or environment variables for GitHub download.
+  # Env vars are convenient for non-interactive bootstrap.
+  $baseUrl = $GitHubReleaseBaseUrl
+  $version = $GitHubVersion
+  $prefer = $PreferGitHub
+
+  if ([string]::IsNullOrWhiteSpace($baseUrl) -and -not [string]::IsNullOrWhiteSpace($env:MANLAB_GITHUB_RELEASE_BASE_URL)) {
+    $baseUrl = $env:MANLAB_GITHUB_RELEASE_BASE_URL
+  }
+  if ([string]::IsNullOrWhiteSpace($version) -and -not [string]::IsNullOrWhiteSpace($env:MANLAB_GITHUB_VERSION)) {
+    $version = $env:MANLAB_GITHUB_VERSION
+  }
+  if (-not $prefer -and -not [string]::IsNullOrWhiteSpace($env:MANLAB_PREFER_GITHUB_DOWNLOAD)) {
+    $prefer = ($env:MANLAB_PREFER_GITHUB_DOWNLOAD -eq '1' -or $env:MANLAB_PREFER_GITHUB_DOWNLOAD -eq 'true' -or $env:MANLAB_PREFER_GITHUB_DOWNLOAD -eq 'True')
+  }
+
+  return [ordered]@{
+    Prefer = [bool]$prefer
+    BaseUrl = $baseUrl
+    Version = $version
+  }
+}
+
 function Try-DownloadFromGitHub([string]$ServerUrl, [string]$Rid, [string]$OutFile) {
   # Attempt to download the agent binary from GitHub releases
   # GitHub releases contain archives (.zip for Windows), so we download and extract
   # Returns $true if successful, $false otherwise
-  
-  $releaseInfo = Get-GitHubReleaseInfo -ServerUrl $ServerUrl
-  if ($null -eq $releaseInfo -or -not $releaseInfo.enabled) {
-    Write-Verbose "GitHub release downloads not enabled or not configured"
-    return $false
+
+  $override = Get-EffectiveGitHubReleaseOverride
+  $archiveUrl = $null
+  $binaryName = "manlab-agent.exe"
+
+  if ($override.Prefer -and -not [string]::IsNullOrWhiteSpace([string]$override.BaseUrl) -and -not [string]::IsNullOrWhiteSpace([string]$override.Version)) {
+    $archiveUrl = "{0}/{1}/manlab-agent-{2}.zip" -f ($override.BaseUrl.TrimEnd('/')), $override.Version, $Rid
+  } else {
+    $releaseInfo = Get-GitHubReleaseInfo -ServerUrl $ServerUrl
+    if ($null -eq $releaseInfo -or -not $releaseInfo.enabled) {
+      Write-Verbose "GitHub release downloads not enabled or not configured"
+      return $false
+    }
+
+    $downloadUrls = $releaseInfo.downloadUrls
+    if ($null -eq $downloadUrls -or -not $downloadUrls.PSObject.Properties.Name.Contains($Rid)) {
+      Write-Verbose "No GitHub download URL found for RID: $Rid"
+      return $false
+    }
+
+    $ridInfo = $downloadUrls.$Rid
+    $archiveUrl = $ridInfo.archiveUrl
+    if (-not [string]::IsNullOrWhiteSpace($ridInfo.binaryName)) {
+      $binaryName = $ridInfo.binaryName
+    }
   }
-  
-  $downloadUrls = $releaseInfo.downloadUrls
-  if ($null -eq $downloadUrls -or -not $downloadUrls.PSObject.Properties.Name.Contains($Rid)) {
-    Write-Verbose "No GitHub download URL found for RID: $Rid"
-    return $false
-  }
-  
-  $ridInfo = $downloadUrls.$Rid
-  $archiveUrl = $ridInfo.archiveUrl
-  $binaryName = $ridInfo.binaryName
-  
+
   if ([string]::IsNullOrWhiteSpace($archiveUrl)) {
     Write-Verbose "GitHub archive URL is empty for RID: $Rid"
     return $false
-  }
-  
-  if ([string]::IsNullOrWhiteSpace($binaryName)) {
-    $binaryName = "manlab-agent.exe"
   }
   
   Write-Host "Attempting download from GitHub release: $archiveUrl"
@@ -270,10 +313,19 @@ function Try-DownloadFromGitHub([string]$ServerUrl, [string]$Rid, [string]$OutFi
     # Extract the archive
     Write-Host "  Extracting archive..."
     Expand-Archive -Path $archivePath -DestinationPath $tempDir -Force
-    
-    # Find and copy the binary
-    $extractedBinary = Join-Path $tempDir $binaryName
-    if (-not (Test-Path $extractedBinary)) {
+
+    # Find and copy the binary (be tolerant of nested folders)
+    $extractedBinary = $null
+    try {
+      $match = Get-ChildItem -Path $tempDir -Recurse -File -ErrorAction Stop | Where-Object { $_.Name -ieq $binaryName } | Select-Object -First 1
+      if ($null -ne $match) {
+        $extractedBinary = $match.FullName
+      }
+    } catch {
+      $extractedBinary = $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($extractedBinary) -or -not (Test-Path $extractedBinary)) {
       throw "Binary '$binaryName' not found in extracted archive"
     }
     

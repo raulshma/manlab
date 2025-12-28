@@ -8,6 +8,37 @@ This repo includes simple installation scripts for the **ManLab Agent** that:
 - Persist the hub URL + auth token into the installed agent's `appsettings.json` so the agent can authorize after reboot/restart
 - Register the agent to run automatically at boot (systemd on Linux, Task Scheduler on Windows)
 
+## Where the installer downloads the agent from
+
+By default, installers download the agent from the **ManLab Server Binary API**:
+
+- `GET /api/binaries/agent/{rid}`
+
+Optionally, installers can **prefer GitHub Releases** (download an archive and extract the agent binary). This is useful when:
+
+- you want installs to pull the *official* release assets from GitHub, or
+- your server is not staging binaries under `/api/binaries`, or
+- you’re using the web dashboard “Install local agent” flow and want it to use GitHub.
+
+To use GitHub Releases, you can either:
+
+1) Configure it on the server via Settings keys (recommended for dashboard-driven installs)
+2) Force it in the installer script arguments / environment variables (useful for manual installs)
+
+### Server settings for GitHub Releases
+
+Set these keys (via the dashboard settings API `POST /api/settings` or your settings UI if you have one):
+
+- `GitHub.EnableGitHubDownload` = `true`
+- `GitHub.ReleaseBaseUrl` = `https://github.com/raulshma/manlab/releases/download` (or your fork)
+- `GitHub.LatestVersion` = `v0.0.1-alpha` (or the tag you want)
+
+When these are set, the installer will print something like:
+
+- `Attempting download from GitHub release: ...`
+
+If GitHub download fails, it falls back to the server binary API.
+
 ## Prerequisites
 
 1. The ManLab Server is running and reachable.
@@ -48,6 +79,16 @@ Uninstall / cleanup (removes systemd unit, env file, and install directory):
 
 - `sudo ./scripts/install.sh --uninstall`
 
+#### Forcing GitHub Releases (manual install)
+
+You can force the installer to prefer GitHub releases:
+
+- Flags: `--prefer-github --github-release-base-url <url> --github-version <tag>`
+- Or env vars:
+  - `MANLAB_PREFER_GITHUB_DOWNLOAD=1`
+  - `MANLAB_GITHUB_RELEASE_BASE_URL=...`
+  - `MANLAB_GITHUB_VERSION=...`
+
 ## Windows (`install.ps1`)
 
 ### System Mode (Default, requires Admin)
@@ -71,6 +112,16 @@ After install:
 Uninstall / cleanup (removes Scheduled Task and deletes install directory):
 
 - `./scripts/install.ps1 -Uninstall`
+
+#### Forcing GitHub Releases (manual install)
+
+You can force the installer to prefer GitHub releases:
+
+- Parameters: `-PreferGitHub -GitHubReleaseBaseUrl <url> -GitHubVersion <tag>`
+- Or env vars:
+  - `MANLAB_PREFER_GITHUB_DOWNLOAD=true`
+  - `MANLAB_GITHUB_RELEASE_BASE_URL=...`
+  - `MANLAB_GITHUB_VERSION=...`
 
 ### User Mode (No Admin Required)
 

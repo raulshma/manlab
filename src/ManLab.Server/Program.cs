@@ -82,7 +82,8 @@ builder.Services.AddOptions<BinaryDistributionOptions>()
 
 builder.Services.AddSingleton<ISettingsService, SettingsService>();
 
-builder.Services.AddSingleton<INotificationService, DiscordWebhookNotificationService>();
+builder.Services.AddSingleton<DiscordWebhookNotificationService>();
+builder.Services.AddSingleton<INotificationService>(sp => sp.GetRequiredService<DiscordWebhookNotificationService>());
 
 // Agent connection tracking + command dispatch
 builder.Services.AddSingleton<AgentConnectionRegistry>();
