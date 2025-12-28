@@ -1,5 +1,7 @@
-# Build stage
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# syntax=docker/dockerfile:1
+
+# Build stage (run on the builder's native architecture)
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy project files first for better layer caching
@@ -23,21 +25,15 @@ RUN dotnet publish "ManLab.Server/ManLab.Server.csproj" \
     -c Release \
     -o /app/publish
 
+# Ensure the Distribution folder exists and will be owned by the runtime user.
+RUN mkdir -p /app/publish/Distribution
+
 # Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runtime
 WORKDIR /app
 
-# Install curl for healthchecks
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Use built-in non-root user 'app' (available in .NET 8+ images)
-
 # Copy published app
-COPY --from=build /app/publish .
-
-# Create Distribution directory for agent binaries (if staging locally)
-RUN mkdir -p /app/Distribution && chown app:app /app/Distribution
+COPY --from=build --chown=app:app /app/publish .
 
 # Switch to non-root user
 USER app
@@ -45,10 +41,9 @@ USER app
 # Expose ports
 EXPOSE 8080 8081
 
-# Health check (using wget which is available in debian-based images)
-# Note: Install curl if preferred: apt-get update && apt-get install -y curl
+# Health check (wget is provided by BusyBox in Alpine)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD wget -qO- http://localhost:8080/health >/dev/null || exit 1
 
 # Set environment variables
 ENV ASPNETCORE_URLS=http://+:8080 \
