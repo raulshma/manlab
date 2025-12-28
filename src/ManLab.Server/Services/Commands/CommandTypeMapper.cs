@@ -93,6 +93,9 @@ public static class CommandTypeMapper
             case CommandTypes.CommandCancel:
                 commandType = CommandType.CommandCancel;
                 return true;
+            case CommandTypes.ConfigUpdate:
+                commandType = CommandType.ConfigUpdate;
+                return true;
         }
 
         // Legacy: enum names coming from older dashboards/clients.
@@ -122,6 +125,7 @@ public static class CommandTypeMapper
         CommandType.TerminalClose => CommandTypes.TerminalClose,
         CommandType.TerminalInput => CommandTypes.TerminalInput,
         CommandType.CommandCancel => CommandTypes.CommandCancel,
+        CommandType.ConfigUpdate => CommandTypes.ConfigUpdate,
         _ => type.ToString()
     };
 }

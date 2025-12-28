@@ -43,6 +43,9 @@ public static class CommandTypes
     // Command lifecycle
     public const string CommandCancel = "command.cancel";
 
+    // Agent configuration
+    public const string ConfigUpdate = "config.update";
+
     /// <summary>
     /// Authoritative set of command type strings used end-to-end (API → DB → Hub → Agent).
     /// </summary>
@@ -72,7 +75,8 @@ public static class CommandTypes
         TerminalClose,
         TerminalInput,
 
-        CommandCancel
+        CommandCancel,
+        ConfigUpdate
     };
 }
 
@@ -171,3 +175,72 @@ public record CancelCommandPayload
     public Guid TargetCommandId { get; init; }
 }
 
+/// <summary>
+/// Payload for config.update command.
+/// Updates the agent's runtime configuration and persists to appsettings.json.
+/// </summary>
+public record ConfigUpdatePayload
+{
+    /// <summary>Interval in seconds between telemetry heartbeats.</summary>
+    public int? HeartbeatIntervalSeconds { get; init; }
+
+    /// <summary>Maximum reconnection delay in seconds.</summary>
+    public int? MaxReconnectDelaySeconds { get; init; }
+
+    /// <summary>How long to cache drive/disk information in seconds.</summary>
+    public int? TelemetryCacheSeconds { get; init; }
+
+    /// <summary>Override for the primary network interface name.</summary>
+    public string? PrimaryInterfaceName { get; init; }
+
+    /// <summary>Enable network throughput telemetry.</summary>
+    public bool? EnableNetworkTelemetry { get; init; }
+
+    /// <summary>Enable ping-based connectivity telemetry.</summary>
+    public bool? EnablePingTelemetry { get; init; }
+
+    /// <summary>Enable GPU telemetry.</summary>
+    public bool? EnableGpuTelemetry { get; init; }
+
+    /// <summary>Enable UPS telemetry.</summary>
+    public bool? EnableUpsTelemetry { get; init; }
+
+    /// <summary>Enable remote log viewer commands.</summary>
+    public bool? EnableLogViewer { get; init; }
+
+    /// <summary>Enable remote script execution.</summary>
+    public bool? EnableScripts { get; init; }
+
+    /// <summary>Enable remote terminal commands.</summary>
+    public bool? EnableTerminal { get; init; }
+
+    /// <summary>Ping target override (hostname or IP).</summary>
+    public string? PingTarget { get; init; }
+
+    /// <summary>Ping timeout in milliseconds.</summary>
+    public int? PingTimeoutMs { get; init; }
+
+    /// <summary>Rolling window size for ping samples.</summary>
+    public int? PingWindowSize { get; init; }
+
+    /// <summary>Hard upper bound for log reads (bytes).</summary>
+    public int? LogMaxBytes { get; init; }
+
+    /// <summary>Minimum seconds between log operations.</summary>
+    public int? LogMinSecondsBetweenRequests { get; init; }
+
+    /// <summary>Hard upper bound for script output (bytes).</summary>
+    public int? ScriptMaxOutputBytes { get; init; }
+
+    /// <summary>Maximum script runtime in seconds.</summary>
+    public int? ScriptMaxDurationSeconds { get; init; }
+
+    /// <summary>Minimum seconds between script runs.</summary>
+    public int? ScriptMinSecondsBetweenRuns { get; init; }
+
+    /// <summary>Hard upper bound for terminal output (bytes).</summary>
+    public int? TerminalMaxOutputBytes { get; init; }
+
+    /// <summary>Maximum terminal session duration in seconds.</summary>
+    public int? TerminalMaxDurationSeconds { get; init; }
+}

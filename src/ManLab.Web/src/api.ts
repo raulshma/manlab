@@ -606,6 +606,17 @@ export async function disableAgentTask(nodeId: string): Promise<Command> {
 }
 
 /**
+ * Updates the agent's runtime configuration.
+ * The agent will save changes to appsettings.json and restart to apply them.
+ */
+export async function updateAgentConfig(
+  nodeId: string,
+  config: Partial<AgentConfiguration>
+): Promise<Command> {
+  return createCommand(nodeId, "config.update", config);
+}
+
+/**
  * Onboarding: list all machines.
  */
 export async function fetchOnboardingMachines(): Promise<OnboardingMachine[]> {

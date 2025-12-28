@@ -151,6 +151,7 @@ public sealed class CommandDispatcher : IDisposable
                     var t when t == CommandTypes.TerminalOpen => await HandleTerminalOpenAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.TerminalClose => await HandleTerminalCloseAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.TerminalInput => await HandleTerminalInputAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.ConfigUpdate => HandleConfigUpdate(payloadRoot),
                     _ => throw new NotSupportedException($"Unknown command type: {type}")
                 };
 
@@ -387,6 +388,117 @@ public sealed class CommandDispatcher : IDisposable
         }
 
         return el.ValueKind == JsonValueKind.String ? el.GetString() : null;
+    }
+
+    private string HandleConfigUpdate(JsonElement? payloadRoot)
+    {
+        _logger.LogInformation("Config update requested by server");
+
+        if (payloadRoot is null || payloadRoot.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("config.update requires a JSON object payload.");
+        }
+
+        // Read existing appsettings.json
+        var appSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+        Dictionary<string, object>? root = null;
+        Dictionary<string, object?>? agentSection = null;
+
+        if (File.Exists(appSettingsPath))
+        {
+            try
+            {
+                var content = File.ReadAllText(appSettingsPath);
+                root = JsonSerializer.Deserialize<Dictionary<string, object>>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Existing appsettings.json is invalid, creating new one");
+            }
+        }
+
+        root ??= new Dictionary<string, object>();
+        if (root.TryGetValue("Agent", out var existingAgent) && existingAgent is JsonElement agentEl)
+        {
+            agentSection = JsonSerializer.Deserialize<Dictionary<string, object?>>(agentEl.GetRawText());
+        }
+        agentSection ??= new Dictionary<string, object?>();
+
+        var payload = payloadRoot.Value;
+        var updatedFields = new List<string>();
+
+        // Apply updates from payload
+        void ApplyIfPresent<T>(string jsonProp, string configKey, Func<JsonElement, T> extractor)
+        {
+            if (payload.TryGetProperty(jsonProp, out var el) || payload.TryGetProperty(ToPascalCase(jsonProp), out el))
+            {
+                if (el.ValueKind != JsonValueKind.Null && el.ValueKind != JsonValueKind.Undefined)
+                {
+                    agentSection[configKey] = extractor(el);
+                    updatedFields.Add(configKey);
+                }
+            }
+        }
+
+        static string ToPascalCase(string s) => string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+        // Connection settings
+        ApplyIfPresent("heartbeatIntervalSeconds", "HeartbeatIntervalSeconds", e => e.GetInt32());
+        ApplyIfPresent("maxReconnectDelaySeconds", "MaxReconnectDelaySeconds", e => e.GetInt32());
+
+        // Telemetry settings
+        ApplyIfPresent("telemetryCacheSeconds", "TelemetryCacheSeconds", e => e.GetInt32());
+        ApplyIfPresent("primaryInterfaceName", "PrimaryInterfaceName", e => e.GetString());
+        ApplyIfPresent("enableNetworkTelemetry", "EnableNetworkTelemetry", e => e.GetBoolean());
+        ApplyIfPresent("enablePingTelemetry", "EnablePingTelemetry", e => e.GetBoolean());
+        ApplyIfPresent("enableGpuTelemetry", "EnableGpuTelemetry", e => e.GetBoolean());
+        ApplyIfPresent("enableUpsTelemetry", "EnableUpsTelemetry", e => e.GetBoolean());
+
+        // Remote tools
+        ApplyIfPresent("enableLogViewer", "EnableLogViewer", e => e.GetBoolean());
+        ApplyIfPresent("enableScripts", "EnableScripts", e => e.GetBoolean());
+        ApplyIfPresent("enableTerminal", "EnableTerminal", e => e.GetBoolean());
+
+        // Ping settings
+        ApplyIfPresent("pingTarget", "PingTarget", e => e.GetString());
+        ApplyIfPresent("pingTimeoutMs", "PingTimeoutMs", e => e.GetInt32());
+        ApplyIfPresent("pingWindowSize", "PingWindowSize", e => e.GetInt32());
+
+        // Rate limits
+        ApplyIfPresent("logMaxBytes", "LogMaxBytes", e => e.GetInt32());
+        ApplyIfPresent("logMinSecondsBetweenRequests", "LogMinSecondsBetweenRequests", e => e.GetInt32());
+        ApplyIfPresent("scriptMaxOutputBytes", "ScriptMaxOutputBytes", e => e.GetInt32());
+        ApplyIfPresent("scriptMaxDurationSeconds", "ScriptMaxDurationSeconds", e => e.GetInt32());
+        ApplyIfPresent("scriptMinSecondsBetweenRuns", "ScriptMinSecondsBetweenRuns", e => e.GetInt32());
+        ApplyIfPresent("terminalMaxOutputBytes", "TerminalMaxOutputBytes", e => e.GetInt32());
+        ApplyIfPresent("terminalMaxDurationSeconds", "TerminalMaxDurationSeconds", e => e.GetInt32());
+
+        if (updatedFields.Count == 0)
+        {
+            return "No configuration changes detected.";
+        }
+
+        // Write updated config
+        root["Agent"] = agentSection;
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        var json = JsonSerializer.Serialize(root, options);
+        File.WriteAllText(appSettingsPath, json);
+
+        _logger.LogInformation("Updated appsettings.json with {Count} fields: {Fields}", updatedFields.Count, string.Join(", ", updatedFields));
+
+        // Schedule restart to apply new config
+        if (_shutdownCallback is not null)
+        {
+            Task.Run(async () =>
+            {
+                await Task.Delay(1000).ConfigureAwait(false); // Give time for status response
+                _shutdownCallback();
+            });
+
+            return $"Configuration updated ({string.Join(", ", updatedFields)}). Agent will restart to apply changes.";
+        }
+
+        return $"Configuration updated ({string.Join(", ", updatedFields)}). Restart agent manually to apply changes.";
     }
 
     private string HandleAgentShutdown()

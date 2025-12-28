@@ -59,5 +59,8 @@ public enum CommandType
     TerminalInput,
 
     /// <summary>Cancel a running command by ID.</summary>
-    CommandCancel
+    CommandCancel,
+
+    /// <summary>Update agent configuration at runtime.</summary>
+    ConfigUpdate
 }
