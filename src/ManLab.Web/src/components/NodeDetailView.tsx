@@ -39,6 +39,7 @@ import {
   shutdownAgent,
   enableAgentTask,
   disableAgentTask,
+  wakeNode,
   fetchNodeNetworkTelemetry,
   fetchNodePingTelemetry,
   fetchSmartHistory,
@@ -316,6 +317,11 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
 
   const disableTaskMutation = useMutation({
     mutationFn: () => disableAgentTask(nodeId),
+  });
+
+  // Wake-on-LAN mutation for restarting offline nodes
+  const wakeMutation = useMutation({
+    mutationFn: () => wakeNode(nodeId),
   });
 
   const updateChannelMutation = useMutation({
@@ -847,6 +853,69 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
               )}
             </CardHeader>
           </Card>
+
+          {/* Wake Node (for offline nodes) */}
+          {node.status === "Offline" && (
+            <Card className="mt-4">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Power className="h-4 w-4" />
+                      Wake Node
+                    </CardTitle>
+                    <CardDescription>
+                      Send a Wake-on-LAN magic packet to restart this offline node.
+                      {!node.macAddress && (
+                        <span className="block text-xs text-muted-foreground mt-1">
+                          ⚠️ No MAC address available. The agent must connect at least once to report its MAC address.
+                        </span>
+                      )}
+                    </CardDescription>
+                  </div>
+                  <ConfirmationModal
+                    trigger={
+                      <Button
+                        variant="secondary"
+                        disabled={!node.macAddress || wakeMutation.isPending}
+                      >
+                        {wakeMutation.isPending ? (
+                          <>
+                            <Spinner className="h-4 w-4 mr-2" />
+                            Sending...
+                          </>
+                        ) : (
+                          "Wake"
+                        )}
+                      </Button>
+                    }
+                    title="Wake Node"
+                    message={`Are you sure you want to send a Wake-on-LAN packet to "${node.hostname}"? This will attempt to power on the machine if it supports WoL and is properly configured.`}
+                    confirmText="Wake"
+                    isLoading={wakeMutation.isPending}
+                    onConfirm={async () => {
+                      await wakeMutation.mutateAsync();
+                    }}
+                  />
+                </div>
+                {wakeMutation.isSuccess && (
+                  <Alert className="mt-3">
+                    <AlertDescription>Wake-on-LAN packet sent successfully. The node may take a few minutes to boot.</AlertDescription>
+                  </Alert>
+                )}
+                {wakeMutation.isError && (
+                  <Alert variant="destructive" className="mt-3">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      {wakeMutation.error instanceof Error
+                        ? wakeMutation.error.message
+                        : "Failed to send Wake-on-LAN packet"}
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardHeader>
+            </Card>
+          )}
           
           {/* Delete Node */}
           <Card className="mt-4 border-destructive/50">

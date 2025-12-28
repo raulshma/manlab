@@ -617,6 +617,24 @@ export async function updateAgentConfig(
 }
 
 /**
+ * Sends a Wake-on-LAN magic packet to restart an offline node.
+ * Requires the node to have a MAC address stored from a previous agent connection.
+ */
+export async function wakeNode(nodeId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/wake`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 404) {
+      throw new Error("Node not found");
+    }
+    throw new Error(data.message || response.statusText);
+  }
+  return response.json();
+}
+
+/**
  * Onboarding: list all machines.
  */
 export async function fetchOnboardingMachines(): Promise<OnboardingMachine[]> {

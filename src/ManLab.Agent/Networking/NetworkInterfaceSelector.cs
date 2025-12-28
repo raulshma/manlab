@@ -89,4 +89,25 @@ internal static class NetworkInterfaceSelector
             return false;
         }
     }
+
+    /// <summary>
+    /// Gets the MAC address of the specified network interface.
+    /// </summary>
+    /// <param name="nic">The network interface.</param>
+    /// <returns>MAC address formatted as XX:XX:XX:XX:XX:XX, or null if unavailable.</returns>
+    public static string? TryGetMacAddress(NetworkInterface? nic)
+    {
+        if (nic is null) return null;
+        try
+        {
+            var mac = nic.GetPhysicalAddress();
+            var bytes = mac.GetAddressBytes();
+            if (bytes.Length == 0) return null;
+            return string.Join(":", bytes.Select(b => b.ToString("X2")));
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

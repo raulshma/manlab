@@ -45,6 +45,13 @@ public class Node
     [MaxLength(128)]
     public string? PrimaryInterface { get; set; }
 
+    /// <summary>
+    /// MAC address of the primary network interface (for Wake-on-LAN).
+    /// Formatted as XX:XX:XX:XX:XX:XX.
+    /// </summary>
+    [MaxLength(17)]
+    public string? MacAddress { get; set; }
+
     /// <summary>Last time the node was seen/reported.</summary>
     public DateTime LastSeen { get; set; }
 

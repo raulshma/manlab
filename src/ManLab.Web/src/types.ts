@@ -17,6 +17,7 @@ export interface Node {
   ipAddress: string | null;
   os: string | null;
   agentVersion: string | null;
+  macAddress: string | null;
   lastSeen: string;
   status: NodeStatus;
   createdAt: string;

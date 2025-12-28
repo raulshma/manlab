@@ -87,6 +87,7 @@ builder.Services.AddSingleton<INotificationService>(sp => sp.GetRequiredService<
 
 // Agent connection tracking + command dispatch
 builder.Services.AddSingleton<AgentConnectionRegistry>();
+builder.Services.AddSingleton<IWakeOnLanService, WakeOnLanService>();
 builder.Services.AddHostedService<CommandDispatchService>();
 
 // Background services

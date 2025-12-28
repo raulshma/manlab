@@ -2,6 +2,7 @@ using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Hubs;
+using ManLab.Server.Services;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Commands;
 using ManLab.Shared.Dtos;
@@ -25,17 +26,20 @@ public class DevicesController : ControllerBase
     private readonly ILogger<DevicesController> _logger;
     private readonly IHubContext<AgentHub> _hubContext;
     private readonly AgentConnectionRegistry _connectionRegistry;
+    private readonly IWakeOnLanService _wakeOnLanService;
 
     public DevicesController(
         DataContext dbContext,
         ILogger<DevicesController> logger,
         IHubContext<AgentHub> hubContext,
-        AgentConnectionRegistry connectionRegistry)
+        AgentConnectionRegistry connectionRegistry,
+        IWakeOnLanService wakeOnLanService)
     {
         _dbContext = dbContext;
         _logger = logger;
         _hubContext = hubContext;
         _connectionRegistry = connectionRegistry;
+        _wakeOnLanService = wakeOnLanService;
     }
 
     /// <summary>
@@ -55,6 +59,7 @@ public class DevicesController : ControllerBase
                 IpAddress = n.IpAddress,
                 OS = n.OS,
                 AgentVersion = n.AgentVersion,
+                MacAddress = n.MacAddress,
                 LastSeen = n.LastSeen,
                 Status = n.Status.ToString(),
                 CreatedAt = n.CreatedAt
@@ -88,6 +93,7 @@ public class DevicesController : ControllerBase
             IpAddress = node.IpAddress,
             OS = node.OS,
             AgentVersion = node.AgentVersion,
+            MacAddress = node.MacAddress,
             LastSeen = node.LastSeen,
             Status = node.Status.ToString(),
             CreatedAt = node.CreatedAt
@@ -647,6 +653,51 @@ public class DevicesController : ControllerBase
 
         return Accepted(new { message = "Ping request sent to agent" });
     }
+
+    /// <summary>
+    /// Sends a Wake-on-LAN magic packet to restart an offline node.
+    /// </summary>
+    /// <param name="id">The node ID.</param>
+    /// <returns>
+    /// 202 Accepted if the WoL packet was sent,
+    /// 404 if the node doesn't exist,
+    /// 400 if the node has no MAC address or is already online.
+    /// </returns>
+    [HttpPost("{id:guid}/wake")]
+    public async Task<IActionResult> WakeNode(Guid id)
+    {
+        var node = await _dbContext.Nodes
+            .AsNoTracking()
+            .FirstOrDefaultAsync(n => n.Id == id);
+
+        if (node == null)
+        {
+            return NotFound();
+        }
+
+        if (string.IsNullOrWhiteSpace(node.MacAddress))
+        {
+            _logger.LogWarning("Cannot wake node {NodeId}: no MAC address stored", id);
+            return BadRequest(new { message = "Node does not have a MAC address. The agent must connect at least once to report its MAC address." });
+        }
+
+        if (node.Status == NodeStatus.Online)
+        {
+            _logger.LogWarning("Cannot wake node {NodeId}: node is already online", id);
+            return BadRequest(new { message = "Node is already online" });
+        }
+
+        var success = await _wakeOnLanService.SendWakeAsync(node.MacAddress);
+        if (!success)
+        {
+            _logger.LogWarning("Failed to send WoL packet to node {NodeId}", id);
+            return StatusCode(500, new { message = "Failed to send Wake-on-LAN packet" });
+        }
+
+        _logger.LogInformation("Wake-on-LAN packet sent to node {NodeId} ({MacAddress})", id, node.MacAddress);
+
+        return Accepted(new { message = "Wake-on-LAN packet sent" });
+    }
 }
 
 /// <summary>
@@ -659,6 +710,7 @@ public record NodeDto
     public string? IpAddress { get; init; }
     public string? OS { get; init; }
     public string? AgentVersion { get; init; }
+    public string? MacAddress { get; init; }
     public DateTime LastSeen { get; init; }
     public string Status { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; }

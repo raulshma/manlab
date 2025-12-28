@@ -164,6 +164,9 @@ public sealed class ConnectionManager : IAsyncDisposable
     private async Task RegisterAsync()
     {
         // Cache metadata - hostname/IP/OS don't change during runtime
+        var primaryInterfaceName = SelectPrimaryInterfaceName();
+        var primaryNic = NetworkInterfaceSelector.TryGetInterfaceByName(primaryInterfaceName);
+        
         _cachedMetadata ??= new NodeMetadata
         {
             Hostname = Environment.MachineName,
@@ -171,13 +174,15 @@ public sealed class ConnectionManager : IAsyncDisposable
             OS = Environment.OSVersion.ToString(),
             AgentVersion = GetAgentVersion(),
             CapabilitiesJson = BuildCapabilitiesJson(),
-            PrimaryInterface = SelectPrimaryInterfaceName()
+            PrimaryInterface = primaryInterfaceName,
+            MacAddress = NetworkInterfaceSelector.TryGetMacAddress(primaryNic)
         };
 
         // Defensive: if config changed between runs and we already cached metadata,
         // ensure we at least populate missing optional fields.
         _cachedMetadata.CapabilitiesJson ??= BuildCapabilitiesJson();
-        _cachedMetadata.PrimaryInterface ??= SelectPrimaryInterfaceName();
+        _cachedMetadata.PrimaryInterface ??= primaryInterfaceName;
+        _cachedMetadata.MacAddress ??= NetworkInterfaceSelector.TryGetMacAddress(primaryNic);
 
         _logger.LogInformation("Registering with server as {Hostname}", _cachedMetadata.Hostname);
 

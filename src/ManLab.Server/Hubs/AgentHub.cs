@@ -111,6 +111,7 @@ public class AgentHub : Hub
             authedNode.AgentVersion = metadata.AgentVersion;
             authedNode.CapabilitiesJson = NormalizeJsonOrNull(metadata.CapabilitiesJson);
             authedNode.PrimaryInterface = NormalizeTrimmedOrNull(metadata.PrimaryInterface, 128);
+            authedNode.MacAddress = NormalizeTrimmedOrNull(metadata.MacAddress, 17);
             authedNode.LastSeen = DateTime.UtcNow;
             authedNode.Status = NodeStatus.Online;
 
@@ -154,6 +155,7 @@ public class AgentHub : Hub
             AgentVersion = metadata.AgentVersion,
             CapabilitiesJson = NormalizeJsonOrNull(metadata.CapabilitiesJson),
             PrimaryInterface = NormalizeTrimmedOrNull(metadata.PrimaryInterface, 128),
+            MacAddress = NormalizeTrimmedOrNull(metadata.MacAddress, 17),
             LastSeen = DateTime.UtcNow,
             Status = NodeStatus.Online,
             AuthKeyHash = tokenHash,

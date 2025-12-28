@@ -27,4 +27,10 @@ public class NodeMetadata
     /// Optional primary network interface name selected by the agent (e.g. "eth0").
     /// </summary>
     public string? PrimaryInterface { get; set; }
+
+    /// <summary>
+    /// MAC address of the primary network interface (for Wake-on-LAN).
+    /// Formatted as XX:XX:XX:XX:XX:XX.
+    /// </summary>
+    public string? MacAddress { get; set; }
 }
