@@ -394,7 +394,30 @@ export async function createLogViewerSession(
   });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Not found");
-    throw new Error(`Failed to create log viewer session: ${response.statusText}`);
+
+    // Surface server-provided error details (often includes why authorization failed).
+    let details = "";
+    try {
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const json = await response.json();
+        // Common shapes: { message }, string, or validation-ish objects.
+        if (typeof json === "string") {
+          details = json;
+        } else if (json && typeof json === "object") {
+          const obj = json as Record<string, unknown>;
+          const msg = obj.message;
+          details = typeof msg === "string" ? msg : JSON.stringify(json);
+        }
+      } else {
+        details = await response.text();
+      }
+    } catch {
+      // ignore
+    }
+
+    const suffix = details?.trim() ? `: ${details.trim()}` : "";
+    throw new Error(`Failed to create log viewer session (${response.status} ${response.statusText})${suffix}`);
   }
   return response.json();
 }

@@ -9,6 +9,46 @@ namespace ManLab.Agent.Tests;
 public class LogViewerCommandTests
 {
     [Fact]
+    public async Task LogRead_SupportsAgentPseudoPath()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), $"manlab_agentself_{Guid.NewGuid():N}.log");
+        try
+        {
+            await File.WriteAllTextAsync(tmp, "agent-start\nline2\n");
+
+            var updates = new List<(string Status, string? Logs)>();
+
+            var dispatcher = new CommandDispatcher(
+                NullLoggerFactory.Instance,
+                (id, status, logs) =>
+                {
+                    updates.Add((status, logs));
+                    return Task.CompletedTask;
+                },
+                config: new AgentConfiguration
+                {
+                    EnableLogViewer = true,
+                    AgentLogFilePath = tmp,
+                    LogMaxBytes = 1024,
+                    LogMinSecondsBetweenRequests = 0
+                });
+
+            // Use the pseudo-path rather than a concrete file path.
+            var payload = "{\"path\":\"@agent\",\"maxBytes\":1024}";
+            await dispatcher.DispatchAsync(Guid.NewGuid(), "log.read", payload);
+
+            var success = updates.Last(u => u.Status.Equals("Success", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(success.Logs);
+            Assert.Contains("agent-start", success.Logs!, StringComparison.Ordinal);
+            Assert.Contains("line2", success.Logs!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { File.Delete(tmp); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task LogRead_ReadsTail_ByDefault_AndIsBounded()
     {
         var tmp = Path.Combine(Path.GetTempPath(), $"manlab_logread_{Guid.NewGuid():N}.log");

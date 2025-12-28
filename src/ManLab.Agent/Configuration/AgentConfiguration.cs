@@ -134,4 +134,42 @@ public class AgentConfiguration
     /// Maximum terminal session duration in seconds.
     /// </summary>
     public int TerminalMaxDurationSeconds { get; set; } = 10 * 60;
+
+    /// <summary>
+    /// Optional file path where the agent writes its own logs.
+    /// If empty, the agent chooses an OS-appropriate default.
+    /// </summary>
+    public string? AgentLogFilePath { get; set; }
+
+    /// <summary>
+    /// Maximum size of the agent self-log file before rotation (bytes).
+    /// </summary>
+    public int AgentLogFileMaxBytes { get; set; } = 5 * 1024 * 1024;
+
+    /// <summary>
+    /// Number of rotated agent self-log files to keep.
+    /// </summary>
+    public int AgentLogFileRetainedFiles { get; set; } = 3;
+
+    public string GetEffectiveAgentLogFilePath()
+    {
+        if (!string.IsNullOrWhiteSpace(AgentLogFilePath))
+        {
+            return AgentLogFilePath.Trim();
+        }
+
+        // Default locations chosen to be user-writable and predictable.
+        // Windows: %LocalAppData%\ManLab\Logs\manlab-agent.log
+        // Linux/macOS: ~/.local/share/ManLab/Logs/manlab-agent.log (via LocalApplicationData)
+        var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(baseDir))
+        {
+            // Very defensive fallback (should be rare).
+            baseDir = Path.GetTempPath();
+        }
+
+        // Use a consistent casing on disk.
+        var logDir = Path.Combine(baseDir, "ManLab", "Logs");
+        return Path.Combine(logDir, "manlab-agent.log");
+    }
 }

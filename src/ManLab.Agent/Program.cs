@@ -1,4 +1,5 @@
 using ManLab.Agent.Configuration;
+using ManLab.Agent.Logging;
 using ManLab.Agent.Services;
 using ManLab.Agent.Telemetry;
 using Microsoft.Extensions.Configuration;
@@ -10,18 +11,6 @@ var configuration = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json", optional: true)
     .AddEnvironmentVariables("MANLAB_")
     .Build();
-
-// Configure logging
-using var loggerFactory = LoggerFactory.Create(builder =>
-{
-    builder
-        .AddConfiguration(configuration.GetSection("Logging"))
-        .AddConsole();
-});
-
-var logger = loggerFactory.CreateLogger<Program>();
-
-logger.LogInformation("ManLab Agent starting...");
 
 // Load agent configuration
 var agentConfig = new AgentConfiguration();
@@ -110,6 +99,33 @@ if (Environment.GetEnvironmentVariable("MANLAB_ENABLE_TERMINAL") is string enabl
 {
     agentConfig.EnableTerminal = enableTerminal;
 }
+
+// Configure logging
+using var loggerFactory = LoggerFactory.Create(builder =>
+{
+    builder
+        .AddConfiguration(configuration.GetSection("Logging"))
+        .AddConsole();
+
+    // Agent self-log file (used by the remote Log Viewer via the @agent policy path).
+    // Best-effort: never crash the agent if file logging fails.
+    try
+    {
+        var logPath = agentConfig.GetEffectiveAgentLogFilePath();
+        builder.AddProvider(new RollingFileLoggerProvider(
+            filePath: logPath,
+            maxBytes: agentConfig.AgentLogFileMaxBytes,
+            retainedFiles: agentConfig.AgentLogFileRetainedFiles));
+    }
+    catch
+    {
+        // Ignore file logging failures; console logging remains available.
+    }
+});
+
+var logger = loggerFactory.CreateLogger<Program>();
+
+logger.LogInformation("ManLab Agent starting...");
 
 logger.LogInformation("Connecting to server: {ServerUrl}", agentConfig.ServerUrl);
 

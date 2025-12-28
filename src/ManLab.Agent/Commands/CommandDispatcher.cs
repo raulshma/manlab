@@ -810,6 +810,17 @@ del ""%~f0""
         }
     }
 
+    private string ResolveLogPath(string requestedPath)
+    {
+        var p = (requestedPath ?? string.Empty).Trim();
+        if (string.Equals(p, "@agent", StringComparison.OrdinalIgnoreCase))
+        {
+            return _config.GetEffectiveAgentLogFilePath();
+        }
+
+        return p;
+    }
+
     private sealed record LogReadPayload(string Path, int? MaxBytes, long? OffsetBytes);
 
     private static LogReadPayload ParseLogReadPayloadStrict(JsonElement? payloadRoot)
@@ -870,6 +881,8 @@ del ""%~f0""
 
         var payload = ParseLogReadPayloadStrict(payloadRoot);
 
+        var resolvedPath = ResolveLogPath(payload.Path);
+
         var requestedMax = payload.MaxBytes ?? _config.LogMaxBytes;
         if (requestedMax <= 0)
         {
@@ -885,12 +898,12 @@ del ""%~f0""
         }
 
         // Use FileShare.ReadWrite to allow reading active log files.
-        if (!File.Exists(payload.Path))
+        if (!File.Exists(resolvedPath))
         {
-            throw new FileNotFoundException("Log file not found.", payload.Path);
+            throw new FileNotFoundException("Log file not found.", resolvedPath);
         }
 
-        await using var fs = new FileStream(payload.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        await using var fs = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         var length = fs.Length;
 
         long start = 0;
@@ -1001,9 +1014,11 @@ del ""%~f0""
 
         var payload = ParseLogTailPayloadStrict(payloadRoot);
 
-        if (!File.Exists(payload.Path))
+        var resolvedPath = ResolveLogPath(payload.Path);
+
+        if (!File.Exists(resolvedPath))
         {
-            throw new FileNotFoundException("Log file not found.", payload.Path);
+            throw new FileNotFoundException("Log file not found.", resolvedPath);
         }
 
         var requestedMax = payload.MaxBytes ?? _config.LogMaxBytes;
@@ -1028,7 +1043,7 @@ del ""%~f0""
         chunkBytes = Math.Clamp(chunkBytes, 256, 16 * 1024);
 
         // Read initial tail.
-        await using var fs = new FileStream(payload.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        await using var fs = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         var length = fs.Length;
         var start = Math.Max(0, length - maxBytes);
         fs.Seek(start, SeekOrigin.Begin);

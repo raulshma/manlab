@@ -247,7 +247,7 @@ export function ScriptsSettings() {
                         ? "#!/bin/bash\necho 'Hello, World!'"
                         : "Write-Host 'Hello, World!'"
                     }
-                    className="font-mono text-sm min-h-[200px]"
+                    className="font-mono text-sm min-h-50"
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                   />

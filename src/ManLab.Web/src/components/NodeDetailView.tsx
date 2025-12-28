@@ -622,7 +622,7 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
                     Controls which agent update track this node follows.
                   </CardDescription>
                 </div>
-                <div className="min-w-[180px]">
+                <div className="min-w-45">
                   <Select
                     value={currentChannel}
                     onValueChange={(value) => {

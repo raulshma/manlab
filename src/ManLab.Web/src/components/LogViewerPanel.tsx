@@ -112,6 +112,26 @@ export function LogViewerPanel({
     queryFn: () => fetchLogViewerPolicies(nodeId),
   });
 
+  // One-click helper: create/select the built-in agent self-log policy.
+  // The agent resolves the pseudo-path "@agent" to its own log file.
+  const ensureAgentPolicyMutation = useMutation({
+    mutationFn: async () => {
+      const existing = policies?.find((p) => p.path === "@agent");
+      if (existing) return existing;
+
+      return upsertLogViewerPolicy(nodeId, null, {
+        displayName: "ManLab Agent",
+        path: "@agent",
+        maxBytesPerRequest: 65536,
+      });
+    },
+    onSuccess: (policy) => {
+      queryClient.invalidateQueries({ queryKey: ["logViewerPolicies", nodeId] });
+      setSelectedPolicyId(policy.id);
+      setActiveTab("viewer");
+    },
+  });
+
   // Expiry countdown timer - uses interval to update countdown, not sync setState
   useEffect(() => {
     if (!session) return;
@@ -388,6 +408,18 @@ export function LogViewerPanel({
           <TabsContent value="policies">
             <div className="space-y-4">
               <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mr-2"
+                  onClick={() => ensureAgentPolicyMutation.mutate()}
+                  disabled={ensureAgentPolicyMutation.isPending}
+                >
+                  {ensureAgentPolicyMutation.isPending && (
+                    <Spinner className="h-4 w-4 mr-2" />
+                  )}
+                  ManLab Agent Logs
+                </Button>
                 <Dialog open={addPolicyDialogOpen} onOpenChange={setAddPolicyDialogOpen}>
                   <DialogTrigger asChild>
                     <Button size="sm">
@@ -511,6 +543,17 @@ export function LogViewerPanel({
                     </div>
                   ))}
                 </div>
+              )}
+
+              {ensureAgentPolicyMutation.isError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {ensureAgentPolicyMutation.error instanceof Error
+                      ? ensureAgentPolicyMutation.error.message
+                      : "Failed to create agent log policy"}
+                  </AlertDescription>
+                </Alert>
               )}
             </div>
           </TabsContent>
