@@ -105,7 +105,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     /// </summary>
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting connection to server: {ServerUrl}", _config.ServerUrl);
+        Log.ConnectionStarting(_logger, _config.ServerUrl);
 
         await ConnectWithRetryAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -114,12 +114,23 @@ public sealed class ConnectionManager : IAsyncDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
+            // Check if we've hit a fatal error state and should stop retrying
+            if (_heartbeatRetryManager.IsFatallyErrored)
+            {
+                _logger.LogError(
+                    "Agent is in fatal error state (code: {ErrorCode}, message: {ErrorMessage}). " +
+                    "Not retrying. Restart agent or wait for admin reset.",
+                    _heartbeatRetryManager.ErrorCode,
+                    _heartbeatRetryManager.ErrorMessage);
+                return;
+            }
+
             try
             {
                 await _connection.StartAsync(cancellationToken).ConfigureAwait(false);
                 _isConnected = true;
                 _reconnectAttempt = 0;
-                _logger.LogInformation("Connected to server successfully");
+                Log.ConnectionEstablished(_logger);
 
                 // Register with the server. If registration fails, stop the connection
                 // so the next retry can start cleanly.
@@ -128,7 +139,7 @@ public sealed class ConnectionManager : IAsyncDisposable
                     await RegisterAsync().ConfigureAwait(false);
                     return;
                 }
-                catch
+                catch (Exception regEx)
                 {
                     _isConnected = false;
                     try
@@ -139,17 +150,79 @@ public sealed class ConnectionManager : IAsyncDisposable
                     {
                         // ignore stop failures; we'll retry
                     }
+
+                    // Check if this is a non-transient error
+                    if (TryExtractNonTransientError(regEx, out var errorCode, out var errorMessage))
+                    {
+                        var shouldStop = _heartbeatRetryManager.RecordNonTransientFailure(errorCode, errorMessage);
+                        if (shouldStop)
+                        {
+                            // Report error to server and stop retrying
+                            await ReportErrorStatusAsync(errorCode, errorMessage).ConfigureAwait(false);
+                            return;
+                        }
+                        // Wait for backoff before retrying
+                        var nextRetry = _heartbeatRetryManager.NextRetryTimeUtc;
+                        if (nextRetry.HasValue)
+                        {
+                            var backoffDelay = nextRetry.Value - DateTime.UtcNow;
+                            if (backoffDelay > TimeSpan.Zero)
+                            {
+                                try
+                                {
+                                    await Task.Delay(backoffDelay, cancellationToken).ConfigureAwait(false);
+                                }
+                                catch (OperationCanceledException)
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
                     throw;
                 }
             }
             catch (Exception ex)
             {
                 _isConnected = false;
+
+                // Check if this is a non-transient error (e.g., 401 during connection)
+                if (TryExtractNonTransientError(ex, out var errorCode, out var errorMessage))
+                {
+                    var shouldStop = _heartbeatRetryManager.RecordNonTransientFailure(errorCode, errorMessage);
+                    if (shouldStop)
+                    {
+                        // Report error to server and stop retrying
+                        await ReportErrorStatusAsync(errorCode, errorMessage).ConfigureAwait(false);
+                        return;
+                    }
+                    // Wait for backoff before retrying
+                    var nextRetry = _heartbeatRetryManager.NextRetryTimeUtc;
+                    if (nextRetry.HasValue)
+                    {
+                        var backoffDelay = nextRetry.Value - DateTime.UtcNow;
+                        if (backoffDelay > TimeSpan.Zero)
+                        {
+                            try
+                            {
+                                await Task.Delay(backoffDelay, cancellationToken).ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                return;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                // Regular transient error - use standard backoff
                 _reconnectAttempt++;
                 var delay = CalculateBackoffDelay();
 
-                _logger.LogWarning(ex, "Failed to connect to server (attempt {Attempt}). Retrying in {Delay}s...",
-                    _reconnectAttempt, delay.TotalSeconds);
+                Log.ConnectionRetrying(_logger, ex, _reconnectAttempt, delay.TotalSeconds);
 
                 try
                 {
@@ -195,11 +268,11 @@ public sealed class ConnectionManager : IAsyncDisposable
         try
         {
             _nodeId = await _connection.InvokeAsync<Guid>("Register", _cachedMetadata).ConfigureAwait(false);
-            _logger.LogInformation("Registered successfully. Node ID: {NodeId}", _nodeId);
+            Log.RegistrationComplete(_logger, _nodeId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to register with server");
+            Log.RegistrationFailed(_logger, ex);
             throw;
         }
     }
@@ -222,21 +295,19 @@ public sealed class ConnectionManager : IAsyncDisposable
         if (!bypassBackoff && !_heartbeatRetryManager.ShouldAttemptHeartbeat())
         {
             var (failures, nextRetry) = _heartbeatRetryManager.GetStatus();
-            _logger.LogDebug(
-                "Skipping heartbeat due to backoff (failures: {Failures}, next retry: {NextRetry:O})",
-                failures, nextRetry);
+            Log.HeartbeatSkippedBackoff(_logger, failures, nextRetry);
             return;
         }
 
         try
         {
             await _connection.InvokeAsync("SendHeartbeat", _nodeId, data).ConfigureAwait(false);
-            _logger.LogDebug("Heartbeat sent successfully");
+            Log.HeartbeatSent(_logger);
             _heartbeatRetryManager.RecordSuccess();
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to send heartbeat");
+            Log.HeartbeatFailed(_logger, ex);
             var nextRetryTime = _heartbeatRetryManager.RecordFailure();
 
             // Notify server about backoff status so UI can display it
@@ -513,6 +584,118 @@ public sealed class ConnectionManager : IAsyncDisposable
         var delaySeconds = Math.Min(Math.Pow(2, _reconnectAttempt - 1), _config.MaxReconnectDelaySeconds);
         return TimeSpan.FromSeconds(delaySeconds);
     }
+
+    /// <summary>
+    /// Checks if an exception represents a non-transient error that should not be retried indefinitely.
+    /// Non-transient errors include: 401 Unauthorized, 403 Forbidden, and SignalR HubExceptions with auth messages.
+    /// </summary>
+    private static bool TryExtractNonTransientError(Exception ex, out int errorCode, out string errorMessage)
+    {
+        errorCode = 0;
+        errorMessage = string.Empty;
+
+        // Check for HTTP status codes in the exception message or inner exceptions
+        var current = ex;
+        while (current != null)
+        {
+            // SignalR HubException with auth-related message
+            if (current is Microsoft.AspNetCore.SignalR.HubException hubEx)
+            {
+                var msg = hubEx.Message ?? string.Empty;
+                if (msg.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase) ||
+                    msg.Contains("401", StringComparison.OrdinalIgnoreCase))
+                {
+                    errorCode = 401;
+                    errorMessage = msg;
+                    return true;
+                }
+                if (msg.Contains("Forbidden", StringComparison.OrdinalIgnoreCase) ||
+                    msg.Contains("403", StringComparison.OrdinalIgnoreCase))
+                {
+                    errorCode = 403;
+                    errorMessage = msg;
+                    return true;
+                }
+                if (msg.Contains("invalid", StringComparison.OrdinalIgnoreCase) &&
+                    msg.Contains("token", StringComparison.OrdinalIgnoreCase))
+                {
+                    errorCode = 401;
+                    errorMessage = msg;
+                    return true;
+                }
+            }
+
+            // Check for HttpRequestException with status code
+            if (current is System.Net.Http.HttpRequestException httpEx)
+            {
+                if (httpEx.StatusCode.HasValue)
+                {
+                    var statusCode = (int)httpEx.StatusCode.Value;
+                    // 401, 403 are definitely non-transient
+                    // 400 series (except 408 timeout, 429 rate limit) are generally non-transient
+                    if (statusCode == 401 || statusCode == 403)
+                    {
+                        errorCode = statusCode;
+                        errorMessage = httpEx.Message;
+                        return true;
+                    }
+                }
+            }
+
+            // Check message for HTTP status patterns
+            var message = current.Message ?? string.Empty;
+            if (message.Contains("401") || message.Contains("Unauthorized"))
+            {
+                errorCode = 401;
+                errorMessage = message;
+                return true;
+            }
+            if (message.Contains("403") || message.Contains("Forbidden"))
+            {
+                errorCode = 403;
+                errorMessage = message;
+                return true;
+            }
+
+            current = current.InnerException;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Reports the fatal error status to the server so it can display in the UI.
+    /// This is best-effort; if the connection is down, it will be logged locally.
+    /// </summary>
+    private async Task ReportErrorStatusAsync(int errorCode, string errorMessage)
+    {
+        _logger.LogWarning(
+            "Reporting fatal error to server: code={ErrorCode}, message={ErrorMessage}",
+            errorCode, errorMessage);
+
+        // If we have a valid node ID and can reach the server, report the error
+        if (_nodeId != Guid.Empty && _connection.State == HubConnectionState.Connected)
+        {
+            try
+            {
+                await _connection.InvokeAsync("ReportErrorStatus", _nodeId, errorCode, errorMessage)
+                    .ConfigureAwait(false);
+                _logger.LogInformation("Error status reported to server successfully");
+            }
+            catch (Exception ex)
+            {
+                // Can't report to server - just log locally
+                _logger.LogWarning(ex, "Failed to report error status to server (will retry on next connection)");
+            }
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Cannot report error to server: nodeId={NodeId}, connectionState={ConnectionState}",
+                _nodeId, _connection.State);
+        }
+    }
+
 
     private static string? GetLocalIpAddress(NetworkInterface? primaryNic)
     {

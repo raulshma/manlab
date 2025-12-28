@@ -289,6 +289,50 @@ export function SignalRProvider({
     [queryClient]
   );
 
+  // Handle node error state changed events (agent hit non-transient error)
+  const handleNodeErrorStateChanged = useCallback(
+    (nodeId: string, errorCode: number, errorMessage: string, errorAt: string) => {
+      // Update the nodes query cache with error state
+      queryClient.setQueryData<Node[]>(["nodes"], (nodes) => {
+        if (!nodes) return nodes;
+        return nodes.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                status: "Error" as NodeStatus,
+                errorCode,
+                errorMessage,
+                errorAt,
+              }
+            : node
+        );
+      });
+    },
+    [queryClient]
+  );
+
+  // Handle node error state cleared events (admin cleared the error)
+  const handleNodeErrorStateCleared = useCallback(
+    (nodeId: string) => {
+      // Update the nodes query cache to clear error state
+      queryClient.setQueryData<Node[]>(["nodes"], (nodes) => {
+        if (!nodes) return nodes;
+        return nodes.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                status: "Offline" as NodeStatus,
+                errorCode: null,
+                errorMessage: null,
+                errorAt: null,
+              }
+            : node
+        );
+      });
+    },
+    [queryClient]
+  );
+
   // Use ref to track if we've started connecting (to avoid synchronous setState in effect)
   const isConnectingRef = useRef(false);
 
@@ -303,6 +347,8 @@ export function SignalRProvider({
     handleAgentBackoffStatus,
     handleAgentPingResponse,
     handleNodeDeleted,
+    handleNodeErrorStateChanged,
+    handleNodeErrorStateCleared,
   });
 
   // Keep refs in sync with latest handlers
@@ -317,6 +363,8 @@ export function SignalRProvider({
       handleAgentBackoffStatus,
       handleAgentPingResponse,
       handleNodeDeleted,
+      handleNodeErrorStateChanged,
+      handleNodeErrorStateCleared,
     };
   });
 
@@ -407,6 +455,16 @@ export function SignalRProvider({
     ) => handlersRef.current.handleNodeDeleted(...args);
     newConnection.on("NodeDeleted", nodeDeletedHandler);
 
+    // Register node error state handlers
+    const nodeErrorStateChangedHandler = (
+      ...args: Parameters<typeof handleNodeErrorStateChanged>
+    ) => handlersRef.current.handleNodeErrorStateChanged(...args);
+    const nodeErrorStateClearedHandler = (
+      ...args: Parameters<typeof handleNodeErrorStateCleared>
+    ) => handlersRef.current.handleNodeErrorStateCleared(...args);
+    newConnection.on("NodeErrorStateChanged", nodeErrorStateChangedHandler);
+    newConnection.on("NodeErrorStateCleared", nodeErrorStateClearedHandler);
+
     // Start the connection asynchronously
     // Wrap in an async IIFE to handle setState after the microtask
     const startConnection = async () => {
@@ -444,6 +502,8 @@ export function SignalRProvider({
       newConnection.off("AgentBackoffStatus", agentBackoffStatusHandler);
       newConnection.off("AgentPingResponse", agentPingResponseHandler);
       newConnection.off("NodeDeleted", nodeDeletedHandler);
+      newConnection.off("NodeErrorStateChanged", nodeErrorStateChangedHandler);
+      newConnection.off("NodeErrorStateCleared", nodeErrorStateClearedHandler);
       newConnection.stop();
     };
   }, [finalHubUrl, queryClient]);

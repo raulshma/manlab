@@ -87,7 +87,7 @@ public sealed class CommandDispatcher : IDisposable
     /// <param name="payload">JSON payload with command-specific parameters.</param>
     public async Task DispatchAsync(Guid commandId, string type, string payload, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Dispatching command {CommandId}: {Type}", commandId, type);
+        Log.CommandDispatching(_logger, commandId, type);
 
         try
         {
@@ -187,19 +187,19 @@ public sealed class CommandDispatcher : IDisposable
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Command cancelled: {CommandId}", commandId);
+            Log.CommandCancelled(_logger, commandId);
             await _updateStatusCallback(commandId, "Failed", "Command was cancelled.").ConfigureAwait(false);
         }
         catch (NotSupportedException ex)
         {
             // NotSupportedException can come from unknown command types *or* from handlers.
             // Preserve the actual message so the server/dashboard can show a useful reason.
-            _logger.LogWarning(ex, "Command not supported: {Type}", type);
+            Log.CommandNotSupported(_logger, ex, type);
             await _updateStatusCallback(commandId, "Failed", $"Not supported: {ex.Message}").ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Command execution failed: {CommandId}", commandId);
+            Log.CommandExecutionFailed(_logger, ex, commandId);
             await _updateStatusCallback(commandId, "Failed", $"Error: {ex.Message}").ConfigureAwait(false);
         }
     }

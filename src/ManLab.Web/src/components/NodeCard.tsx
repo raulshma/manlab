@@ -1,7 +1,8 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Node } from '../types';
-import { Globe, Monitor, Tag } from 'lucide-react';
+import { Globe, Monitor, Tag, AlertTriangle } from 'lucide-react';
 
 interface NodeCardProps {
   node: Node;
@@ -40,6 +41,8 @@ function getStatusVariant(status: string): 'default' | 'destructive' | 'secondar
       return 'default';
     case 'Offline':
       return 'destructive';
+    case 'Error':
+      return 'destructive';
     case 'Maintenance':
       return 'secondary';
     default:
@@ -52,6 +55,7 @@ function getStatusVariant(status: string): 'default' | 'destructive' | 'secondar
  */
 export function NodeCard({ node, onClick }: NodeCardProps) {
   const statusVariant = getStatusVariant(node.status);
+  const isError = node.status === 'Error';
 
   return (
     <Card
@@ -64,13 +68,17 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
           onClick?.();
         }
       }}
-      className="cursor-pointer"
+      className={`cursor-pointer ${isError ? 'border-destructive' : ''}`}
     >
       <CardContent className="pt-6">
         <div className="flex items-start justify-between gap-4">
           {/* Node Info */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-2">
+              {/* Error indicator */}
+              {isError && (
+                <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0" />
+              )}
               {/* Hostname */}
               <h3 className="text-base font-semibold text-foreground truncate">
                 {node.hostname}
@@ -99,14 +107,37 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
                   <span>v{node.agentVersion}</span>
                 </div>
               )}
+
+              {/* Error message */}
+              {isError && node.errorMessage && (
+                <div className="flex items-center gap-2 text-destructive">
+                  <span className="text-xs truncate">
+                    Error {node.errorCode}: {node.errorMessage}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Status Badge & Last Seen */}
           <div className="flex flex-col items-end gap-2">
-            <Badge variant={statusVariant}>
-              {node.status}
-            </Badge>
+            {isError && node.errorMessage ? (
+              <Tooltip>
+                <TooltipTrigger className="cursor-help">
+                  <Badge variant={statusVariant}>
+                    {node.status}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-xs">
+                  <p className="font-semibold">Error {node.errorCode}</p>
+                  <p className="text-sm">{node.errorMessage}</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <Badge variant={statusVariant}>
+                {node.status}
+              </Badge>
+            )}
             <span className="text-xs text-muted-foreground">
               {formatRelativeTime(node.lastSeen)}
             </span>
@@ -116,3 +147,4 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
     </Card>
   );
 }
+

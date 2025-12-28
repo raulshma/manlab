@@ -12,5 +12,8 @@ public enum NodeStatus
     Offline,
     
     /// <summary>Node is in maintenance mode.</summary>
-    Maintenance
+    Maintenance,
+    
+    /// <summary>Node has encountered a non-transient error requiring admin attention.</summary>
+    Error
 }

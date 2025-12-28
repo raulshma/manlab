@@ -5,7 +5,7 @@
 /**
  * Node status enum matching server-side enum.
  */
-export type NodeStatus = 'Online' | 'Offline' | 'Maintenance';
+export type NodeStatus = 'Online' | 'Offline' | 'Maintenance' | 'Error';
 
 /**
  * Node information returned by the API.
@@ -21,6 +21,10 @@ export interface Node {
   lastSeen: string;
   status: NodeStatus;
   createdAt: string;
+  // Error state fields
+  errorCode: number | null;
+  errorMessage: string | null;
+  errorAt: string | null;
 }
 
 /**

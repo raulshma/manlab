@@ -58,6 +58,16 @@ public class Node
     /// <summary>Current status of the node.</summary>
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
 
+    /// <summary>Error code if node is in error state (e.g., HTTP status code like 401).</summary>
+    public int? ErrorCode { get; set; }
+
+    /// <summary>Error message describing the non-transient error.</summary>
+    [MaxLength(1024)]
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>When the error state was first recorded.</summary>
+    public DateTime? ErrorAt { get; set; }
+
     /// <summary>Hashed authentication key for the node.</summary>
     [MaxLength(512)]
     public string? AuthKeyHash { get; set; }

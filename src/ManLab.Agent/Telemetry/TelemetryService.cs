@@ -79,6 +79,7 @@ public sealed class TelemetryService : IAsyncDisposable
         _timer = new PeriodicTimer(TimeSpan.FromSeconds(_config.HeartbeatIntervalSeconds));
         _runningTask = RunAsync(_cts.Token);
         _logger.LogInformation("Telemetry service started (interval: {Interval}s)", _config.HeartbeatIntervalSeconds);
+        Log.TelemetryServiceStarted(_logger, _config.HeartbeatIntervalSeconds);
     }
 
     /// <summary>
@@ -137,17 +138,13 @@ public sealed class TelemetryService : IAsyncDisposable
 
                     var data = _collector.Collect();
 
-                    _logger.LogDebug("Telemetry collected - CPU: {Cpu:F1}%, RAM: {Ram}/{Total} MB, Disks: {DiskCount}",
-                        data.CpuPercent,
-                        data.RamUsedBytes / 1024 / 1024,
-                        data.RamTotalBytes / 1024 / 1024,
-                        data.DiskUsage.Count);
+                    Log.TelemetryCollected(_logger, data.CpuPercent, data.RamUsedBytes / 1024 / 1024, data.RamTotalBytes / 1024 / 1024, data.DiskUsage.Count);
 
                     await _sendTelemetry(data).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogWarning(ex, "Error in telemetry loop, will retry");
+                    Log.TelemetryLoopError(_logger, ex);
                 }
             }
         }

@@ -1027,6 +1027,81 @@ public class AgentHub : Hub
         }
     }
 
+    /// <summary>
+    /// Receives error status from an agent when a non-transient error is detected.
+    /// </summary>
+    /// <param name="nodeId">The node reporting the error.</param>
+    /// <param name="errorCode">HTTP status code or other error code (e.g., 401, 403).</param>
+    /// <param name="errorMessage">Description of the error.</param>
+    public async Task ReportErrorStatus(Guid nodeId, int errorCode, string errorMessage)
+    {
+        // Verify agent context
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before reporting errors.");
+        }
+
+        if (registeredNodeId != nodeId)
+        {
+            _logger.LogWarning(
+                "Rejected error report for node {NodeId}: connection bound to node {RegisteredNodeId}",
+                nodeId, registeredNodeId);
+            throw new HubException("Unauthorized: nodeId does not match registered connection.");
+        }
+
+        _logger.LogWarning(
+            "Node {NodeId} reported error: code={ErrorCode}, message={ErrorMessage}",
+            nodeId, errorCode, errorMessage);
+
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var now = DateTime.UtcNow;
+
+        // Update node with error state
+        await dbContext.Nodes
+            .Where(n => n.Id == nodeId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(n => n.Status, NodeStatus.Error)
+                .SetProperty(n => n.ErrorCode, errorCode)
+                .SetProperty(n => n.ErrorMessage, Truncate(errorMessage, 1024))
+                .SetProperty(n => n.ErrorAt, now)
+                .SetProperty(n => n.LastSeen, now));
+
+        // Broadcast to dashboard clients
+        await Clients.All.SendAsync("NodeErrorStateChanged", nodeId, errorCode, errorMessage, now);
+        await Clients.All.SendAsync("NodeStatusChanged", nodeId, NodeStatus.Error.ToString(), now);
+    }
+
+    /// <summary>
+    /// Clears error status for a node. Called when admin resolves the issue.
+    /// This is typically called from a REST API endpoint, not by agents.
+    /// </summary>
+    /// <param name="nodeId">The node to clear error status for.</param>
+    public async Task ClearErrorStatus(Guid nodeId)
+    {
+        _logger.LogInformation("Clearing error status for node {NodeId}", nodeId);
+
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var now = DateTime.UtcNow;
+
+        // Clear error state and set to offline (agent will reconnect and come online)
+        await dbContext.Nodes
+            .Where(n => n.Id == nodeId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(n => n.Status, NodeStatus.Offline)
+                .SetProperty(n => n.ErrorCode, (int?)null)
+                .SetProperty(n => n.ErrorMessage, (string?)null)
+                .SetProperty(n => n.ErrorAt, (DateTime?)null)
+                .SetProperty(n => n.LastSeen, now));
+
+        // Broadcast to dashboard clients
+        await Clients.All.SendAsync("NodeErrorStateCleared", nodeId);
+        await Clients.All.SendAsync("NodeStatusChanged", nodeId, NodeStatus.Offline.ToString(), now);
+    }
+
     #endregion
 
     #region Server-to-Agent Methods
