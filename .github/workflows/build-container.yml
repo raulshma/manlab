@@ -87,7 +87,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: src/ManLab.Web
-          file: Dockerfile
+          file: src/ManLab.Web/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta_web.outputs.tags }}
