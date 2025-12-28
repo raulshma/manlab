@@ -92,6 +92,7 @@ builder.Services.AddHostedService<CommandDispatchService>();
 
 // Background services
 builder.Services.AddHostedService<HealthMonitorService>();
+builder.Services.AddHostedService<ServiceMonitorSchedulerService>();
 
 // Retention cleanup (snapshot tables)
 builder.Services.AddOptions<RetentionOptions>()

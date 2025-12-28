@@ -101,6 +101,8 @@ export function ServiceMonitoringPanel({
   );
   const [editServiceName, setEditServiceName] = useState("");
 
+  const isOnline = nodeStatus === "Online";
+
   // Fetch service monitor configs
   const { data: configs, isLoading: configsLoading } = useQuery({
     queryKey: ["serviceMonitorConfigs", nodeId],
@@ -131,6 +133,11 @@ export function ServiceMonitoringPanel({
       queryClient.invalidateQueries({ queryKey: ["serviceMonitorConfigs", nodeId] });
       setNewServiceName("");
       setAddDialogOpen(false);
+
+       // Kick off a status refresh so "Last Check" and status populate quickly.
+       if (isOnline) {
+         setTimeout(() => refreshMutation.mutate(), 250);
+       }
     },
   });
 
@@ -149,6 +156,11 @@ export function ServiceMonitoringPanel({
       queryClient.invalidateQueries({ queryKey: ["serviceMonitorConfigs", nodeId] });
       setEditingConfig(null);
       setEditDialogOpen(false);
+
+      // If the service was renamed or enabled, refresh statuses.
+      if (isOnline) {
+        setTimeout(() => refreshMutation.mutate(), 250);
+      }
     },
   });
 
@@ -182,8 +194,6 @@ export function ServiceMonitoringPanel({
       setTimeout(() => refreshMutation.mutate(), 2000);
     },
   });
-
-  const isOnline = nodeStatus === "Online";
 
   const handleAddService = () => {
     if (newServiceName.trim()) {
@@ -251,8 +261,8 @@ export function ServiceMonitoringPanel({
                 <DialogHeader>
                   <DialogTitle>Add Service to Monitor</DialogTitle>
                   <DialogDescription>
-                    Enter the name of the systemd service to monitor (e.g., nginx,
-                    ssh, docker).
+                        Enter the service identifier to monitor (Linux: systemd unit name
+                        like nginx/ssh/docker; Windows: service name like Spooler).
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">

@@ -22,9 +22,21 @@ public sealed class CommandDispatcher : IDisposable
         "^[a-zA-Z0-9_.-]{1,128}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static readonly Regex ServiceNameRegex = new(
+    // Service identifiers are used in OS-specific commands.
+    // Keep these intentionally strict to reduce injection risk.
+    private static readonly Regex LinuxServiceNameRegex = new(
         "^[a-zA-Z0-9@_.:-]{1,256}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    // Windows service *names* typically do not include spaces, but users often paste display names.
+    // Allow a conservative superset that still excludes shell metacharacters like &|<>"'`.
+    private static readonly Regex WindowsServiceNameRegex = new(
+        "^[a-zA-Z0-9 _().:-]{1,256}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex ScStateRegex = new(
+        @"STATE\s*:\s*\d+\s+(\w+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<CommandDispatcher> _logger;
@@ -758,6 +770,25 @@ del ""%~f0""
 
     private static bool IsLinux() => RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
+    private static bool IsWindows() => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+    private static bool IsValidServiceIdentifier(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var s = value.Trim();
+        if (IsWindows())
+        {
+            return WindowsServiceNameRegex.IsMatch(s);
+        }
+
+        // Default to Linux rules.
+        return LinuxServiceNameRegex.IsMatch(s);
+    }
+
     private void EnforceLogRateLimit()
     {
         var minSeconds = Math.Max(0, _config.LogMinSecondsBetweenRequests);
@@ -1127,7 +1158,7 @@ del ""%~f0""
 
         foreach (var s in normalized)
         {
-            if (!ServiceNameRegex.IsMatch(s))
+            if (!IsValidServiceIdentifier(s))
             {
                 throw new ArgumentException($"Invalid service name: '{s}'.");
             }
@@ -1142,13 +1173,132 @@ del ""%~f0""
         return normalized;
     }
 
-    private async Task<string> HandleServiceStatusAsync(Guid commandId, JsonElement? payloadRoot, CancellationToken cancellationToken)
+    private static string MapWindowsServiceState(string scOutput)
     {
-        if (!IsLinux())
+        // Basic heuristics first
+        if (string.IsNullOrWhiteSpace(scOutput))
         {
-            throw new NotSupportedException("service.status is supported on Linux agents only.");
+            return "unknown";
         }
 
+        var lower = scOutput.ToLowerInvariant();
+        if (lower.Contains("failed", StringComparison.OrdinalIgnoreCase) && lower.Contains("openservice", StringComparison.OrdinalIgnoreCase))
+        {
+            // e.g. "OpenService FAILED 1060" (service does not exist)
+            return "failed";
+        }
+
+        var m = ScStateRegex.Match(scOutput);
+        if (!m.Success)
+        {
+            return "unknown";
+        }
+
+        var state = (m.Groups[1].Value ?? string.Empty).Trim().ToUpperInvariant();
+        return state switch
+        {
+            "RUNNING" => "active",
+            "STOPPED" => "inactive",
+            "PAUSED" => "inactive",
+            "START_PENDING" => "unknown",
+            "STOP_PENDING" => "unknown",
+            "CONTINUE_PENDING" => "unknown",
+            "PAUSE_PENDING" => "unknown",
+            _ => "unknown"
+        };
+    }
+
+    private static async Task<(int exitCode, string output)> ExecuteProcessDirectAsync(
+        string fileName,
+        string arguments,
+        TimeSpan timeout,
+        int maxOutputChars,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        using var process = new System.Diagnostics.Process();
+        process.StartInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = fileName,
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        logger.LogInformation("Executing process: {FileName} {Arguments}", fileName, arguments);
+
+        try
+        {
+            process.Start();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to start process '{fileName}'.", ex);
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+
+        var outputBuilder = new System.Text.StringBuilder(capacity: Math.Min(maxOutputChars, 4_096));
+
+        static async Task ReadBoundedAsync(System.IO.StreamReader reader, System.Text.StringBuilder buffer, int maxChars, CancellationToken ct)
+        {
+            var charBuffer = new char[1024];
+            while (true)
+            {
+                var read = await reader.ReadAsync(charBuffer.AsMemory(0, charBuffer.Length), ct).ConfigureAwait(false);
+                if (read <= 0) break;
+
+                lock (buffer)
+                {
+                    var remaining = maxChars - buffer.Length;
+                    if (remaining <= 0)
+                    {
+                        continue;
+                    }
+
+                    var toAppend = Math.Min(remaining, read);
+                    buffer.Append(charBuffer, 0, toAppend);
+                }
+
+                if (buffer.Length >= maxChars)
+                {
+                    return;
+                }
+            }
+        }
+
+        try
+        {
+            var stdoutTask = ReadBoundedAsync(process.StandardOutput, outputBuilder, maxOutputChars, timeoutCts.Token);
+            var stderrTask = ReadBoundedAsync(process.StandardError, outputBuilder, maxOutputChars, timeoutCts.Token);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+            await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+                // Best-effort kill.
+            }
+
+            throw new TimeoutException($"Process timed out after {timeout.TotalSeconds:0}s: {fileName} {arguments}");
+        }
+
+        return (process.ExitCode, outputBuilder.ToString().Trim());
+    }
+
+    private async Task<string> HandleServiceStatusAsync(Guid commandId, JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
         if (_sendServiceSnapshots is null)
         {
             throw new InvalidOperationException("Service snapshot sender is not configured.");
@@ -1164,34 +1314,71 @@ del ""%~f0""
             var svc = services[i];
             await _updateStatusCallback(commandId, "InProgress", $"Checking service {i + 1}/{services.Count}: {svc}").ConfigureAwait(false);
 
-            // systemctl output is bounded; we only need small bits.
-            var isActive = await ShellExecutor.ExecuteAsync(
-                $"systemctl is-active {svc}",
-                TimeSpan.FromSeconds(10),
-                512,
-                logger,
-                cancellationToken).ConfigureAwait(false);
-
-            var show = await ShellExecutor.ExecuteAsync(
-                $"systemctl show {svc} --no-page --property=Id,Description,LoadState,ActiveState,SubState,UnitFileState",
-                TimeSpan.FromSeconds(10),
-                4096,
-                logger,
-                cancellationToken).ConfigureAwait(false);
-
-            var state = (isActive ?? string.Empty).Trim().ToLowerInvariant();
-            if (state is not ("active" or "inactive" or "failed"))
+            if (IsLinux())
             {
-                state = "unknown";
+                // systemctl output is bounded; we only need small bits.
+                var isActive = await ShellExecutor.ExecuteAsync(
+                    $"systemctl is-active {svc}",
+                    TimeSpan.FromSeconds(10),
+                    512,
+                    logger,
+                    cancellationToken).ConfigureAwait(false);
+
+                var show = await ShellExecutor.ExecuteAsync(
+                    $"systemctl show {svc} --no-page --property=Id,Description,LoadState,ActiveState,SubState,UnitFileState",
+                    TimeSpan.FromSeconds(10),
+                    4096,
+                    logger,
+                    cancellationToken).ConfigureAwait(false);
+
+                var state = (isActive ?? string.Empty).Trim().ToLowerInvariant();
+                if (state is not ("active" or "inactive" or "failed"))
+                {
+                    state = "unknown";
+                }
+
+                snapshots.Add(new ServiceStatusSnapshotIngest
+                {
+                    Timestamp = DateTime.UtcNow,
+                    ServiceName = svc,
+                    State = state,
+                    Detail = show
+                });
             }
-
-            snapshots.Add(new ServiceStatusSnapshotIngest
+            else if (IsWindows())
             {
-                Timestamp = DateTime.UtcNow,
-                ServiceName = svc,
-                State = state,
-                Detail = show
-            });
+                // Use sc.exe directly (not via cmd.exe) to avoid shell parsing/injection.
+                var (exitCodeQuery, queryOut) = await ExecuteProcessDirectAsync(
+                    "sc.exe",
+                    $"query \"{svc}\"",
+                    TimeSpan.FromSeconds(10),
+                    8_192,
+                    logger,
+                    cancellationToken).ConfigureAwait(false);
+
+                var (exitCodeQc, qcOut) = await ExecuteProcessDirectAsync(
+                    "sc.exe",
+                    $"qc \"{svc}\"",
+                    TimeSpan.FromSeconds(10),
+                    8_192,
+                    logger,
+                    cancellationToken).ConfigureAwait(false);
+
+                var combined = $"ExitCode(query)={exitCodeQuery}\n{queryOut}\n\nExitCode(qc)={exitCodeQc}\n{qcOut}".Trim();
+                var state = MapWindowsServiceState(combined);
+
+                snapshots.Add(new ServiceStatusSnapshotIngest
+                {
+                    Timestamp = DateTime.UtcNow,
+                    ServiceName = svc,
+                    State = state,
+                    Detail = combined
+                });
+            }
+            else
+            {
+                throw new NotSupportedException("service.status is supported on Linux and Windows agents only.");
+            }
         }
 
         await _sendServiceSnapshots(snapshots).ConfigureAwait(false);
@@ -1200,11 +1387,6 @@ del ""%~f0""
 
     private async Task<string> HandleServiceRestartAsync(Guid commandId, JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
-        if (!IsLinux())
-        {
-            throw new NotSupportedException("service.restart is supported on Linux agents only.");
-        }
-
         if (_sendServiceSnapshots is null)
         {
             throw new InvalidOperationException("Service snapshot sender is not configured.");
@@ -1221,32 +1403,79 @@ del ""%~f0""
 
         await _updateStatusCallback(commandId, "InProgress", $"Restarting service: {svc}").ConfigureAwait(false);
 
-        var restartOutput = await ShellExecutor.ExecuteAsync(
-            $"systemctl restart {svc}",
-            TimeSpan.FromSeconds(20),
-            4096,
-            logger,
-            cancellationToken).ConfigureAwait(false);
+        string detail;
+        string state;
+        string? restartOutput;
 
-        // Capture post-restart status snapshot
-        var isActive = await ShellExecutor.ExecuteAsync(
-            $"systemctl is-active {svc}",
-            TimeSpan.FromSeconds(10),
-            512,
-            logger,
-            cancellationToken).ConfigureAwait(false);
-
-        var show = await ShellExecutor.ExecuteAsync(
-            $"systemctl show {svc} --no-page --property=Id,Description,LoadState,ActiveState,SubState,UnitFileState",
-            TimeSpan.FromSeconds(10),
-            4096,
-            logger,
-            cancellationToken).ConfigureAwait(false);
-
-        var state = (isActive ?? string.Empty).Trim().ToLowerInvariant();
-        if (state is not ("active" or "inactive" or "failed"))
+        if (IsLinux())
         {
-            state = "unknown";
+            restartOutput = await ShellExecutor.ExecuteAsync(
+                $"systemctl restart {svc}",
+                TimeSpan.FromSeconds(20),
+                4096,
+                logger,
+                cancellationToken).ConfigureAwait(false);
+
+            // Capture post-restart status snapshot
+            var isActive = await ShellExecutor.ExecuteAsync(
+                $"systemctl is-active {svc}",
+                TimeSpan.FromSeconds(10),
+                512,
+                logger,
+                cancellationToken).ConfigureAwait(false);
+
+            var show = await ShellExecutor.ExecuteAsync(
+                $"systemctl show {svc} --no-page --property=Id,Description,LoadState,ActiveState,SubState,UnitFileState",
+                TimeSpan.FromSeconds(10),
+                4096,
+                logger,
+                cancellationToken).ConfigureAwait(false);
+
+            state = (isActive ?? string.Empty).Trim().ToLowerInvariant();
+            if (state is not ("active" or "inactive" or "failed"))
+            {
+                state = "unknown";
+            }
+
+            detail = show;
+        }
+        else if (IsWindows())
+        {
+            // Windows restart = stop then start.
+            var (exitStop, stopOut) = await ExecuteProcessDirectAsync(
+                "sc.exe",
+                $"stop \"{svc}\"",
+                TimeSpan.FromSeconds(20),
+                8_192,
+                logger,
+                cancellationToken).ConfigureAwait(false);
+
+            // Give SCM a short window to transition.
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+
+            var (exitStart, startOut) = await ExecuteProcessDirectAsync(
+                "sc.exe",
+                $"start \"{svc}\"",
+                TimeSpan.FromSeconds(20),
+                8_192,
+                logger,
+                cancellationToken).ConfigureAwait(false);
+
+            var (exitQuery, queryOut) = await ExecuteProcessDirectAsync(
+                "sc.exe",
+                $"query \"{svc}\"",
+                TimeSpan.FromSeconds(10),
+                8_192,
+                logger,
+                cancellationToken).ConfigureAwait(false);
+
+            restartOutput = $"ExitCode(stop)={exitStop}\n{stopOut}\n\nExitCode(start)={exitStart}\n{startOut}".Trim();
+            detail = $"{restartOutput}\n\nExitCode(query)={exitQuery}\n{queryOut}".Trim();
+            state = MapWindowsServiceState(detail);
+        }
+        else
+        {
+            throw new NotSupportedException("service.restart is supported on Linux and Windows agents only.");
         }
 
         await _sendServiceSnapshots(new List<ServiceStatusSnapshotIngest>
@@ -1256,7 +1485,7 @@ del ""%~f0""
                 Timestamp = DateTime.UtcNow,
                 ServiceName = svc,
                 State = state,
-                Detail = show
+                Detail = detail
             }
         }).ConfigureAwait(false);
 
