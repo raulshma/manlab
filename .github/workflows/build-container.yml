@@ -97,7 +97,7 @@ jobs:
         run: |
           curl -fsSL https://aspire.dev/install.sh | bash
           echo "$HOME/.aspire/bin" >> "$GITHUB_PATH"
-          aspire --version
+          "$HOME/.aspire/bin/aspire" --version
 
       - name: Generate Compose bundle pinned to pushed images
         shell: bash
