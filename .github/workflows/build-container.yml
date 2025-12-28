@@ -31,7 +31,7 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
-
+          
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -56,12 +56,15 @@ jobs:
             type=sha
 
       - name: Build and push server image
+        id: build_server
         uses: docker/build-push-action@v6
         with:
           context: .
           file: src/ManLab.Server/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta_server.outputs.tags }}
           labels: ${{ steps.meta_server.outputs.labels }}
           cache-from: type=gha,scope=server
@@ -81,12 +84,15 @@ jobs:
             type=sha
 
       - name: Build and push web image
+        id: build_web
         uses: docker/build-push-action@v6
         with:
           context: src/ManLab.Web
           file: src/ManLab.Web/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta_web.outputs.tags }}
           labels: ${{ steps.meta_web.outputs.labels }}
           cache-from: type=gha,scope=web
