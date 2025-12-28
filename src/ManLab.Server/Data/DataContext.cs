@@ -64,6 +64,7 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.Hostname);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.LastSeen);
+            entity.HasIndex(e => e.AuthKeyHash);
         });
 
         // TelemetrySnapshot configuration
@@ -85,6 +86,8 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.NodeId);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => new { e.NodeId, e.CreatedAt });
+            entity.HasIndex(e => new { e.NodeId, e.CommandType, e.Status, e.CreatedAt });
 
             entity.HasOne(e => e.Node)
                 .WithMany(n => n.Commands)
@@ -150,6 +153,7 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.Timestamp);
             entity.HasIndex(e => new { e.NodeId, e.Timestamp });
             entity.HasIndex(e => new { e.NodeId, e.ServiceName, e.Timestamp });
+            entity.HasIndex(e => new { e.NodeId, e.Timestamp, e.ServiceName });
 
             entity.HasOne(e => e.Node)
                 .WithMany(n => n.ServiceStatusSnapshots)
@@ -164,6 +168,7 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.Timestamp);
             entity.HasIndex(e => new { e.NodeId, e.Timestamp });
             entity.HasIndex(e => new { e.NodeId, e.Device, e.Timestamp });
+            entity.HasIndex(e => new { e.NodeId, e.Timestamp, e.Device });
 
             entity.HasOne(e => e.Node)
                 .WithMany(n => n.SmartDriveSnapshots)
@@ -178,6 +183,7 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.Timestamp);
             entity.HasIndex(e => new { e.NodeId, e.Timestamp });
             entity.HasIndex(e => new { e.NodeId, e.GpuIndex, e.Timestamp });
+            entity.HasIndex(e => new { e.NodeId, e.Timestamp, e.GpuIndex });
 
             entity.HasOne(e => e.Node)
                 .WithMany(n => n.GpuSnapshots)
@@ -262,6 +268,7 @@ public class DataContext : DbContext
         {
             entity.HasIndex(e => e.NodeId);
             entity.HasIndex(e => new { e.NodeId, e.Path }).IsUnique();
+            entity.HasIndex(e => new { e.NodeId, e.DisplayName });
 
             entity.HasOne(e => e.Node)
                 .WithMany(n => n.LogViewerPolicies)
