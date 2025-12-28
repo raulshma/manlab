@@ -25,6 +25,11 @@ export default defineConfig({
     },
   },
   server: {
+    // Bind to all interfaces so the dev server is reachable from other devices on the LAN
+    // (e.g. phone/tablet/Raspberry Pi hitting http://<your-pc-ip>:5173).
+    host: true,
+    port: 5173,
+    strictPort: true,
     proxy: {
       // Proxy API requests to the backend server
       '/api': {
@@ -40,5 +45,9 @@ export default defineConfig({
         ws: true,
       },
     },
+  },
+  preview: {
+    // Same idea as dev: allow testing from other devices.
+    host: true,
   },
 })

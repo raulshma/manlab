@@ -7,6 +7,12 @@ namespace ManLab.Server.Services.Ssh;
 
 public sealed class SshProvisioningService
 {
+    private readonly Services.ISettingsService _settingsService;
+
+    public SshProvisioningService(Services.ISettingsService settingsService)
+    {
+        _settingsService = settingsService;
+    }
     public sealed record TargetInfo(
         string OsFamily,
         string? OsDistro,
@@ -167,7 +173,89 @@ public sealed class SshProvisioningService
         }
     }
 
-    private static Task<string> InstallLinuxAsync(
+    /// <summary>
+    /// Best-effort diagnostics collection intended for onboarding failures.
+    /// Never throws for common remote errors; returns a human-readable report.
+    /// </summary>
+    public Task<string> CollectAgentDiagnosticsAsync(ConnectionOptions options, Uri serverBaseUrl, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var client = CreateSshClient(options, out _);
+        var sb = new StringBuilder();
+        sb.AppendLine("--- Target diagnostics (best-effort) ---");
+        sb.AppendLine($"Timestamp (UTC): {DateTime.UtcNow:O}");
+
+        try
+        {
+            client.Connect();
+
+            var target = DetectTarget(client);
+            sb.AppendLine($"Detected OS: {target.Raw}");
+
+            if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.AppendLine("\n# systemd service status");
+                sb.AppendLine(Execute(client, "sh -c 'systemctl --no-pager --full status manlab-agent.service 2>&1 || true'", maxChars: 50_000) ?? string.Empty);
+
+                sb.AppendLine("\n# recent journal (manlab-agent)");
+                sb.AppendLine(Execute(client, "sh -c 'journalctl --no-pager -u manlab-agent -n 200 2>&1 || true'", maxChars: 80_000) ?? string.Empty);
+
+                sb.AppendLine("\n# environment (redacted)");
+                sb.AppendLine(Execute(client,
+                    "sh -c 'if [ -f /etc/manlab-agent.env ]; then sed -e " +
+                    "\"s/^MANLAB_AUTH_TOKEN=.*/MANLAB_AUTH_TOKEN=<redacted>/\" /etc/manlab-agent.env; " +
+                    "else echo \"/etc/manlab-agent.env not found\"; fi'",
+                    maxChars: 8_192) ?? string.Empty);
+
+                sb.AppendLine("\n# install directory");
+                sb.AppendLine(Execute(client, "sh -c 'ls -la /opt/manlab-agent 2>&1 || true'", maxChars: 8_192) ?? string.Empty);
+
+                sb.AppendLine("\n# binary probe");
+                sb.AppendLine(Execute(client, "sh -c 'test -x /opt/manlab-agent/manlab-agent && echo BINARY_OK || echo BINARY_MISSING'", maxChars: 512) ?? string.Empty);
+
+                // Quick reachability probe to the server (installers already require curl or wget).
+                var server = serverBaseUrl.ToString().TrimEnd('/');
+                sb.AppendLine("\n# server reachability probe");
+                sb.AppendLine(Execute(client,
+                    "sh -c 'set -e; URL=\"" + EscapeSingleQuotes(server) + "/install.sh\"; " +
+                    "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 10 \"$URL\" >/dev/null && echo SERVER_OK || echo SERVER_UNREACHABLE; " +
+                    "elif command -v wget >/dev/null 2>&1; then wget -qO- --timeout=10 \"$URL\" >/dev/null && echo SERVER_OK || echo SERVER_UNREACHABLE; " +
+                    "else echo NO_CURL_OR_WGET; fi'",
+                    maxChars: 2_048) ?? string.Empty);
+            }
+            else
+            {
+                // Windows over OpenSSH
+                sb.AppendLine("\n# Windows service status");
+                var ps = "try { " +
+                         "Get-Service -Name 'manlab-agent' -ErrorAction Stop | Format-List -Property *; " +
+                         "} catch { Write-Output $_.Exception.Message }";
+                sb.AppendLine(Execute(client,
+                    $"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{EscapeDoubleQuotes(ps)}\"",
+                    maxChars: 50_000) ?? string.Empty);
+
+                sb.AppendLine("\n# agent install directory probe");
+                var ps2 = "try { " +
+                          "Get-ChildItem 'C:\\ProgramData\\ManLab\\Agent' -Force | Format-Table -AutoSize; " +
+                          "} catch { Write-Output $_.Exception.Message }";
+                sb.AppendLine(Execute(client,
+                    $"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{EscapeDoubleQuotes(ps2)}\"",
+                    maxChars: 20_000) ?? string.Empty);
+            }
+
+            client.Disconnect();
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: return what we have plus the failure.
+            sb.AppendLine("\nDiagnostics collection failed: " + ex.Message);
+        }
+
+        return Task.FromResult(sb.ToString());
+    }
+
+    private async Task<string> InstallLinuxAsync(
         SshClient client,
         Uri serverBaseUrl,
         string enrollmentToken,
@@ -201,16 +289,71 @@ public sealed class SshProvisioningService
 
         var forceArg = force ? " --force" : string.Empty;
 
-        // Use curl if present, otherwise wget.
-        var cmd = $"sh -c \"set -e; " +
-                  $"if command -v curl >/dev/null 2>&1; then DL='curl -fsSL'; " +
-                  $"elif command -v wget >/dev/null 2>&1; then DL='wget -qO-'; " +
-                  $"else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
-                  $"$DL '{EscapeSingleQuotes(url)}' | {sudoPrefix}bash -s -- --server '{EscapeSingleQuotes(server)}' --token '{EscapeSingleQuotes(enrollmentToken)}'{forceArg}\"";
+        // If GitHub release downloads are enabled in server settings, pass the config directly to the installer.
+        // This avoids relying on python3/jq being installed on minimal Linux images to parse JSON.
+        var githubEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
+        var githubBaseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
+        var githubVersion = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
+
+        progress.Report($"GitHub settings read: enabled={githubEnabled}, baseUrl={(string.IsNullOrWhiteSpace(githubBaseUrl) ? "<empty>" : githubBaseUrl.Trim())}, version={(string.IsNullOrWhiteSpace(githubVersion) ? "<empty>" : githubVersion.Trim())}.");
+
+        var githubArgs = string.Empty;
+        if (githubEnabled && !string.IsNullOrWhiteSpace(githubBaseUrl) && !string.IsNullOrWhiteSpace(githubVersion))
+        {
+            progress.Report($"GitHub Releases download is enabled (base={githubBaseUrl.Trim().TrimEnd('/')}, version={githubVersion.Trim()}).");
+            // Match install.sh flags.
+            githubArgs =
+                " --prefer-github" +
+                $" --github-release-base-url '{EscapeSingleQuotes(githubBaseUrl.Trim())}'" +
+                $" --github-version '{EscapeSingleQuotes(githubVersion.Trim())}'";
+        }
+        else
+        {
+            progress.Report("GitHub Releases download is not enabled (or missing base URL/version); installer may fall back to server-staged binaries.");
+        }
+
+        var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, githubArgs);
 
         var output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
         progress.Report("Linux installer finished.");
-        return Task.FromResult(RedactToken(output, enrollmentToken));
+        return RedactToken(output, enrollmentToken);
+    }
+
+    internal static string BuildLinuxInstallCommand(string server, string url, string enrollmentToken, string sudoPrefix, string forceArg, string? extraInstallerArgs = null)
+    {
+        // IMPORTANT: do not stream the installer into bash via a plain pipeline under /bin/sh.
+        // Instead: download to a temp file, then execute it; propagate failures reliably.
+        // Also apply reasonable timeouts so onboarding doesn't hang for minutes on unreachable servers.
+        //
+        // NOTE: avoid bash arrays like DL=(...) and "${DL[@]}" here.
+        // They are easy to accidentally break when passing through multiple escaping layers, and a broken
+        // temp path/redirection can produce confusing syntax errors (e.g. "> ; chmod +x ; bash  --server ...").
+
+        // Use a single-quoted bash -lc script to prevent the *outer* login shell from expanding $URL/$TMP.
+        // This avoids subtle multi-layer quoting bugs that can produce malformed curl/wget arguments.
+        var safeServer = EscapeSingleQuotes(server);
+        var safeUrl = EscapeSingleQuotes(url);
+        var safeToken = EscapeSingleQuotes(enrollmentToken);
+
+        var script =
+            "set -euo pipefail; " +
+            "if ! command -v bash >/dev/null 2>&1; then echo 'Need bash' 1>&2; exit 2; fi; " +
+            $"URL='{safeUrl}'; " +
+            // Prefer explicit template path for portability across mktemp variants.
+            "TMP=\"$(mktemp /tmp/manlab-install.XXXXXX)\"; " +
+            "if [ -z \"$TMP\" ]; then echo 'mktemp produced empty TMP' 1>&2; exit 2; fi; " +
+            // Use a double-quoted trap body so we don't need single quotes inside the single-quoted script.
+            "trap \"rm -f \\\"$TMP\\\"\" EXIT; " +
+            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; " +
+            "elif command -v wget >/dev/null 2>&1; then wget -q --timeout=120 -O \"$TMP\" \"$URL\"; " +
+            "else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
+            // Defensive: strip CR if the script was served with CRLF (common when the server runs on Windows).
+            "if command -v sed >/dev/null 2>&1; then sed -i 's/\r$//' \"$TMP\" 2>/dev/null || true; " +
+            "else tr -d '\\r' < \"$TMP\" > \"$TMP.clean\" && mv -f \"$TMP.clean\" \"$TMP\"; fi; " +
+            "chmod +x \"$TMP\"; " +
+            $"{sudoPrefix}bash \"$TMP\" --server '{safeServer}' --token '{safeToken}'{forceArg}{(string.IsNullOrWhiteSpace(extraInstallerArgs) ? string.Empty : extraInstallerArgs)}";
+
+        return $"bash -lc '{EscapeSingleQuotes(script)}'";
     }
 
     private static Task<string> InstallWindowsAsync(
@@ -274,15 +417,33 @@ public sealed class SshProvisioningService
         var isRoot = string.Equals(idu, "0", StringComparison.Ordinal);
         var sudoPrefix = isRoot ? string.Empty : "sudo -n ";
 
-        var cmd = $"sh -c \"set -e; " +
-                  $"if command -v curl >/dev/null 2>&1; then DL='curl -fsSL'; " +
-                  $"elif command -v wget >/dev/null 2>&1; then DL='wget -qO-'; " +
-                  $"else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
-                  $"$DL '{EscapeSingleQuotes(url)}' | {sudoPrefix}bash -s -- --uninstall\"";
+          var cmd = BuildLinuxUninstallCommand(url, sudoPrefix);
 
         var output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
         progress.Report("Linux uninstaller finished.");
         return Task.FromResult(output);
+    }
+
+    internal static string BuildLinuxUninstallCommand(string url, string sudoPrefix)
+    {
+        var safeUrl = EscapeSingleQuotes(url);
+
+        var script =
+            "set -euo pipefail; " +
+            "if ! command -v bash >/dev/null 2>&1; then echo 'Need bash' 1>&2; exit 2; fi; " +
+            $"URL='{safeUrl}'; " +
+            "TMP=\"$(mktemp /tmp/manlab-install.XXXXXX)\"; " +
+            "if [ -z \"$TMP\" ]; then echo 'mktemp produced empty TMP' 1>&2; exit 2; fi; " +
+            "trap \"rm -f \\\"$TMP\\\"\" EXIT; " +
+            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; " +
+            "elif command -v wget >/dev/null 2>&1; then wget -q --timeout=120 -O \"$TMP\" \"$URL\"; " +
+            "else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
+            "if command -v sed >/dev/null 2>&1; then sed -i 's/\r$//' \"$TMP\" 2>/dev/null || true; " +
+            "else tr -d '\\r' < \"$TMP\" > \"$TMP.clean\" && mv -f \"$TMP.clean\" \"$TMP\"; fi; " +
+            "chmod +x \"$TMP\"; " +
+            $"{sudoPrefix}bash \"$TMP\" --uninstall";
+
+        return $"bash -lc '{EscapeSingleQuotes(script)}'";
     }
 
     private static Task<string> UninstallWindowsAsync(

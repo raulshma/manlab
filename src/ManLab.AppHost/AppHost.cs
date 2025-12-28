@@ -71,6 +71,15 @@ else
             endpoint.TargetPort = 8080;
             endpoint.IsExternal = false;
         })
+        // Also expose the server directly on the host for LAN access and agent installs that
+        // use the traditional dev port (5247). This is optional from a topology perspective
+        // because the nginx dashboard already reverse-proxies /api and /hubs.
+        .WithEndpoint("http-external", endpoint =>
+        {
+            endpoint.Port = 5247;
+            endpoint.TargetPort = 8080;
+            endpoint.IsExternal = true;
+        })
         .PublishAsDockerComposeService((resource, service) =>
         {
             // Keep the service name aligned with the resource name so generated

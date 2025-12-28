@@ -140,6 +140,38 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     retry: 1,
   });
 
+  // The installer expects a *server base URL* (origin), not an API URL and not a hub URL.
+  // Examples:
+  //   ✅ http://192.168.1.10:5247
+  //   ❌ http://192.168.1.10:5247/api
+  //   ❌ http://192.168.1.10:5247/hubs/agent
+  const normalizeAgentServerBaseUrl = (value: string): string => {
+    const trimmed = (value ?? "").trim();
+    if (!trimmed) return "";
+
+    const toUrl = (v: string): URL | null => {
+      try {
+        if (/^https?:\/\//i.test(v)) return new URL(v);
+        if (v.startsWith("//")) return new URL(`${window.location.protocol}${v}`);
+        if (v.startsWith("/")) return new URL(v, window.location.origin);
+        // Back-compat: host[:port] without scheme
+        return new URL(`http://${v}`);
+      } catch {
+        return null;
+      }
+    };
+
+    // If it's a URL, always reduce to origin; paths like /api or /hubs/agent are not valid for installers.
+    const u = toUrl(trimmed);
+    if (u) return u.origin;
+
+    // Fallback: try to strip common suffixes in non-URL inputs.
+    return trimmed
+      .replace(/\/+$/, "")
+      .replace(/\/(api|hubs\/agent)(\/.*)?$/i, "")
+      .trim();
+  };
+
   // Compute serverBaseUrl as a derived value instead of using setState in useEffect.
   // Priority: user override > env variable > suggested URL from backend > window origin
   const serverBaseUrl = useMemo(() => {
@@ -155,6 +187,11 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     }
     return import.meta.env.VITE_API_URL ?? window.location.origin;
   }, [serverBaseUrlOverride, suggestedServerBaseUrlQuery.data]);
+
+  const effectiveServerBaseUrl = useMemo(
+    () => normalizeAgentServerBaseUrl(serverBaseUrl),
+    [serverBaseUrl]
+  );
 
   // Handler to update server base URL when user edits
   const handleServerBaseUrlChange = (value: string) => {
@@ -227,7 +264,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     mutationFn: async () => {
       if (!selected) throw new Error("No machine selected");
       return installAgent(selected.id, {
-        serverBaseUrl,
+        serverBaseUrl: effectiveServerBaseUrl,
         force: forceInstall,
         trustHostKey,
         password: password || undefined,
@@ -252,7 +289,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     mutationFn: async () => {
       if (!selected) throw new Error("No machine selected");
       return uninstallAgent(selected.id, {
-        serverBaseUrl,
+        serverBaseUrl: effectiveServerBaseUrl,
         trustHostKey,
         password: password || undefined,
         privateKeyPem: privateKeyPem || undefined,
@@ -634,7 +671,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                                       });
                                   }}
                                   className={cn(
-                                    "font-mono text-[10px] min-h-[120px] bg-background resize-none leading-tight",
+                                    "font-mono text-[10px] min-h-30 bg-background resize-none leading-tight",
                                     credErrors.privateKey &&
                                       "border-destructive"
                                   )}
@@ -686,7 +723,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                               placeholder="http://..."
                             />
                             <p className="text-[10px] text-muted-foreground mt-1.5">
-                              The address the agent will use to call back home.
+                              The address the agent will use to call back home (origin only — no <span className="font-mono">/api</span> or <span className="font-mono">/hubs/agent</span>).
                             </p>
                           </div>
 
@@ -741,7 +778,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       onClick={() => {
                         if (validateCredentials()) testMutation.mutate();
                       }}
-                      className="min-w-[120px]"
+                      className="min-w-30"
                     >
                       {testMutation.isPending
                         ? "Testing..."
@@ -760,7 +797,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                               e.stopPropagation();
                             }
                           }}
-                          className="min-w-[100px]"
+                          className="min-w-25"
                         >
                           Install Agent
                         </Button>
@@ -827,7 +864,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                     Clear
                   </button>
                 </div>
-                <ScrollArea className="flex-1 font-mono text-xs p-3">
+                <div className="flex-1 overflow-auto font-mono text-xs p-3">
                   {logs.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-neutral-600 space-y-2 select-none">
                       <Terminal className="h-8 w-8 opacity-20" />
@@ -866,7 +903,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       <div ref={logsEndRef} />
                     </div>
                   )}
-                </ScrollArea>
+                </div>
               </div>
             </>
           )}

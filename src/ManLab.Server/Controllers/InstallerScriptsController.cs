@@ -17,6 +17,10 @@ public sealed class InstallerScriptsController : ControllerBase
     public IActionResult GetInstallSh()
     {
         var content = ReadEmbeddedText("ManLab.Server.Resources.install.sh");
+        // Ensure LF line endings for POSIX shells.
+        // If the repo is checked out on Windows, the embedded resource may contain CRLF,
+        // which can break bash parsing (e.g. `set -euo pipefail\r`).
+        content = NormalizeToLf(content);
         return Content(content, "text/x-shellscript");
     }
 
@@ -40,5 +44,15 @@ public sealed class InstallerScriptsController : ControllerBase
 
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
+    }
+
+    private static string NormalizeToLf(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+
+        // Normalize CRLF and lone CR to LF.
+        s = s.Replace("\r\n", "\n", StringComparison.Ordinal);
+        s = s.Replace("\r", "\n", StringComparison.Ordinal);
+        return s;
     }
 }

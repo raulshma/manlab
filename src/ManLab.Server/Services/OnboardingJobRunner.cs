@@ -5,6 +5,7 @@ using ManLab.Server.Data.Enums;
 using ManLab.Server.Hubs;
 using ManLab.Server.Services.Security;
 using ManLab.Server.Services.Ssh;
+using ManLab.Shared;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
@@ -94,9 +95,10 @@ public sealed class OnboardingJobRunner
             machine.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
 
-            if (!Uri.TryCreate(request.ServerBaseUrl, UriKind.Absolute, out var serverUri))
+            if (!ServerBaseUrl.TryNormalizeInstallerOrigin(request.ServerBaseUrl, out var serverUri, out var serverUrlError, out var changed)
+                || serverUri is null)
             {
-                await FailAsync(db, machine, "Invalid serverBaseUrl (must be an absolute URL).", machineId);
+                await FailAsync(db, machine, serverUrlError ?? "Invalid serverBaseUrl (must be an absolute URL).", machineId);
                 rateLimit.RecordFailure(request.RateLimitKey);
                 await audit.RecordAsync(new Data.Entities.SshAuditEvent
                 {
@@ -111,6 +113,49 @@ public sealed class OnboardingJobRunner
                     HostKeyFingerprint = machine.HostKeyFingerprint,
                     Success = false,
                     Error = "Invalid serverBaseUrl"
+                });
+                return;
+            }
+
+            if (changed)
+            {
+                await PublishLogAsync(
+                    machineId,
+                    $"Note: Normalized serverBaseUrl from '{request.ServerBaseUrl}' to '{serverUri}' (installer expects an origin, not a path)."
+                );
+            }
+
+            // For SSH onboarding, the serverBaseUrl must be reachable FROM the target device.
+            // Common misconfiguration: using http://localhost:xxxx which points to the target itself.
+            if (serverUri.IsLoopback
+                || string.Equals(serverUri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(serverUri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(serverUri.Host, "::1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(serverUri.Host, "0.0.0.0", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(serverUri.Host, "::", StringComparison.OrdinalIgnoreCase))
+            {
+                var msg =
+                    $"Invalid serverBaseUrl for remote install: '{serverUri}'. " +
+                    "The Raspberry Pi must be able to reach the ManLab server at that address. " +
+                    "Do not use localhost/127.0.0.1/0.0.0.0; use a LAN IP or DNS name (e.g. http://192.168.x.y:5247). " +
+                    "Also ensure the value is an origin (no /api, no /hubs/agent).";
+
+                await PublishLogAsync(machineId, "ERROR: " + msg);
+                await FailAsync(db, machine, msg, machineId);
+                rateLimit.RecordFailure(request.RateLimitKey);
+                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Actor = request.Actor,
+                    ActorIp = request.ActorIp,
+                    Action = "ssh.install.result",
+                    MachineId = machineId,
+                    Host = machine.Host,
+                    Port = machine.Port,
+                    Username = machine.Username,
+                    HostKeyFingerprint = machine.HostKeyFingerprint,
+                    Success = false,
+                    Error = "Invalid serverBaseUrl for remote install"
                 });
                 return;
             }
@@ -205,6 +250,20 @@ public sealed class OnboardingJobRunner
 
             if (nodeId is null)
             {
+                await PublishLogAsync(machineId, "Agent did not register within timeout. Collecting diagnostics from target...");
+                try
+                {
+                    var diagnostics = await ssh.CollectAgentDiagnosticsAsync(connOptions, serverUri, CancellationToken.None);
+                    if (!string.IsNullOrWhiteSpace(diagnostics))
+                    {
+                        await PublishLogAsync(machineId, diagnostics);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await PublishLogAsync(machineId, "WARNING: Failed to collect target diagnostics: " + ex.Message);
+                }
+
                 await FailAsync(db, machine, "Install ran, but agent did not register within the timeout.", machineId);
                 rateLimit.RecordSuccess(request.RateLimitKey);
                 await audit.RecordAsync(new Data.Entities.SshAuditEvent

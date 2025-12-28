@@ -58,6 +58,35 @@ If you deployed ManLab using the containerized topology (Aspire Docker hosting i
 
 In that case, point installers at the **dashboard URL** (default: `http://<host>:8080`).
 
+## LAN visibility checklist (when using device IPs)
+
+If you want to access ManLab from other devices on your local network (Raspberry Pi, phone, etc.) using the **PC/server's LAN IP**, there are two things that must be true:
+
+1) **The app must listen on a non-loopback interface** (not just `localhost`).
+2) **Your host firewall must allow inbound connections** to the relevant port(s).
+
+### Which URL should other devices use?
+
+- **Aspire / dev (running `ManLab.Server` directly)**
+  - Server: `http://<your-pc-ip>:5247`
+  - (Optional) Web dev server (Vite): `http://<your-pc-ip>:5173`
+
+- **Containerized deployment (Docker Compose / published bundle)**
+  - Dashboard (nginx reverse proxy): `http://<your-pc-ip>:8080`
+  - The REST API and SignalR hub are reachable *through the dashboard origin*:
+    - API: `http://<your-pc-ip>:8080/api/...`
+    - Hub: `http://<your-pc-ip>:8080/hubs/agent`
+  - In this topology, agents should generally install with `--server http://<your-pc-ip>:8080` (the proxy), not `:5247`.
+
+### Windows firewall note
+
+On Windows, even if the server binds to `0.0.0.0`, inbound traffic can still be blocked.
+If other devices time out when connecting, ensure Windows Defender Firewall allows inbound TCP on:
+
+- `5247` for `ManLab.Server` (dev/manual)
+- `5173` for Vite dev server (`npm run dev`)
+- `8080` for the nginx dashboard container (Compose deployment)
+
 ## Linux (`install.sh`)
 
 - Installs to `/opt/manlab-agent`
