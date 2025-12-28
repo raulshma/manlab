@@ -7,11 +7,19 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image version tag to publish (defaults to git tag; otherwise falls back to sha-<12>)'
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME_SERVER: ${{ github.repository_owner }}/manlab-server
-  IMAGE_NAME_WEB: ${{ github.repository_owner }}/manlab-web
+  IMAGE_OWNER: ${{ github.repository_owner }}
+  # Default value is overwritten to lowercase in the job; kept here so expressions can reference it.
+  IMAGE_OWNER_LC: ${{ github.repository_owner }}
+  IMAGE_NAME_SERVER: manlab-server
+  IMAGE_NAME_WEB: manlab-web
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
@@ -26,6 +34,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Compute image refs (owner + version)
+        id: img
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OWNER_LC="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "owner_lc=$OWNER_LC" >> "$GITHUB_OUTPUT"
+
+          # Determine the version tag:
+          # - workflow_dispatch can explicitly provide one
+          # - tag pushes use refs/tags/v*
+          # - otherwise fall back to a short sha tag
+          VERSION_INPUT='${{ inputs.version }}'
+          VERSION=""
+          if [ -n "$VERSION_INPUT" ]; then
+            VERSION="$VERSION_INPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="$GITHUB_REF_NAME"
+          else
+            VERSION="sha-${GITHUB_SHA::12}"
+          fi
+
+          SERVER_BASE="${REGISTRY}/${OWNER_LC}/${IMAGE_NAME_SERVER}"
+          WEB_BASE="${REGISTRY}/${OWNER_LC}/${IMAGE_NAME_WEB}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "server_base=$SERVER_BASE" >> "$GITHUB_OUTPUT"
+          echo "web_base=$WEB_BASE" >> "$GITHUB_OUTPUT"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -42,19 +82,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
-        id: meta_server
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SERVER }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha
-
       - name: Build and push server image
         id: build_server
         uses: docker/build-push-action@v6
@@ -65,23 +92,10 @@ jobs:
           platforms: linux/amd64,linux/arm64
           provenance: false
           sbom: false
-          tags: ${{ steps.meta_server.outputs.tags }}
-          labels: ${{ steps.meta_server.outputs.labels }}
+          tags: |
+            ${{ steps.img.outputs.server_base }}:${{ steps.img.outputs.version }}
           cache-from: type=gha,scope=server
           cache-to: type=gha,scope=server,mode=max
-
-      - name: Extract metadata (tags, labels) - web
-        id: meta_web
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WEB }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha
 
       - name: Build and push web image
         id: build_web
@@ -93,8 +107,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           provenance: false
           sbom: false
-          tags: ${{ steps.meta_web.outputs.tags }}
-          labels: ${{ steps.meta_web.outputs.labels }}
+          tags: |
+            ${{ steps.img.outputs.web_base }}:${{ steps.img.outputs.version }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,scope=web,mode=max
 
@@ -110,14 +124,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          SERVER_IMAGE="$(echo "${{ steps.meta_server.outputs.tags }}" | grep ':sha-' | head -n 1 || true)"
-          if [ -z "$SERVER_IMAGE" ]; then
-            SERVER_IMAGE="$(echo "${{ steps.meta_server.outputs.tags }}" | head -n 1)"
+          # Prefer immutable digests so the compose bundle *always* pulls exactly what we just built.
+          # Fallback to the first SHA tag if a digest isn't available for some reason.
+          SERVER_DIGEST="${{ steps.build_server.outputs.digest }}"
+          WEB_DIGEST="${{ steps.build_web.outputs.digest }}"
+
+          if [ -n "$SERVER_DIGEST" ]; then
+            SERVER_IMAGE="${{ steps.img.outputs.server_base }}@${SERVER_DIGEST}"
+          else
+            SERVER_IMAGE="${{ steps.img.outputs.server_base }}:${{ steps.img.outputs.version }}"
           fi
 
-          WEB_IMAGE="$(echo "${{ steps.meta_web.outputs.tags }}" | grep ':sha-' | head -n 1 || true)"
-          if [ -z "$WEB_IMAGE" ]; then
-            WEB_IMAGE="$(echo "${{ steps.meta_web.outputs.tags }}" | head -n 1)"
+          if [ -n "$WEB_DIGEST" ]; then
+            WEB_IMAGE="${{ steps.img.outputs.web_base }}@${WEB_DIGEST}"
+          else
+            WEB_IMAGE="${{ steps.img.outputs.web_base }}:${{ steps.img.outputs.version }}"
+          fi
+
+          if [ -z "${SERVER_IMAGE:-}" ] || [ -z "${WEB_IMAGE:-}" ]; then
+            echo "Failed to determine pushed image references (server='${SERVER_IMAGE:-}', web='${WEB_IMAGE:-}')." >&2
+            exit 1
           fi
 
           bash scripts/publish-compose-bundle.sh \

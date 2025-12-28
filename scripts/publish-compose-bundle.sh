@@ -50,6 +50,7 @@ echo "Publishing Docker Compose bundle to '$output_dir'..."
 aspire publish -o "$output_dir"
 
 env_path="$output_dir/.env"
+env_example_path="$output_dir/.env.example"
 
 cat >"$env_path" <<EOF
 PGPASSWORD=$pg_password
@@ -59,3 +60,12 @@ SERVER_PORT=$server_port
 EOF
 
 echo "Wrote '$env_path'."
+
+cat >"$env_example_path" <<EOF
+PGPASSWORD=CHANGEME
+SERVER_IMAGE=$server_image
+WEB_IMAGE=$web_image
+SERVER_PORT=$server_port
+EOF
+
+echo "Wrote '$env_example_path'."

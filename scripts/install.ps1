@@ -229,6 +229,7 @@ function Get-GitHubReleaseInfo([string]$ServerUrl) {
 
 function Try-DownloadFromGitHub([string]$ServerUrl, [string]$Rid, [string]$OutFile) {
   # Attempt to download the agent binary from GitHub releases
+  # GitHub releases contain archives (.zip for Windows), so we download and extract
   # Returns $true if successful, $false otherwise
   
   $releaseInfo = Get-GitHubReleaseInfo -ServerUrl $ServerUrl
@@ -244,22 +245,56 @@ function Try-DownloadFromGitHub([string]$ServerUrl, [string]$Rid, [string]$OutFi
   }
   
   $ridInfo = $downloadUrls.$Rid
-  $binaryUrl = $ridInfo.binaryUrl
+  $archiveUrl = $ridInfo.archiveUrl
+  $binaryName = $ridInfo.binaryName
   
-  if ([string]::IsNullOrWhiteSpace($binaryUrl)) {
-    Write-Verbose "GitHub binary URL is empty for RID: $Rid"
+  if ([string]::IsNullOrWhiteSpace($archiveUrl)) {
+    Write-Verbose "GitHub archive URL is empty for RID: $Rid"
     return $false
   }
   
-  Write-Host "Attempting download from GitHub release: $binaryUrl"
+  if ([string]::IsNullOrWhiteSpace($binaryName)) {
+    $binaryName = "manlab-agent.exe"
+  }
+  
+  Write-Host "Attempting download from GitHub release: $archiveUrl"
+  $tempDir = $null
   try {
-    Download-File -Url $binaryUrl -OutFile $OutFile
-    Write-Host "  Downloaded from GitHub successfully"
+    # Download archive to temp location
+    $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "manlab-install-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $archivePath = Join-Path $tempDir "agent-archive.zip"
+    
+    Download-File -Url $archiveUrl -OutFile $archivePath
+    
+    # Extract the archive
+    Write-Host "  Extracting archive..."
+    Expand-Archive -Path $archivePath -DestinationPath $tempDir -Force
+    
+    # Find and copy the binary
+    $extractedBinary = Join-Path $tempDir $binaryName
+    if (-not (Test-Path $extractedBinary)) {
+      throw "Binary '$binaryName' not found in extracted archive"
+    }
+    
+    # Ensure output directory exists
+    $outDir = Split-Path -Parent $OutFile
+    if (-not (Test-Path $outDir)) {
+      New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    }
+    
+    Copy-Item -Path $extractedBinary -Destination $OutFile -Force
+    Write-Host "  Downloaded and extracted from GitHub successfully"
     return $true
   } catch {
     Write-Warning "GitHub download failed: $($_.Exception.Message)"
     Write-Host "  Falling back to server download..."
     return $false
+  } finally {
+    # Cleanup temp directory
+    if ($null -ne $tempDir -and (Test-Path $tempDir)) {
+      try { Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    }
   }
 }
 

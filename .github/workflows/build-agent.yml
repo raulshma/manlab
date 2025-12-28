@@ -123,7 +123,7 @@ jobs:
           $src = "./publish/${{ matrix.rid }}/ManLab.Agent.exe"
           $dest = "./publish/${{ matrix.rid }}/${{ matrix.artifact }}"
           if (-not (Test-Path $src)) {
-            Write-Error "Expected published binary not found: $src"
+            throw "Expected published binary not found: $src"
           }
           Copy-Item $src $dest -Force
 

@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ManLab Agent installer (Linux)
+# ManLab Agent installer (Linux + macOS)
 #
 # Example:
 #   curl -fsSL http://manlab-server:5247/install.sh | sudo bash -s -- --server http://manlab-server:5247 --token "..."
 #
 # This script:
-#   - detects RID (linux-x64/linux-arm64)
+#   - detects RID (linux-x64/linux-arm64/osx-x64/osx-arm64)
 #   - downloads the staged agent binary from /api/binaries/agent/{rid}
-#   - writes /etc/manlab-agent.env with MANLAB_SERVER_URL + MANLAB_AUTH_TOKEN
-#   - registers and starts a systemd service
+#   - updates appsettings.json to include the hub URL ("<server>/hubs/agent") + optional token
+#   - registers and starts a background service:
+#       - Linux: systemd unit + /etc/manlab-agent.env
+#       - macOS: launchd plist (LaunchDaemon)
 
 SCRIPT_NAME="$(basename "$0")"
 
 usage() {
   cat <<'EOF'
-ManLab Agent installer (Linux)
+ManLab Agent installer (Linux/macOS)
 
 Usage:
   install.sh --server <http(s)://host:port> [--token <token>] [--install-dir <dir>] [--rid <rid>] [--force]
@@ -33,7 +35,7 @@ Options:
 
 Notes:
   - ServerUrl passed to the agent is "<server>/hubs/agent".
-  - Requires systemd.
+  - Requires systemd on Linux or launchd on macOS.
 EOF
 }
 
@@ -51,6 +53,19 @@ require_root() {
   fi
 }
 
+detect_os() {
+  local os
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$os" in
+    linux) echo "linux" ;;
+    darwin) echo "darwin" ;;
+    *)
+      echo "ERROR: Unsupported OS: $os" >&2
+      exit 1
+      ;;
+  esac
+}
+
 trim_trailing_slash() {
   local s="$1"
   while [[ "$s" == */ ]]; do s="${s%/}"; done
@@ -58,18 +73,19 @@ trim_trailing_slash() {
 }
 
 detect_rid() {
+  local os_prefix=""
   local os
-  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-  if [[ "$os" != "linux" ]]; then
-    echo "ERROR: Unsupported OS: $os" >&2
-    exit 1
-  fi
+  os="$(detect_os)"
+  case "$os" in
+    linux) os_prefix="linux" ;;
+    darwin) os_prefix="osx" ;;
+  esac
 
   local arch
   arch="$(uname -m)"
   case "$arch" in
-    x86_64|amd64) echo "linux-x64" ;;
-    aarch64|arm64) echo "linux-arm64" ;;
+    x86_64|amd64) echo "${os_prefix}-x64" ;;
+    aarch64|arm64) echo "${os_prefix}-arm64" ;;
     *)
       echo "ERROR: Unsupported architecture: $arch" >&2
       exit 1
@@ -118,31 +134,53 @@ try_download_from_github() {
   
   # Parse JSON with python3 if available, otherwise jq
   local enabled=""
-  local binary_url=""
+  local archive_url=""
+  local binary_name=""
   
   if command -v python3 >/dev/null 2>&1; then
     enabled=$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print('true' if d.get('enabled') else 'false')" <<< "$release_info" 2>/dev/null || echo "false")
-    binary_url=$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); urls=d.get('downloadUrls',{}); r=urls.get('$rid',{}); print(r.get('binaryUrl',''))" <<< "$release_info" 2>/dev/null || echo "")
+    archive_url=$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); urls=d.get('downloadUrls',{}); r=urls.get('$rid',{}); print(r.get('archiveUrl',''))" <<< "$release_info" 2>/dev/null || echo "")
+    binary_name=$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); urls=d.get('downloadUrls',{}); r=urls.get('$rid',{}); print(r.get('binaryName','manlab-agent'))" <<< "$release_info" 2>/dev/null || echo "manlab-agent")
   elif command -v jq >/dev/null 2>&1; then
     enabled=$(echo "$release_info" | jq -r '.enabled // false' 2>/dev/null || echo "false")
-    binary_url=$(echo "$release_info" | jq -r ".downloadUrls.\"$rid\".binaryUrl // \"\"" 2>/dev/null || echo "")
+    archive_url=$(echo "$release_info" | jq -r ".downloadUrls.\"$rid\".archiveUrl // \"\"" 2>/dev/null || echo "")
+    binary_name=$(echo "$release_info" | jq -r ".downloadUrls.\"$rid\".binaryName // \"manlab-agent\"" 2>/dev/null || echo "manlab-agent")
   else
     # No JSON parser available
     return 1
   fi
   
-  if [[ "$enabled" != "true" ]] || [[ -z "$binary_url" ]]; then
+  if [[ "$enabled" != "true" ]] || [[ -z "$archive_url" ]]; then
     return 1
   fi
   
-  echo "Attempting download from GitHub release: $binary_url"
-  if download "$binary_url" "$out"; then
-    echo "  Downloaded from GitHub successfully"
-    return 0
-  else
-    echo "  GitHub download failed, falling back to server..." >&2
-    return 1
+  # GitHub releases contain archives (.tar.gz for Linux/macOS), so we download and extract
+  echo "Attempting download from GitHub release: $archive_url"
+  local temp_dir
+  temp_dir="$(mktemp -d)"
+  local archive_path="$temp_dir/agent-archive.tar.gz"
+  
+  if download "$archive_url" "$archive_path"; then
+    echo "  Extracting archive..."
+    if tar -xzf "$archive_path" -C "$temp_dir"; then
+      local extracted_binary="$temp_dir/$binary_name"
+      if [[ -f "$extracted_binary" ]]; then
+        cp -f "$extracted_binary" "$out"
+        chmod +x "$out"
+        rm -rf "$temp_dir"
+        echo "  Downloaded and extracted from GitHub successfully"
+        return 0
+      else
+        echo "  Binary '$binary_name' not found in extracted archive" >&2
+      fi
+    else
+      echo "  Failed to extract archive" >&2
+    fi
+    rm -rf "$temp_dir"
   fi
+  
+  echo "  GitHub download failed, falling back to server..." >&2
+  return 1
 }
 
 backup_file() {
@@ -298,35 +336,51 @@ need_cmd uname
 need_cmd id
 need_cmd mkdir
 need_cmd chmod
-need_cmd systemctl
 need_cmd tee
 need_cmd rm
 need_cmd cp
 need_cmd mktemp
 
+OS_KIND="$(detect_os)"
+if [[ "$OS_KIND" == "linux" ]]; then
+  need_cmd systemctl
+else
+  need_cmd launchctl
+fi
+
 # Uninstall mode does not require server/token.
 if [[ $UNINSTALL -eq 1 ]]; then
   SERVICE_NAME="manlab-agent"
-  ENV_FILE="/etc/manlab-agent.env"
-  UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-
-  if ! systemctl list-unit-files >/dev/null 2>&1; then
-    echo "ERROR: systemd does not appear to be available on this system." >&2
-    exit 1
-  fi
 
   echo "Uninstalling ManLab Agent"
   echo "  Service:     $SERVICE_NAME"
   echo "  Install dir: $INSTALL_DIR"
 
-  # Best-effort: stop/disable service if it exists.
-  systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-  systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+  if [[ "$OS_KIND" == "linux" ]]; then
+    ENV_FILE="/etc/manlab-agent.env"
+    UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
-  # Remove unit + env.
-  rm -f "$UNIT_FILE" || true
-  rm -f "$ENV_FILE" || true
-  systemctl daemon-reload || true
+    if ! systemctl list-unit-files >/dev/null 2>&1; then
+      echo "ERROR: systemd does not appear to be available on this system." >&2
+      exit 1
+    fi
+
+    # Best-effort: stop/disable service if it exists.
+    systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+
+    # Remove unit + env.
+    rm -f "$UNIT_FILE" || true
+    rm -f "$ENV_FILE" || true
+    systemctl daemon-reload || true
+  else
+    PLIST_NAME="com.manlab.agent"
+    PLIST_FILE="/Library/LaunchDaemons/${PLIST_NAME}.plist"
+
+    # Best-effort: unload if present.
+    launchctl bootout system "$PLIST_FILE" >/dev/null 2>&1 || true
+    rm -f "$PLIST_FILE" || true
+  fi
 
   # Remove installation directory.
   if [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" != "/" ]]; then
@@ -356,13 +410,6 @@ APPSETTINGS_URL="$API_BASE/agent/$RID/appsettings.json"
 
 BIN_NAME="manlab-agent"
 SERVICE_NAME="manlab-agent"
-ENV_FILE="/etc/manlab-agent.env"
-UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-
-if ! systemctl list-unit-files >/dev/null 2>&1; then
-  echo "ERROR: systemd does not appear to be available on this system." >&2
-  exit 1
-fi
 
 echo "Installing ManLab Agent"
 echo "  Server:      $SERVER"
@@ -372,7 +419,7 @@ echo "  Install dir: $INSTALL_DIR"
 
 # Create a dedicated user if possible.
 AGENT_USER="manlab-agent"
-if ! id "$AGENT_USER" >/dev/null 2>&1; then
+if [[ "$OS_KIND" == "linux" ]] && ! id "$AGENT_USER" >/dev/null 2>&1; then
   if command -v useradd >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin "$AGENT_USER" || true
   elif command -v adduser >/dev/null 2>&1; then
@@ -439,31 +486,40 @@ else
 fi
 
 # If we created a dedicated user, lock down appsettings.json to that user.
-if id "$AGENT_USER" >/dev/null 2>&1; then
+if [[ "$OS_KIND" == "linux" ]] && id "$AGENT_USER" >/dev/null 2>&1; then
   chown "$AGENT_USER:$AGENT_USER" "$APPSETTINGS_PATH" || true
   chmod 0600 "$APPSETTINGS_PATH" || true
 else
   chmod 0644 "$APPSETTINGS_PATH" || true
 fi
 
-# Write environment file.
-# systemd EnvironmentFile expects KEY=VALUE lines.
-{
-  echo "MANLAB_SERVER_URL=$HUB_URL"
-  if [[ -n "$TOKEN" ]]; then
-    echo "MANLAB_AUTH_TOKEN=$TOKEN"
+if [[ "$OS_KIND" == "linux" ]]; then
+  ENV_FILE="/etc/manlab-agent.env"
+  UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+  if ! systemctl list-unit-files >/dev/null 2>&1; then
+    echo "ERROR: systemd does not appear to be available on this system." >&2
+    exit 1
   fi
-} | tee "$ENV_FILE" >/dev/null
-chmod 0600 "$ENV_FILE"
 
-# Write systemd unit.
-# Use the dedicated user if it exists; otherwise it will run as root.
-UNIT_USER_DIRECTIVE=""
-if id "$AGENT_USER" >/dev/null 2>&1; then
-  UNIT_USER_DIRECTIVE="User=$AGENT_USER"
-fi
+  # Write environment file.
+  # systemd EnvironmentFile expects KEY=VALUE lines.
+  {
+    echo "MANLAB_SERVER_URL=$HUB_URL"
+    if [[ -n "$TOKEN" ]]; then
+      echo "MANLAB_AUTH_TOKEN=$TOKEN"
+    fi
+  } | tee "$ENV_FILE" >/dev/null
+  chmod 0600 "$ENV_FILE"
 
-cat > "$UNIT_FILE" <<EOF
+  # Write systemd unit.
+  # Use the dedicated user if it exists; otherwise it will run as root.
+  UNIT_USER_DIRECTIVE=""
+  if id "$AGENT_USER" >/dev/null 2>&1; then
+    UNIT_USER_DIRECTIVE="User=$AGENT_USER"
+  fi
+
+  cat > "$UNIT_FILE" <<EOF
 [Unit]
 Description=ManLab Agent
 Wants=network-online.target
@@ -488,9 +544,74 @@ ProtectHome=true
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME" >/dev/null
-systemctl restart "$SERVICE_NAME"
+  systemctl daemon-reload
+  systemctl enable "$SERVICE_NAME" >/dev/null
+  systemctl restart "$SERVICE_NAME"
 
-echo "Installed and started: $SERVICE_NAME"
-echo "Check status with: systemctl status $SERVICE_NAME"
+  echo "Installed and started: $SERVICE_NAME"
+  echo "Check status with: systemctl status $SERVICE_NAME"
+else
+  PLIST_NAME="com.manlab.agent"
+  PLIST_FILE="/Library/LaunchDaemons/${PLIST_NAME}.plist"
+
+  # launchd does not support an EnvironmentFile directive like systemd.
+  # Store the variables directly in the plist.
+  # Note: This is comparable to /etc/manlab-agent.env on Linux in terms of sensitivity.
+  TOKEN_VALUE="${TOKEN}"
+
+  cat > "$PLIST_FILE" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${PLIST_NAME}</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${INSTALL_DIR}/${BIN_NAME}</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>${INSTALL_DIR}</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MANLAB_SERVER_URL</key>
+    <string>${HUB_URL}</string>
+EOF
+
+  if [[ -n "$TOKEN_VALUE" ]]; then
+    cat >> "$PLIST_FILE" <<EOF
+    <key>MANLAB_AUTH_TOKEN</key>
+    <string>${TOKEN_VALUE}</string>
+EOF
+  fi
+
+  cat >> "$PLIST_FILE" <<'EOF'
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/manlab-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/manlab-agent.err.log</string>
+</dict>
+</plist>
+EOF
+
+  chmod 0644 "$PLIST_FILE" || true
+  # Best-effort: unload any old copy, then load.
+  launchctl bootout system "$PLIST_FILE" >/dev/null 2>&1 || true
+  launchctl bootstrap system "$PLIST_FILE"
+  launchctl enable system/$PLIST_NAME >/dev/null 2>&1 || true
+  launchctl kickstart -k system/$PLIST_NAME >/dev/null 2>&1 || true
+
+  echo "Installed and started: $PLIST_NAME"
+  echo "Logs: /var/log/manlab-agent.log"
+fi

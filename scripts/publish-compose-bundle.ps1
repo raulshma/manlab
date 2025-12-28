@@ -50,6 +50,7 @@ if ($aspireCmd.Count -eq 1) {
 }
 
 $envPath = Join-Path $OutputDir '.env'
+$envExamplePath = Join-Path $OutputDir '.env.example'
 
 # Stamp/overwrite the minimal set of env vars that the generated compose expects.
 # Avoid writing secrets into CI artifacts by allowing PgPassword to be blank.
@@ -63,3 +64,14 @@ $lines = @(
 Set-Content -Path $envPath -Value $lines -Encoding UTF8
 
 Write-Host "Wrote '$envPath'."
+
+$exampleLines = @(
+    "PGPASSWORD=CHANGEME",
+    "SERVER_IMAGE=$ServerImage",
+    "WEB_IMAGE=$WebImage",
+    "SERVER_PORT=$ServerPort"
+)
+
+Set-Content -Path $envExamplePath -Value $exampleLines -Encoding UTF8
+
+Write-Host "Wrote '$envExamplePath'."

@@ -294,11 +294,13 @@ public sealed partial class BinariesController : ControllerBase
     /// </summary>
     /// <param name="Rid">Runtime identifier (e.g., win-x64, linux-arm64).</param>
     /// <param name="ArchiveUrl">URL to the compressed archive (.zip for Windows, .tar.gz for Linux/macOS).</param>
-    /// <param name="BinaryUrl">Direct URL to the binary file.</param>
+    /// <param name="BinaryUrl">URL to download (same as ArchiveUrl since GitHub releases only have archives).</param>
+    /// <param name="BinaryName">Name of the binary file inside the archive (e.g., manlab-agent.exe or manlab-agent).</param>
     public sealed record GitHubReleaseDownloadUrl(
         string Rid,
         string ArchiveUrl,
-        string BinaryUrl);
+        string BinaryUrl,
+        string BinaryName);
 
     /// <summary>
     /// Returns GitHub release information for agent downloads.
@@ -331,10 +333,9 @@ public sealed partial class BinariesController : ControllerBase
             var binaryName = isWindows ? "manlab-agent.exe" : "manlab-agent";
 
             var archiveUrl = $"{baseUrl.TrimEnd('/')}/{version}/manlab-agent-{rid}{archiveExt}";
-            // Direct binary URL uses the RID-specific naming from the workflow
-            var binaryUrl = $"{baseUrl.TrimEnd('/')}/{version}/{binaryName}";
-
-            downloadUrls[rid] = new GitHubReleaseDownloadUrl(rid, archiveUrl, binaryUrl);
+            // GitHub releases only contain archives, so binaryUrl points to the same archive.
+            // Install scripts should download the archive and extract the binary.
+            downloadUrls[rid] = new GitHubReleaseDownloadUrl(rid, archiveUrl, archiveUrl, binaryName);
         }
 
         return Ok(new GitHubReleaseInfo(
