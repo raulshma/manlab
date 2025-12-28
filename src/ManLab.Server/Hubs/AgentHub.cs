@@ -56,7 +56,7 @@ public class AgentHub : Hub
     /// </summary>
     public override async Task OnConnectedAsync()
     {
-        _logger.LogInformation("Agent connected: {ConnectionId}", Context.ConnectionId);
+        _logger.AgentConnected(Context.ConnectionId);
         await base.OnConnectedAsync();
     }
 
@@ -65,8 +65,7 @@ public class AgentHub : Hub
     /// </summary>
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        _logger.LogInformation("Agent disconnected: {ConnectionId}, Reason: {Reason}",
-            Context.ConnectionId, exception?.Message ?? "Normal disconnect");
+        _logger.AgentDisconnected(Context.ConnectionId, exception?.Message ?? "Normal disconnect");
 
         _connectionRegistry.TryRemoveByConnectionId(Context.ConnectionId, out _);
 
@@ -92,14 +91,13 @@ public class AgentHub : Hub
 
         var tokenHash = TokenHasher.NormalizeToSha256Hex(bearerToken);
 
-        _logger.LogInformation("Agent registering: {Hostname}", metadata.Hostname);
+        _logger.AgentRegistering(metadata.Hostname);
 
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
 
-        // Prefer binding by auth token hash.
-        var authedNode = await dbContext.Nodes
-            .FirstOrDefaultAsync(n => n.AuthKeyHash != null && n.AuthKeyHash == tokenHash);
+        // Prefer binding by auth token hash (using compiled query for performance).
+        var authedNode = await CompiledQueries.GetNodeByAuthKeyHashAsync(dbContext, tokenHash);
 
         if (authedNode is not null)
         {
@@ -133,12 +131,8 @@ public class AgentHub : Hub
             return authedNode.Id;
         }
 
-        // If it's an unused enrollment token, bind it to the node we create.
-        var enrollment = await dbContext.EnrollmentTokens
-            .Where(t => t.TokenHash == tokenHash)
-            .Where(t => t.UsedAt == null)
-            .Where(t => t.ExpiresAt > DateTime.UtcNow)
-            .FirstOrDefaultAsync();
+        // If it's an unused enrollment token, bind it to the node we create (using compiled query).
+        var enrollment = await CompiledQueries.GetValidEnrollmentTokenAsync(dbContext, tokenHash, DateTime.UtcNow);
 
         if (enrollment is null)
         {
@@ -169,7 +163,7 @@ public class AgentHub : Hub
 
         await dbContext.SaveChangesAsync();
 
-        _logger.LogInformation("Registered new node: {NodeId} ({Hostname})", newNode.Id, metadata.Hostname);
+        _logger.NodeRegistered(newNode.Id, metadata.Hostname);
 
         // Bind the latest connectionId to this nodeId for targeted server->agent calls.
         _connectionRegistry.Set(newNode.Id, Context.ConnectionId);
@@ -233,7 +227,7 @@ public class AgentHub : Hub
         // Prevent a connected agent from spoofing another nodeId.
         if (registeredNodeId != nodeId)
         {
-            _logger.LogWarning("Rejected heartbeat for node {NodeId}: connection bound to node {RegisteredNodeId}", nodeId, registeredNodeId);
+            _logger.HeartbeatRejected(nodeId, registeredNodeId);
             throw new HubException("Unauthorized: nodeId does not match registered connection.");
         }
 
@@ -314,7 +308,7 @@ public class AgentHub : Hub
         dbContext.TelemetrySnapshots.Add(snapshot);
         await dbContext.SaveChangesAsync();
 
-        _logger.LogDebug("Heartbeat received from node: {NodeId}", nodeId);
+        _logger.HeartbeatReceived(nodeId);
 
         // Node status transitions are handled on Register() (Online) and HealthMonitorService (Offline).
         // Avoid additional DB round-trips in the hot heartbeat path.
@@ -536,7 +530,7 @@ public class AgentHub : Hub
 
         if (session is null)
         {
-            _logger.LogWarning("Terminal output received for unknown session {SessionId}", sessionId);
+            _logger.UnknownTerminalSession(sessionId);
             return;
         }
 
@@ -562,8 +556,7 @@ public class AgentHub : Hub
             output = output[..MaxTerminalOutputChunkChars] + "\n[...output truncated by server...]\n";
         }
 
-        _logger.LogDebug("Terminal output received for session {SessionId}: {Length} chars, closed={IsClosed}",
-            sessionId, output.Length, isClosed);
+        _logger.TerminalOutputReceived(sessionId, output.Length, isClosed);
 
         // Broadcast to subscribed dashboard clients
         await Clients.Group(GetTerminalOutputGroup(sessionId))
@@ -576,7 +569,7 @@ public class AgentHub : Hub
     public async Task SubscribeTerminalOutput(Guid sessionId)
     {
         await Groups.AddToGroupAsync(Context.ConnectionId, GetTerminalOutputGroup(sessionId));
-        _logger.LogDebug("Client {ConnectionId} subscribed to terminal session {SessionId}", Context.ConnectionId, sessionId);
+        _logger.TerminalSubscribed(Context.ConnectionId, sessionId);
     }
 
     /// <summary>
@@ -688,7 +681,7 @@ public class AgentHub : Hub
             throw new HubException("Unauthorized: agent must register before updating command status.");
         }
 
-        _logger.LogInformation("Command status update: {CommandId} -> {Status}", commandId, status);
+        _logger.CommandStatusUpdate(commandId, status);
 
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<DataContext>();
@@ -696,7 +689,7 @@ public class AgentHub : Hub
         var command = await dbContext.CommandQueue.FindAsync(commandId);
         if (command == null)
         {
-            _logger.LogWarning("Status update for unknown command: {CommandId}", commandId);
+            _logger.UnknownCommandStatusUpdate(commandId);
             return;
         }
 

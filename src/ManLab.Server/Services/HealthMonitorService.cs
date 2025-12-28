@@ -34,9 +34,7 @@ public sealed class HealthMonitorService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("HealthMonitorService started. Interval={IntervalSeconds}s Threshold={ThresholdSeconds}s",
-            CheckInterval.TotalSeconds,
-            OfflineThreshold.TotalSeconds);
+        _logger.HealthMonitorStarted(CheckInterval.TotalSeconds, OfflineThreshold.TotalSeconds);
 
         // Small initial delay so the host can fully start up.
         try
@@ -61,7 +59,7 @@ public sealed class HealthMonitorService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Health monitor loop failed");
+                _logger.HealthMonitorLoopFailed(ex);
             }
 
             try
@@ -74,7 +72,7 @@ public sealed class HealthMonitorService : BackgroundService
             }
         }
 
-        _logger.LogInformation("HealthMonitorService stopped");
+        _logger.HealthMonitorStopped();
     }
 
     private async Task CheckOfflineNodesAsync(CancellationToken cancellationToken)
@@ -104,10 +102,7 @@ public sealed class HealthMonitorService : BackgroundService
 
         foreach (var node in nodesToFlip)
         {
-            _logger.LogWarning("Node marked Offline due to missed heartbeats: {NodeId} ({Hostname}) LastSeen={LastSeen:o}",
-                node.Id,
-                node.Hostname,
-                node.LastSeen);
+            _logger.NodeMarkedOffline(node.Id, node.Hostname, node.LastSeen);
 
             // Notify connected dashboard clients.
             await _hubContext.Clients.All.SendAsync(

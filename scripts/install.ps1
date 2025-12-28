@@ -203,7 +203,7 @@ if ($PreviewUninstall) {
     foreach ($d in $existingDirs) {
       $files = Get-DirectoryFileSample -Path $d -Max 20
       if ($files.Count -gt 0) {
-        $sections += (New-PreviewSection -Label "Files (sample) — $d" -Items $files)
+        $sections += (New-PreviewSection -Label "Files (sample) - $d" -Items $files)
       }
     }
   } else {

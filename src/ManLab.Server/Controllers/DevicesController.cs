@@ -107,6 +107,7 @@ public class DevicesController : ControllerBase
     /// <param name="count">Number of telemetry entries to retrieve (default: 10).</param>
     /// <returns>List of recent telemetry snapshots.</returns>
     [HttpGet("{id:guid}/telemetry")]
+    [ResponseCache(Duration = 5, VaryByQueryKeys = ["count"])]
     public async Task<ActionResult<IEnumerable<TelemetryDto>>> GetTelemetry(Guid id, [FromQuery] int count = 10)
     {
         var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
@@ -137,6 +138,7 @@ public class DevicesController : ControllerBase
     /// Gets network throughput history for a specific node.
     /// </summary>
     [HttpGet("{id:guid}/telemetry/network")]
+    [ResponseCache(Duration = 5, VaryByQueryKeys = ["count"])]
     public async Task<ActionResult<IEnumerable<NetworkTelemetryDto>>> GetNetworkTelemetry(Guid id, [FromQuery] int count = 120)
     {
         if (count <= 0) count = 120;
@@ -168,6 +170,7 @@ public class DevicesController : ControllerBase
     /// Gets ping history for a specific node.
     /// </summary>
     [HttpGet("{id:guid}/telemetry/ping")]
+    [ResponseCache(Duration = 5, VaryByQueryKeys = ["count"])]
     public async Task<ActionResult<IEnumerable<PingTelemetryDto>>> GetPingTelemetry(Guid id, [FromQuery] int count = 120)
     {
         if (count <= 0) count = 120;
@@ -557,8 +560,7 @@ public class DevicesController : ControllerBase
         _dbContext.CommandQueue.Add(command);
         await _dbContext.SaveChangesAsync();
 
-        _logger.LogInformation("Command queued: {CommandId} for node {NodeId}, type: {CommandType}", 
-            command.Id, id, commandType);
+        _logger.CommandQueued(command.Id, id, commandType.ToString());
 
         return CreatedAtAction(nameof(GetCommands), new { id }, new CommandDto
         {
@@ -595,7 +597,7 @@ public class DevicesController : ControllerBase
         // If agent is connected, send uninstall command to cleanup the agent
         if (_connectionRegistry.TryGet(id, out var connectionId))
         {
-            _logger.LogInformation("Sending uninstall command to connected agent for node {NodeId}", id);
+            _logger.SendingUninstallCommand(id);
             
             // Queue the uninstall command
             var uninstallCommand = new Data.Entities.CommandQueueItem
@@ -617,7 +619,7 @@ public class DevicesController : ControllerBase
         _dbContext.Nodes.Remove(node);
         await _dbContext.SaveChangesAsync();
 
-        _logger.LogInformation("Deleted node: {NodeId} ({Hostname})", id, node.Hostname);
+        _logger.NodeDeleted(id, node.Hostname);
 
         return NoContent();
     }
@@ -643,13 +645,13 @@ public class DevicesController : ControllerBase
 
         if (!_connectionRegistry.TryGet(id, out var connectionId))
         {
-            _logger.LogWarning("Cannot request ping for node {NodeId}: agent not connected", id);
+            _logger.PingRequestFailed(id);
             return StatusCode(503, new { message = "Agent is not currently connected" });
         }
 
         await _hubContext.Clients.Client(connectionId).SendAsync("RequestPing");
 
-        _logger.LogInformation("Admin ping request sent to node {NodeId}", id);
+        _logger.PingRequestSent(id);
 
         return Accepted(new { message = "Ping request sent to agent" });
     }
@@ -677,24 +679,24 @@ public class DevicesController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(node.MacAddress))
         {
-            _logger.LogWarning("Cannot wake node {NodeId}: no MAC address stored", id);
+            _logger.WakeFailedNoMac(id);
             return BadRequest(new { message = "Node does not have a MAC address. The agent must connect at least once to report its MAC address." });
         }
 
         if (node.Status == NodeStatus.Online)
         {
-            _logger.LogWarning("Cannot wake node {NodeId}: node is already online", id);
+            _logger.WakeFailedAlreadyOnline(id);
             return BadRequest(new { message = "Node is already online" });
         }
 
         var success = await _wakeOnLanService.SendWakeAsync(node.MacAddress);
         if (!success)
         {
-            _logger.LogWarning("Failed to send WoL packet to node {NodeId}", id);
+            _logger.WolPacketFailed(id);
             return StatusCode(500, new { message = "Failed to send Wake-on-LAN packet" });
         }
 
-        _logger.LogInformation("Wake-on-LAN packet sent to node {NodeId} ({MacAddress})", id, node.MacAddress);
+        _logger.WolPacketSent(id, node.MacAddress);
 
         return Accepted(new { message = "Wake-on-LAN packet sent" });
     }
