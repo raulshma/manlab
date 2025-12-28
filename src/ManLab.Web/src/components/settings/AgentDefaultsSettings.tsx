@@ -10,7 +10,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { api } from "@/api";
 import { SettingKeys } from "@/constants/settingKeys";
 import { toast } from "sonner";
-import { AlertTriangle, Shield, Activity, Settings } from "lucide-react";
+import { AlertTriangle, Shield, Activity, Settings, FileText } from "lucide-react";
 
 interface SystemSetting {
   key: string;
@@ -42,6 +42,10 @@ const DEFAULTS = {
   scriptMinSecondsBetweenRuns: "1",
   terminalMaxOutputBytes: "65536",
   terminalMaxDurationSeconds: "600",
+  // Agent self-logging
+  agentLogFilePath: "",
+  agentLogFileMaxBytes: "5242880",
+  agentLogFileRetainedFiles: "3",
 };
 
 type FormValues = typeof DEFAULTS;
@@ -91,6 +95,9 @@ export function AgentDefaultsSettings() {
       scriptMinSecondsBetweenRuns: get(SettingKeys.Agent.ScriptMinSecondsBetweenRuns, DEFAULTS.scriptMinSecondsBetweenRuns),
       terminalMaxOutputBytes: get(SettingKeys.Agent.TerminalMaxOutputBytes, DEFAULTS.terminalMaxOutputBytes),
       terminalMaxDurationSeconds: get(SettingKeys.Agent.TerminalMaxDurationSeconds, DEFAULTS.terminalMaxDurationSeconds),
+      agentLogFilePath: get(SettingKeys.Agent.AgentLogFilePath, DEFAULTS.agentLogFilePath),
+      agentLogFileMaxBytes: get(SettingKeys.Agent.AgentLogFileMaxBytes, DEFAULTS.agentLogFileMaxBytes),
+      agentLogFileRetainedFiles: get(SettingKeys.Agent.AgentLogFileRetainedFiles, DEFAULTS.agentLogFileRetainedFiles),
     };
   }, [settings]);
 
@@ -138,6 +145,9 @@ export function AgentDefaultsSettings() {
       { key: SettingKeys.Agent.ScriptMinSecondsBetweenRuns, value: values.scriptMinSecondsBetweenRuns, category: "Agent", description: "Minimum seconds between script runs" },
       { key: SettingKeys.Agent.TerminalMaxOutputBytes, value: values.terminalMaxOutputBytes, category: "Agent", description: "Maximum bytes for terminal output" },
       { key: SettingKeys.Agent.TerminalMaxDurationSeconds, value: values.terminalMaxDurationSeconds, category: "Agent", description: "Maximum terminal session duration" },
+      { key: SettingKeys.Agent.AgentLogFilePath, value: values.agentLogFilePath || null, category: "Agent", description: "Path to agent self-log file" },
+      { key: SettingKeys.Agent.AgentLogFileMaxBytes, value: values.agentLogFileMaxBytes, category: "Agent", description: "Max agent log file size before rotation" },
+      { key: SettingKeys.Agent.AgentLogFileRetainedFiles, value: values.agentLogFileRetainedFiles, category: "Agent", description: "Number of rotated agent log files to keep" },
     ]);
   };
 
@@ -342,6 +352,52 @@ export function AgentDefaultsSettings() {
             <div className="grid gap-2">
               <Label htmlFor="terminalMaxDuration">Terminal Max Duration (s)</Label>
               <Input id="terminalMaxDuration" type="number" value={values.terminalMaxDurationSeconds} onChange={(e) => updateField("terminalMaxDurationSeconds", e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Agent Self-Logging */}
+        <div>
+          <h4 className="text-sm font-medium flex items-center gap-2 mb-3">
+            <FileText className="h-4 w-4" />
+            Agent Logging
+          </h4>
+          <p className="text-xs text-muted-foreground mb-3">
+            Configure how the agent logs its own activity. Leave path empty for OS-specific default location.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid gap-2 md:col-span-3">
+              <Label htmlFor="agentLogFilePath">Log File Path</Label>
+              <Input
+                id="agentLogFilePath"
+                type="text"
+                placeholder="Auto-detect (e.g. %LocalAppData%\ManLab\Logs)"
+                value={values.agentLogFilePath}
+                onChange={(e) => updateField("agentLogFilePath", e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="agentLogMaxBytes">Max File Size (bytes)</Label>
+              <Input
+                id="agentLogMaxBytes"
+                type="number"
+                min={1024}
+                value={values.agentLogFileMaxBytes}
+                onChange={(e) => updateField("agentLogFileMaxBytes", e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="agentLogRetainedFiles">Retained Files</Label>
+              <Input
+                id="agentLogRetainedFiles"
+                type="number"
+                min={1}
+                max={10}
+                value={values.agentLogFileRetainedFiles}
+                onChange={(e) => updateField("agentLogFileRetainedFiles", e.target.value)}
+              />
             </div>
           </div>
         </div>

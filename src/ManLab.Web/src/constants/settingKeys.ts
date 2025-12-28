@@ -26,6 +26,10 @@ export const SettingKeys = {
     ScriptMinSecondsBetweenRuns: "Agent.ScriptMinSecondsBetweenRuns",
     TerminalMaxOutputBytes: "Agent.TerminalMaxOutputBytes",
     TerminalMaxDurationSeconds: "Agent.TerminalMaxDurationSeconds",
+    // Agent self-logging settings
+    AgentLogFilePath: "Agent.AgentLogFilePath",
+    AgentLogFileMaxBytes: "Agent.AgentLogFileMaxBytes",
+    AgentLogFileRetainedFiles: "Agent.AgentLogFileRetainedFiles",
   },
   Discord: {
     WebhookUrl: "Discord.WebhookUrl",

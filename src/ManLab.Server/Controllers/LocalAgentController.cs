@@ -103,7 +103,10 @@ public sealed class LocalAgentController : ControllerBase
             ScriptMaxDurationSeconds: 60,
             ScriptMinSecondsBetweenRuns: 1,
             TerminalMaxOutputBytes: 64 * 1024,
-            TerminalMaxDurationSeconds: 10 * 60));
+            TerminalMaxDurationSeconds: 10 * 60,
+            AgentLogFilePath: null,
+            AgentLogFileMaxBytes: 5 * 1024 * 1024,
+            AgentLogFileRetainedFiles: 3));
     }
 
     /// <summary>
@@ -328,5 +331,8 @@ public sealed class LocalAgentController : ControllerBase
         int ScriptMaxDurationSeconds,
         int ScriptMinSecondsBetweenRuns,
         int TerminalMaxOutputBytes,
-        int TerminalMaxDurationSeconds);
+        int TerminalMaxDurationSeconds,
+        string? AgentLogFilePath,
+        int AgentLogFileMaxBytes,
+        int AgentLogFileRetainedFiles);
 }

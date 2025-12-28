@@ -34,6 +34,11 @@ public static class SettingKeys
         public const string ScriptMinSecondsBetweenRuns = "Agent.ScriptMinSecondsBetweenRuns";
         public const string TerminalMaxOutputBytes = "Agent.TerminalMaxOutputBytes";
         public const string TerminalMaxDurationSeconds = "Agent.TerminalMaxDurationSeconds";
+
+        // Agent self-logging settings
+        public const string AgentLogFilePath = "Agent.AgentLogFilePath";
+        public const string AgentLogFileMaxBytes = "Agent.AgentLogFileMaxBytes";
+        public const string AgentLogFileRetainedFiles = "Agent.AgentLogFileRetainedFiles";
     }
 
     public static class Discord
