@@ -36,11 +36,12 @@ jobs:
           - os: ubuntu-latest
             rid: linux-arm64
             artifact: manlab-agent
-          # macos-13 is x64; macos-14 is arm64 (Apple Silicon).
-          - os: macos-13
+          # Use a currently available macOS runner label.
+          # (Hosted runner availability changes over time; macos-14 is generally available.)
+          - os: macos-15-intel
             rid: osx-x64
             artifact: manlab-agent
-          - os: macos-14
+          - os: macos-latest
             rid: osx-arm64
             artifact: manlab-agent
     runs-on: ${{ matrix.os }}
