@@ -27,6 +27,8 @@ namespace ManLab.Shared.Dtos;
 [JsonSerializable(typeof(UpsSnapshotIngest))]
 [JsonSerializable(typeof(List<UpsSnapshotIngest>))]
 [JsonSerializable(typeof(Dictionary<string, float>))]
+[JsonSerializable(typeof(Dictionary<string, object>))]
+[JsonSerializable(typeof(Dictionary<string, object?>))]
 [JsonSerializable(typeof(Guid))]
 [JsonSerializable(typeof(Guid?))]
 public partial class ManLabJsonContext : JsonSerializerContext;

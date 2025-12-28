@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ManLab.Agent.Configuration;
 using ManLab.Shared.Dtos;
 using System.Runtime.InteropServices;
@@ -409,7 +410,7 @@ public sealed class CommandDispatcher : IDisposable
             try
             {
                 var content = File.ReadAllText(appSettingsPath);
-                root = JsonSerializer.Deserialize<Dictionary<string, object>>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                root = JsonSerializer.Deserialize(content, ManLabJsonContext.Default.DictionaryStringObject);
             }
             catch (JsonException ex)
             {
@@ -420,7 +421,7 @@ public sealed class CommandDispatcher : IDisposable
         root ??= new Dictionary<string, object>();
         if (root.TryGetValue("Agent", out var existingAgent) && existingAgent is JsonElement agentEl)
         {
-            agentSection = JsonSerializer.Deserialize<Dictionary<string, object?>>(agentEl.GetRawText());
+            agentSection = JsonSerializer.Deserialize(agentEl.GetRawText(), ManLabJsonContext.Default.DictionaryStringObject);
         }
         agentSection ??= new Dictionary<string, object?>();
 
@@ -480,9 +481,12 @@ public sealed class CommandDispatcher : IDisposable
 
         // Write updated config
         root["Agent"] = agentSection;
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        var json = JsonSerializer.Serialize(root, options);
-        File.WriteAllText(appSettingsPath, json);
+        // Use source generation for AOT compatibility
+        var json = JsonSerializer.Serialize(root, ManLabJsonContext.Default.DictionaryStringObject);
+        
+        // Format with indentation using JsonNode (AOT-compatible)
+        var formatted = JsonNode.Parse(json)?.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(appSettingsPath, formatted ?? json);
 
         _logger.LogInformation("Updated appsettings.json with {Count} fields: {Fields}", updatedFields.Count, string.Join(", ", updatedFields));
 

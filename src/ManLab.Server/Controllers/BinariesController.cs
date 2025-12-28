@@ -4,6 +4,8 @@ using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace ManLab.Server.Controllers;
 
@@ -150,7 +152,7 @@ public sealed partial class BinariesController : ControllerBase
     /// Expected layout: {DistributionRoot}/agent/{channel}/{rid}/appsettings.json
     /// </summary>
     [HttpGet("agent/{rid}/appsettings.json")]
-    public IActionResult DownloadAgentAppSettings([FromRoute] string rid, [FromQuery] string? channel = null)
+    public async Task<IActionResult> DownloadAgentAppSettings([FromRoute] string rid, [FromQuery] string? channel = null)
     {
         if (!IsRidSafe(rid))
         {
@@ -164,12 +166,96 @@ public sealed partial class BinariesController : ControllerBase
             return NotFound();
         }
 
-        // JSON content type helps browsers/tools handle it nicely.
-        return PhysicalFile(
-            filePath,
-            contentType: "application/json",
-            fileDownloadName: "appsettings.json",
-            enableRangeProcessing: true);
+        // Merge system settings (Agent defaults) into the staged template.
+        // This keeps the distribution folder as a baseline while letting the dashboard control
+        // feature toggles like EnableTerminal for new installs.
+        JsonNode? root;
+        try
+        {
+            var raw = await System.IO.File.ReadAllTextAsync(filePath, Encoding.UTF8);
+            root = JsonNode.Parse(raw);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse staged agent appsettings.json at {Path}", filePath);
+            // Fall back to serving the raw file if parsing fails.
+            return PhysicalFile(
+                filePath,
+                contentType: "application/json",
+                fileDownloadName: "appsettings.json",
+                enableRangeProcessing: true);
+        }
+
+        if (root is not JsonObject rootObj)
+        {
+            // Unexpected shape; fall back to raw file.
+            return PhysicalFile(
+                filePath,
+                contentType: "application/json",
+                fileDownloadName: "appsettings.json",
+                enableRangeProcessing: true);
+        }
+
+        var agent = rootObj["Agent"] as JsonObject ?? new JsonObject();
+        rootObj["Agent"] = agent;
+
+        // Always prefer the currently-served origin as the default ServerUrl.
+        // Installers may still overwrite this, but it makes manual downloads safer.
+        agent["ServerUrl"] = $"{Request.Scheme}://{Request.Host}/hubs/agent";
+
+        await ApplyAgentDefaultsFromSystemSettingsAsync(agent);
+
+        var json = rootObj.ToJsonString(new JsonSerializerOptions
+        {
+            WriteIndented = true
+        });
+
+        return Content(json, "application/json", Encoding.UTF8);
+    }
+
+    private async Task ApplyAgentDefaultsFromSystemSettingsAsync(JsonObject agent)
+    {
+        // Use existing template values as the fallback defaults.
+        // This makes the endpoint resilient if new keys are added to the template.
+        static int GetInt(JsonObject obj, string name, int fallback)
+            => obj[name]?.GetValue<int?>() ?? fallback;
+
+        static bool GetBool(JsonObject obj, string name, bool fallback)
+            => obj[name]?.GetValue<bool?>() ?? fallback;
+
+        static string? GetString(JsonObject obj, string name, string? fallback)
+            => obj[name]?.GetValue<string?>() ?? fallback;
+
+        // Connection
+        agent["HeartbeatIntervalSeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.HeartbeatIntervalSeconds, GetInt(agent, "HeartbeatIntervalSeconds", 15));
+        agent["MaxReconnectDelaySeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.MaxReconnectDelaySeconds, GetInt(agent, "MaxReconnectDelaySeconds", 60));
+
+        // Telemetry
+        agent["TelemetryCacheSeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TelemetryCacheSeconds, GetInt(agent, "TelemetryCacheSeconds", 30));
+        agent["PrimaryInterfaceName"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.PrimaryInterfaceName, GetString(agent, "PrimaryInterfaceName", string.Empty) ?? string.Empty);
+        agent["EnableNetworkTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableNetworkTelemetry, GetBool(agent, "EnableNetworkTelemetry", true));
+        agent["EnablePingTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnablePingTelemetry, GetBool(agent, "EnablePingTelemetry", true));
+        agent["EnableGpuTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableGpuTelemetry, GetBool(agent, "EnableGpuTelemetry", true));
+        agent["EnableUpsTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableUpsTelemetry, GetBool(agent, "EnableUpsTelemetry", true));
+
+        // Remote tools (security-sensitive)
+        agent["EnableLogViewer"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableLogViewer, GetBool(agent, "EnableLogViewer", false));
+        agent["EnableScripts"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableScripts, GetBool(agent, "EnableScripts", false));
+        agent["EnableTerminal"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableTerminal, GetBool(agent, "EnableTerminal", false));
+
+        // Ping
+        agent["PingTarget"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.PingTarget, GetString(agent, "PingTarget", string.Empty) ?? string.Empty);
+        agent["PingTimeoutMs"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.PingTimeoutMs, GetInt(agent, "PingTimeoutMs", 800));
+        agent["PingWindowSize"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.PingWindowSize, GetInt(agent, "PingWindowSize", 10));
+
+        // Rate limits + bounds
+        agent["LogMaxBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.LogMaxBytes, GetInt(agent, "LogMaxBytes", 64 * 1024));
+        agent["LogMinSecondsBetweenRequests"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.LogMinSecondsBetweenRequests, GetInt(agent, "LogMinSecondsBetweenRequests", 1));
+        agent["ScriptMaxOutputBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.ScriptMaxOutputBytes, GetInt(agent, "ScriptMaxOutputBytes", 64 * 1024));
+        agent["ScriptMaxDurationSeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.ScriptMaxDurationSeconds, GetInt(agent, "ScriptMaxDurationSeconds", 60));
+        agent["ScriptMinSecondsBetweenRuns"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.ScriptMinSecondsBetweenRuns, GetInt(agent, "ScriptMinSecondsBetweenRuns", 1));
+        agent["TerminalMaxOutputBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TerminalMaxOutputBytes, GetInt(agent, "TerminalMaxOutputBytes", 64 * 1024));
+        agent["TerminalMaxDurationSeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TerminalMaxDurationSeconds, GetInt(agent, "TerminalMaxDurationSeconds", 10 * 60));
     }
 
     private string GetDistributionRoot()
