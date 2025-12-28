@@ -1,8 +1,14 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 internal static class Program
 {
+    private sealed record BuildVersion(
+        string InformationalVersion,
+        string? MsbuildVersion,
+        string? AssemblyFileVersion);
+
     private sealed record Options(
         string Configuration,
         string RepoRoot,
@@ -47,6 +53,17 @@ internal static class Program
         Console.WriteLine($"Artifacts: {options.ArtifactsRoot}");
         Console.WriteLine($"Server distribution: {options.ServerDistributionRoot}");
 
+        var version = GetBuildVersion(options.RepoRoot);
+        Console.WriteLine($"Agent version (informational): {version.InformationalVersion}");
+        if (!string.IsNullOrWhiteSpace(version.MsbuildVersion))
+        {
+            Console.WriteLine($"Agent version (msbuild): {version.MsbuildVersion}");
+        }
+        if (!string.IsNullOrWhiteSpace(version.AssemblyFileVersion))
+        {
+            Console.WriteLine($"Agent file/assembly version: {version.AssemblyFileVersion}");
+        }
+
         var agentAppSettings = Path.Combine(options.RepoRoot, "src", "ManLab.Agent", "appsettings.json");
 
         foreach (var rid in options.Rids)
@@ -68,6 +85,20 @@ internal static class Program
                 publishOut,
                 "-p:PublishAot=true",
             };
+
+            // Stamp a meaningful version into the produced binary so the dashboard can display it.
+            // - InformationalVersion can include prerelease/build metadata.
+            // - AssemblyVersion/FileVersion must be numeric (x.y.z.w).
+            publishArgs.Add($"-p:InformationalVersion={version.InformationalVersion}");
+            if (!string.IsNullOrWhiteSpace(version.MsbuildVersion))
+            {
+                publishArgs.Add($"-p:Version={version.MsbuildVersion}");
+            }
+            if (!string.IsNullOrWhiteSpace(version.AssemblyFileVersion))
+            {
+                publishArgs.Add($"-p:AssemblyVersion={version.AssemblyFileVersion}");
+                publishArgs.Add($"-p:FileVersion={version.AssemblyFileVersion}");
+            }
 
             var exit = RunProcess("dotnet", publishArgs);
             if (exit != 0)
@@ -115,6 +146,82 @@ internal static class Program
 
         Console.WriteLine($"Done. Server distribution folder: {options.ServerDistributionRoot}");
         return 0;
+    }
+
+    private static BuildVersion GetBuildVersion(string repoRoot)
+    {
+        var describe = TryGetGitDescribe(repoRoot);
+        if (string.IsNullOrWhiteSpace(describe))
+        {
+            // Reasonable fallback; we still stamp something deterministic.
+            return new BuildVersion("0.0.0", "0.0.0", "0.0.0.0");
+        }
+
+        var info = describe.Trim();
+        if (info.StartsWith("v", StringComparison.OrdinalIgnoreCase) && info.Length > 1)
+        {
+            info = info.Substring(1);
+        }
+
+        // If git describe returns a bare commit hash (no tag), keep it informational-only.
+        string? msbuildVersion = null;
+        if (info.Length > 0 && char.IsDigit(info[0]))
+        {
+            msbuildVersion = info;
+        }
+
+        // Derive a numeric assembly/file version from the leading x.y.z tag if present.
+        // Example: "0.1.0-3-gabcd" -> "0.1.0.0".
+        string? assemblyFileVersion = null;
+        var m = Regex.Match(info, @"^(\d+)\.(\d+)\.(\d+)");
+        if (m.Success)
+        {
+            assemblyFileVersion = $"{m.Groups[1].Value}.{m.Groups[2].Value}.{m.Groups[3].Value}.0";
+        }
+
+        return new BuildVersion(info, msbuildVersion, assemblyFileVersion);
+    }
+
+    private static string? TryGetGitDescribe(string repoRoot)
+    {
+        try
+        {
+            // Prefer tags, fall back to commit hash. Add -dirty to avoid lying when the tree isn't clean.
+            var psi = new ProcessStartInfo
+            {
+                FileName = "git",
+                WorkingDirectory = repoRoot,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+
+            psi.ArgumentList.Add("describe");
+            psi.ArgumentList.Add("--tags");
+            psi.ArgumentList.Add("--always");
+            psi.ArgumentList.Add("--dirty");
+
+            using var proc = Process.Start(psi);
+            if (proc is null)
+            {
+                return null;
+            }
+
+            var stdout = proc.StandardOutput.ReadToEnd();
+            _ = proc.StandardError.ReadToEnd();
+            proc.WaitForExit();
+            if (proc.ExitCode != 0)
+            {
+                return null;
+            }
+
+            var s = stdout.Trim();
+            return string.IsNullOrWhiteSpace(s) ? null : s;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static int RunProcess(string fileName, IReadOnlyList<string> args)

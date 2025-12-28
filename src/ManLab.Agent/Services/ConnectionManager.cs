@@ -3,7 +3,9 @@ using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using System.Net.NetworkInformation;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using ManLab.Agent.Networking;
@@ -163,16 +165,16 @@ public sealed class ConnectionManager : IAsyncDisposable
 
     private async Task RegisterAsync()
     {
-        // Cache metadata - hostname/IP/OS don't change during runtime
+        // Cache metadata - but refresh fields that can change (IP/interface) on every (re)register.
         var primaryInterfaceName = SelectPrimaryInterfaceName();
         var primaryNic = NetworkInterfaceSelector.TryGetInterfaceByName(primaryInterfaceName);
         
         _cachedMetadata ??= new NodeMetadata
         {
             Hostname = Environment.MachineName,
-            IpAddress = GetLocalIpAddress(),
+            IpAddress = null,
             OS = Environment.OSVersion.ToString(),
-            AgentVersion = GetAgentVersion(),
+            AgentVersion = null,
             CapabilitiesJson = BuildCapabilitiesJson(),
             PrimaryInterface = primaryInterfaceName,
             MacAddress = NetworkInterfaceSelector.TryGetMacAddress(primaryNic)
@@ -181,8 +183,12 @@ public sealed class ConnectionManager : IAsyncDisposable
         // Defensive: if config changed between runs and we already cached metadata,
         // ensure we at least populate missing optional fields.
         _cachedMetadata.CapabilitiesJson ??= BuildCapabilitiesJson();
-        _cachedMetadata.PrimaryInterface ??= primaryInterfaceName;
-        _cachedMetadata.MacAddress ??= NetworkInterfaceSelector.TryGetMacAddress(primaryNic);
+        _cachedMetadata.PrimaryInterface = primaryInterfaceName;
+        _cachedMetadata.MacAddress = NetworkInterfaceSelector.TryGetMacAddress(primaryNic);
+
+        // Refresh dynamic values.
+        _cachedMetadata.IpAddress = GetLocalIpAddress(primaryNic);
+        _cachedMetadata.AgentVersion = GetAgentVersion();
 
         _logger.LogInformation("Registering with server as {Hostname}", _cachedMetadata.Hostname);
 
@@ -508,16 +514,61 @@ public sealed class ConnectionManager : IAsyncDisposable
         return TimeSpan.FromSeconds(delaySeconds);
     }
 
-    private static string? GetLocalIpAddress()
+    private static string? GetLocalIpAddress(NetworkInterface? primaryNic)
     {
         try
         {
+            // Prefer the selected primary NIC if we have one.
+            if (primaryNic is not null)
+            {
+                var props = primaryNic.GetIPProperties();
+                var ip = props.UnicastAddresses
+                    .Select(a => a.Address)
+                    .FirstOrDefault(a =>
+                        a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                        !System.Net.IPAddress.IsLoopback(a) &&
+                        !a.Equals(System.Net.IPAddress.Any) &&
+                        !a.Equals(System.Net.IPAddress.None) &&
+                        !a.ToString().StartsWith("169.254.", StringComparison.Ordinal));
+
+                if (ip is not null)
+                {
+                    return ip.ToString();
+                }
+            }
+
+            // Fallback: pick a NIC that looks like it has a default gateway.
+            var candidates = NetworkInterface.GetAllNetworkInterfaces()
+                .Where(nic => nic.OperationalStatus == OperationalStatus.Up)
+                .Where(nic => nic.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+                .Where(nic => nic.NetworkInterfaceType != NetworkInterfaceType.Tunnel)
+                .Select(nic => new { Nic = nic, Props = nic.GetIPProperties() })
+                .ToList();
+
+            foreach (var c in candidates.OrderByDescending(c => c.Props.GatewayAddresses.Count))
+            {
+                var ip = c.Props.UnicastAddresses
+                    .Select(a => a.Address)
+                    .FirstOrDefault(a =>
+                        a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                        !System.Net.IPAddress.IsLoopback(a) &&
+                        !a.ToString().StartsWith("169.254.", StringComparison.Ordinal));
+
+                if (ip is not null)
+                {
+                    return ip.ToString();
+                }
+            }
+
+            // Last resort: DNS host addresses.
             var hostName = System.Net.Dns.GetHostName();
             var addresses = System.Net.Dns.GetHostAddresses(hostName);
-            
+
             foreach (var address in addresses)
             {
-                if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                    !System.Net.IPAddress.IsLoopback(address) &&
+                    !address.ToString().StartsWith("169.254.", StringComparison.Ordinal))
                 {
                     return address.ToString();
                 }
@@ -533,7 +584,75 @@ public sealed class ConnectionManager : IAsyncDisposable
 
     private static string GetAgentVersion()
     {
+        // Allow explicit override (useful for installer/build pipelines).
+        var fromEnv = Environment.GetEnvironmentVariable("MANLAB_AGENT_VERSION");
+        var normalized = NormalizeVersionString(fromEnv);
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            return normalized;
+        }
+
+        // Prefer informational version if present (often includes prerelease/build metadata).
+        try
+        {
+            var asm = typeof(ConnectionManager).Assembly;
+            var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            normalized = NormalizeVersionString(info);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                return normalized;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        // Next best: file version (Windows), if available.
+        try
+        {
+            var path = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            {
+                var fvi = FileVersionInfo.GetVersionInfo(path);
+                normalized = NormalizeVersionString(fvi.ProductVersion) ?? NormalizeVersionString(fvi.FileVersion);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    return normalized;
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
         return typeof(ConnectionManager).Assembly.GetName().Version?.ToString() ?? "1.0.0";
+    }
+
+    private static string? NormalizeVersionString(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        raw = raw.Trim();
+
+        // Strip common prefix.
+        if (raw.StartsWith("v", StringComparison.OrdinalIgnoreCase) && raw.Length > 1)
+        {
+            raw = raw.Substring(1);
+        }
+
+        // Keep display stable: strip build metadata (e.g. "+abcdef") but keep prerelease.
+        var plus = raw.IndexOf('+');
+        if (plus > 0)
+        {
+            raw = raw.Substring(0, plus);
+        }
+
+        return raw;
     }
 
     private string? SelectPrimaryInterfaceName()

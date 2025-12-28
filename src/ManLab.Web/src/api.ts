@@ -25,6 +25,7 @@ import type {
   SshTestResponse,
   StartInstallResponse,
   StartUninstallResponse,
+  UninstallPreviewResponse,
   SshAuthMode,
   LocalAgentStatus,
   LocalAgentInstallResponse,
@@ -770,6 +771,30 @@ export async function uninstallAgent(
   );
   if (!response.ok) {
     throw new Error(`Uninstall start failed: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function fetchUninstallPreview(
+  machineId: string,
+  input: {
+    serverBaseUrl: string;
+    trustHostKey: boolean;
+    password?: string;
+    privateKeyPem?: string;
+    privateKeyPassphrase?: string;
+  }
+): Promise<UninstallPreviewResponse> {
+  const response = await fetch(
+    `${API_BASE}/onboarding/machines/${machineId}/uninstall/preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Uninstall preview failed: ${await response.text()}`);
   }
   return response.json();
 }

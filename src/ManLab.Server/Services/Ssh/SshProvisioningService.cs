@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Renci.SshNet;
 using Renci.SshNet.Common;
 
@@ -40,6 +42,16 @@ public sealed class SshProvisioningService
         bool RequiresHostKeyTrust,
         string? WhoAmI,
         string? OsHint,
+        string? Error);
+
+    public sealed record InventorySection(string Label, IReadOnlyList<string> Items);
+
+    public sealed record UninstallPreviewResult(
+        bool Success,
+        string? HostKeyFingerprint,
+        bool RequiresHostKeyTrust,
+        string? OsHint,
+        IReadOnlyList<InventorySection> Sections,
         string? Error);
 
     public async Task<ConnectionTestResult> TestConnectionAsync(ConnectionOptions options, CancellationToken cancellationToken)
@@ -170,6 +182,116 @@ public sealed class SshProvisioningService
             var logs = await UninstallWindowsAsync(client, serverBaseUrl, progress, cancellationToken);
             client.Disconnect();
             return (true, hostKey.Fingerprint, false, logs);
+        }
+    }
+
+    public async Task<UninstallPreviewResult> GetUninstallPreviewAsync(
+        ConnectionOptions options,
+        Uri serverBaseUrl,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var client = CreateSshClient(options, out var hostKey);
+        try
+        {
+            client.Connect();
+        }
+        catch (SshConnectionException) when (hostKey.TrustRequired)
+        {
+            return new UninstallPreviewResult(
+                Success: false,
+                HostKeyFingerprint: hostKey.Fingerprint,
+                RequiresHostKeyTrust: true,
+                OsHint: null,
+                Sections: Array.Empty<InventorySection>(),
+                Error: "SSH host key not trusted.");
+        }
+
+        var target = DetectTarget(client);
+        var osHint = target.Raw?.Trim();
+
+        var server = serverBaseUrl.ToString().TrimEnd('/');
+        string cmd;
+
+        if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(target.OsFamily, "unix", StringComparison.OrdinalIgnoreCase))
+        {
+            var url = server + "/install.sh";
+            cmd = BuildLinuxUninstallPreviewCommand(url);
+        }
+        else
+        {
+            var url = server + "/install.ps1";
+            cmd = BuildWindowsUninstallPreviewCommand(url);
+        }
+
+        string output;
+        try
+        {
+            output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
+        }
+        catch (Exception ex)
+        {
+            client.Disconnect();
+            return new UninstallPreviewResult(
+                Success: false,
+                HostKeyFingerprint: hostKey.Fingerprint,
+                RequiresHostKeyTrust: false,
+                OsHint: osHint,
+                Sections: Array.Empty<InventorySection>(),
+                Error: "Failed to collect preview: " + ex.Message);
+        }
+
+        client.Disconnect();
+
+        if (!TryExtractFirstJsonObject(output, out var json))
+        {
+            return new UninstallPreviewResult(
+                Success: false,
+                HostKeyFingerprint: hostKey.Fingerprint,
+                RequiresHostKeyTrust: false,
+                OsHint: osHint,
+                Sections: Array.Empty<InventorySection>(),
+                Error: "Remote preview did not return valid JSON.");
+        }
+
+        try
+        {
+            var payload = JsonSerializer.Deserialize<UninstallPreviewPayload>(json, JsonOptions);
+
+            var sections = new List<InventorySection>();
+            if (payload?.Sections is { Count: > 0 })
+            {
+                foreach (var s in payload.Sections)
+                {
+                    if (string.IsNullOrWhiteSpace(s.Label)) continue;
+                    sections.Add(new InventorySection(s.Label.Trim(), (s.Items ?? new List<string>()).Where(i => !string.IsNullOrWhiteSpace(i)).ToArray()));
+                }
+            }
+
+            if (payload?.Notes is { Count: > 0 })
+            {
+                sections.Add(new InventorySection("Notes", payload.Notes.Where(n => !string.IsNullOrWhiteSpace(n)).ToArray()));
+            }
+
+            return new UninstallPreviewResult(
+                Success: payload?.Success ?? false,
+                HostKeyFingerprint: hostKey.Fingerprint,
+                RequiresHostKeyTrust: false,
+                OsHint: payload?.OsHint ?? osHint,
+                Sections: sections,
+                Error: payload?.Error);
+        }
+        catch (Exception ex)
+        {
+            return new UninstallPreviewResult(
+                Success: false,
+                HostKeyFingerprint: hostKey.Fingerprint,
+                RequiresHostKeyTrust: false,
+                OsHint: osHint,
+                Sections: Array.Empty<InventorySection>(),
+                Error: "Failed to parse remote preview JSON: " + ex.Message);
         }
     }
 
@@ -446,6 +568,28 @@ public sealed class SshProvisioningService
         return $"bash -lc '{EscapeSingleQuotes(script)}'";
     }
 
+    internal static string BuildLinuxUninstallPreviewCommand(string url)
+    {
+        var safeUrl = EscapeSingleQuotes(url);
+
+        var script =
+            "set -euo pipefail; " +
+            "if ! command -v bash >/dev/null 2>&1; then echo 'Need bash' 1>&2; exit 2; fi; " +
+            $"URL='{safeUrl}'; " +
+            "TMP=\"$(mktemp /tmp/manlab-install.XXXXXX)\"; " +
+            "if [ -z \"$TMP\" ]; then echo 'mktemp produced empty TMP' 1>&2; exit 2; fi; " +
+            "trap \"rm -f \\\"$TMP\\\"\" EXIT; " +
+            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; " +
+            "elif command -v wget >/dev/null 2>&1; then wget -q --timeout=120 -O \"$TMP\" \"$URL\"; " +
+            "else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
+            "if command -v sed >/dev/null 2>&1; then sed -i 's/\r$//' \"$TMP\" 2>/dev/null || true; " +
+            "else tr -d '\\r' < \"$TMP\" > \"$TMP.clean\" && mv -f \"$TMP.clean\" \"$TMP\"; fi; " +
+            "chmod +x \"$TMP\"; " +
+            "bash \"$TMP\" --preview-uninstall";
+
+        return $"bash -lc '{EscapeSingleQuotes(script)}'";
+    }
+
     private static Task<string> UninstallWindowsAsync(
         SshClient client,
         Uri serverBaseUrl,
@@ -463,13 +607,65 @@ public sealed class SshProvisioningService
         var ps = "$ErrorActionPreference='Stop'; " +
                  "$p = Join-Path $env:TEMP 'manlab-install.ps1'; " +
                  $"Invoke-WebRequest -UseBasicParsing -Uri '{EscapeSingleQuotes(url)}' -OutFile $p; " +
-                 "& $p -Uninstall;";
+                 "& $p -Uninstall -UninstallAll;";
 
         var cmd = $"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{EscapeDoubleQuotes(ps)}\"";
 
         var output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
         progress.Report("Windows uninstaller finished.");
         return Task.FromResult(output);
+    }
+
+    internal static string BuildWindowsUninstallPreviewCommand(string url)
+    {
+        var safeUrl = EscapeSingleQuotes(url);
+        var ps = "$ErrorActionPreference='Stop'; " +
+                 "$p = Join-Path $env:TEMP 'manlab-install.ps1'; " +
+                 $"Invoke-WebRequest -UseBasicParsing -Uri '{safeUrl}' -OutFile $p; " +
+                 "& $p -PreviewUninstall;";
+
+        return $"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{EscapeDoubleQuotes(ps)}\"";
+    }
+
+    private sealed record InventorySectionPayload(
+        [property: JsonPropertyName("label")] string Label,
+        [property: JsonPropertyName("items")] List<string>? Items);
+
+    private sealed record UninstallPreviewPayload(
+        [property: JsonPropertyName("success")] bool Success,
+        [property: JsonPropertyName("osHint")] string? OsHint,
+        [property: JsonPropertyName("sections")] List<InventorySectionPayload>? Sections,
+        [property: JsonPropertyName("notes")] List<string>? Notes,
+        [property: JsonPropertyName("error")] string? Error);
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static bool TryExtractFirstJsonObject(string text, out string json)
+    {
+        json = string.Empty;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var start = text.IndexOf('{');
+        if (start < 0) return false;
+
+        var depth = 0;
+        for (var i = start; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c == '{') depth++;
+            else if (c == '}') depth--;
+
+            if (depth == 0)
+            {
+                json = text.Substring(start, i - start + 1);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

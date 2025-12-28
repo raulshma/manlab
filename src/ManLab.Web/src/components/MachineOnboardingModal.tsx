@@ -4,6 +4,7 @@ import {
   createOnboardingMachine,
   fetchOnboardingMachines,
   fetchSuggestedServerBaseUrl,
+  fetchUninstallPreview,
   installAgent,
   testSshConnection,
   uninstallAgent,
@@ -14,6 +15,7 @@ import type {
   OnboardingStatus,
   SshAuthMode,
   SshTestResponse,
+  UninstallPreviewResponse,
 } from "../types";
 import { useSignalR } from "../SignalRContext";
 import { ConfirmationModal } from "./ConfirmationModal";
@@ -98,6 +100,184 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const [forceInstall, setForceInstall] = useState(true);
 
   const [logs, setLogs] = useState<Array<{ ts: string; msg: string }>>([]);
+
+  const [remoteUninstallPreview, setRemoteUninstallPreview] = useState<UninstallPreviewResponse | null>(null);
+
+  const previewUninstallMutation = useMutation({
+    mutationFn: async () => {
+      if (!selected) throw new Error("No machine selected");
+      if (!lastTest?.success) throw new Error("Test connection first");
+
+      return fetchUninstallPreview(selected.id, {
+        serverBaseUrl,
+        trustHostKey,
+        password: password || undefined,
+        privateKeyPem: privateKeyPem || undefined,
+        privateKeyPassphrase: privateKeyPassphrase || undefined,
+      });
+    },
+    onSuccess: (data) => {
+      setRemoteUninstallPreview(data);
+    },
+    onError: () => {
+      setRemoteUninstallPreview(null);
+    },
+  });
+
+  const uninstallPreview = useMemo(() => {
+    if (previewUninstallMutation.isPending) {
+      return (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Cleanup preview
+          </div>
+          <div className="text-xs text-muted-foreground">Loading remote inventory…</div>
+        </div>
+      );
+    }
+
+    if (remoteUninstallPreview?.success && (remoteUninstallPreview.sections?.length ?? 0) > 0) {
+      return (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Cleanup preview (from target)
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Retrieved from the target machine via SSH.
+          </div>
+          <div className="space-y-2">
+            {remoteUninstallPreview.sections.map((s) => (
+              <div key={s.label}>
+                <div className="text-xs font-medium">{s.label}</div>
+                <ul className="mt-1 list-disc pl-5 text-xs font-mono text-muted-foreground">
+                  {s.items.map((it) => (
+                    <li key={it} className="break-all">{it}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    const osHint = lastTest?.osHint ?? null;
+    const os = osHint?.toLowerCase() ?? "";
+
+    const isWindows = os.startsWith("windows");
+    const isLinux = os.startsWith("linux");
+    const isMac = os.startsWith("darwin") || os.startsWith("mac") || os.startsWith("osx") || os.includes("darwin");
+
+    const title = "Cleanup preview (best-effort)";
+    const subtitle = "The uninstaller will attempt to stop/disable services and remove these resources:";
+
+    const commonItems: Array<{ label: string; items: string[] }> = [];
+
+    if (isWindows)
+    {
+      commonItems.push(
+        {
+          label: "Tasks / services",
+          items: [
+            "Scheduled task: ManLab Agent",
+            "Scheduled task: ManLab Agent User",
+            "Legacy Windows service (if present): manlab-agent",
+          ],
+        },
+        {
+          label: "Folders",
+          items: [
+            "C:\\ProgramData\\ManLab\\Agent",
+            "%LOCALAPPDATA%\\ManLab\\Agent",
+          ],
+        }
+      );
+    }
+    else if (isLinux)
+    {
+      commonItems.push(
+        {
+          label: "Systemd units",
+          items: [
+            "manlab-agent.service (and any manlab-agent*.service variants)",
+            "/etc/systemd/system/manlab-agent.service",
+            "/lib/systemd/system/manlab-agent.service",
+            "/usr/lib/systemd/system/manlab-agent.service",
+          ],
+        },
+        {
+          label: "Config",
+          items: [
+            "/etc/manlab-agent.env",
+            "/etc/default/manlab-agent (if present)",
+            "/etc/sysconfig/manlab-agent (if present)",
+          ],
+        },
+        {
+          label: "Install directory",
+          items: [
+            "/opt/manlab-agent",
+          ],
+        },
+        {
+          label: "User/group",
+          items: [
+            "manlab-agent (if present)",
+          ],
+        }
+      );
+    }
+    else if (isMac)
+    {
+      commonItems.push(
+        {
+          label: "launchd",
+          items: [
+            "Label: com.manlab.agent",
+            "/Library/LaunchDaemons/com.manlab.agent.plist",
+            "/Library/LaunchAgents/com.manlab.agent.plist (if present)",
+          ],
+        },
+        {
+          label: "Install directory",
+          items: [
+            "/opt/manlab-agent",
+          ],
+        }
+      );
+    }
+    else
+    {
+      commonItems.push({
+        label: "Resources",
+        items: [
+          "Service: manlab-agent",
+          "Install directory: /opt/manlab-agent",
+        ],
+      });
+    }
+
+    return (
+      <div className="space-y-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {title}
+        </div>
+        <div className="text-xs text-muted-foreground">{subtitle}</div>
+        <div className="space-y-2">
+          {commonItems.map((section) => (
+            <div key={section.label}>
+              <div className="text-xs font-medium">{section.label}</div>
+              <ul className="mt-1 list-disc pl-5 text-xs font-mono text-muted-foreground">
+                {section.items.map((it) => (
+                  <li key={it}>{it}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }, [lastTest?.osHint, previewUninstallMutation.isPending, remoteUninstallPreview]);
 
   // Subscribe to onboarding progress events
   useEffect(() => {
@@ -819,12 +999,20 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                           variant="ghost"
                           className="text-destructive hover:text-destructive hover:bg-destructive/10"
                           disabled={isBusy || !lastTest?.success}
+                          onClick={() => {
+                            // Best-effort: prefetch remote inventory so the confirmation dialog
+                            // can show an accurate preview of what will be removed.
+                            if (validateCredentials() && !previewUninstallMutation.isPending) {
+                              previewUninstallMutation.mutate();
+                            }
+                          }}
                         >
                           Uninstall
                         </Button>
                       }
                       title="Uninstall Agent"
                       message={`Remove ManLab agent from ${selected.host}?`}
+                      details={uninstallPreview}
                       confirmText="Uninstall"
                       isLoading={uninstallMutation.isPending}
                       onConfirm={async () => {

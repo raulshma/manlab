@@ -484,6 +484,100 @@ public sealed class OnboardingController : ControllerBase
         return Accepted(new StartUninstallResponse(machine.Id, machine.Status.ToString()));
     }
 
+    [HttpPost("machines/{id:guid}/uninstall/preview")]
+    public async Task<ActionResult<UninstallPreviewResponse>> UninstallPreview(Guid id, [FromBody] StartUninstallPreviewRequest request, CancellationToken cancellationToken)
+    {
+        var machine = await _db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
+        if (machine is null)
+        {
+            return NotFound();
+        }
+
+        var rateKey = BuildRateKey(machine.Id, machine.Host, HttpContext.Connection.RemoteIpAddress?.ToString());
+        try
+        {
+            _rateLimit.ThrowIfLockedOut(rateKey);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status429TooManyRequests, ex.Message);
+        }
+
+        var auth = BuildAuth(machine.AuthMode, request);
+        if (auth is null)
+        {
+            return BadRequest("Missing SSH credentials for selected auth mode.");
+        }
+
+        if (request.TrustHostKey && !_sshOptions.AllowTrustOnFirstUse)
+        {
+            return BadRequest("Trust-on-first-use is disabled by server policy. Provide an allowlisted fingerprint.");
+        }
+
+        var trustOnFirstUse = request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint);
+
+        // If no fingerprint yet, require explicit TOFU approval for this call (if allowed).
+        if (string.IsNullOrWhiteSpace(machine.HostKeyFingerprint) && (!request.TrustHostKey || !_sshOptions.AllowTrustOnFirstUse))
+        {
+            return BadRequest("Host key not trusted yet. Run Test Connection and confirm fingerprint first.");
+        }
+
+        var result = await _ssh.GetUninstallPreviewAsync(
+            new SshProvisioningService.ConnectionOptions(
+                machine.Host,
+                machine.Port,
+                machine.Username,
+                auth,
+                machine.HostKeyFingerprint,
+                TrustOnFirstUse: trustOnFirstUse),
+            new Uri(request.ServerBaseUrl),
+            cancellationToken);
+
+        if (result.Success)
+        {
+            _rateLimit.RecordSuccess(rateKey);
+        }
+        else
+        {
+            _rateLimit.RecordFailure(rateKey);
+        }
+
+        // Best-effort audit (do not block response).
+        try
+        {
+            await _audit.RecordAsync(new Data.Entities.SshAuditEvent
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Actor = User?.Identity?.Name,
+                ActorIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                Action = "ssh.uninstall.preview",
+                MachineId = machine.Id,
+                Host = machine.Host,
+                Port = machine.Port,
+                Username = machine.Username,
+                HostKeyFingerprint = result.HostKeyFingerprint,
+                Success = result.Success,
+                Error = result.Error,
+                OsFamily = InferOsFamily(result.OsHint),
+                CpuArch = null,
+                OsDistro = null,
+                OsVersion = null
+            }, cancellationToken);
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return Ok(new UninstallPreviewResponse(
+            Success: result.Success,
+            HostKeyFingerprint: result.HostKeyFingerprint,
+            RequiresHostKeyTrust: result.RequiresHostKeyTrust,
+            OsHint: result.OsHint,
+            Sections: result.Sections.Select(s => new InventorySectionDto(s.Label, s.Items.ToArray())).ToList(),
+            Error: result.Error));
+    }
+
     private static SshProvisioningService.AuthOptions? BuildAuth(SshAuthMode mode, ISshAuthRequest request)
     {
         return mode switch
@@ -566,6 +660,23 @@ public sealed class OnboardingController : ControllerBase
         string? Password,
         string? PrivateKeyPem,
         string? PrivateKeyPassphrase) : ISshAuthRequest;
+
+    public sealed record StartUninstallPreviewRequest(
+        string ServerBaseUrl,
+        bool TrustHostKey,
+        string? Password,
+        string? PrivateKeyPem,
+        string? PrivateKeyPassphrase) : ISshAuthRequest;
+
+    public sealed record InventorySectionDto(string Label, IReadOnlyList<string> Items);
+
+    public sealed record UninstallPreviewResponse(
+        bool Success,
+        string? HostKeyFingerprint,
+        bool RequiresHostKeyTrust,
+        string? OsHint,
+        IReadOnlyList<InventorySectionDto> Sections,
+        string? Error);
 
     public sealed record StartUninstallResponse(Guid MachineId, string Status);
 

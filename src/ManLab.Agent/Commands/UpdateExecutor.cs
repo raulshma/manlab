@@ -129,14 +129,14 @@ public class UpdateExecutor
             return distro.ToLowerInvariant() switch
             {
                 "debian" or "ubuntu" or "linuxmint" or "pop" => 
-                    ("/bin/bash", "-c \"apt-get update && apt-get upgrade -y\""),
+                    ("/bin/bash", "-c \"sudo apt-get update && sudo apt-get upgrade -y\""),
                 "fedora" or "rhel" or "centos" or "rocky" or "almalinux" => 
-                    ("/bin/bash", "-c \"dnf upgrade -y\""),
+                    ("/bin/bash", "-c \"sudo dnf upgrade -y\""),
                 "arch" or "manjaro" => 
-                    ("/bin/bash", "-c \"pacman -Syu --noconfirm\""),
+                    ("/bin/bash", "-c \"sudo pacman -Syu --noconfirm\""),
                 "opensuse" or "sles" => 
-                    ("/bin/bash", "-c \"zypper update -y\""),
-                _ => ("/bin/bash", "-c \"apt-get update && apt-get upgrade -y\"") // Default to apt
+                    ("/bin/bash", "-c \"sudo zypper update -y\""),
+                _ => ("/bin/bash", "-c \"sudo apt-get update && sudo apt-get upgrade -y\"") // Default to apt
             };
         }
 

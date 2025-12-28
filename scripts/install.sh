@@ -24,6 +24,7 @@ Usage:
   install.sh --server <http(s)://host:port> [--token <token>] [--install-dir <dir>] [--rid <rid>] [--force]
             [--prefer-github --github-release-base-url <url> --github-version <tag>]
   install.sh --uninstall [--install-dir <dir>]
+  install.sh --preview-uninstall [--install-dir <dir>]
 
 Options:
   --server        Base URL to ManLab Server (e.g. http://localhost:5247)
@@ -35,6 +36,7 @@ Options:
   --github-release-base-url  Base URL like https://github.com/owner/repo/releases/download
   --github-version           Version tag like v0.0.1-alpha
   --uninstall     Stop/disable the agent and remove installed files
+  --preview-uninstall  Print JSON describing what would be removed (no changes)
   -h, --help      Show help
 
 Notes:
@@ -358,6 +360,7 @@ INSTALL_DIR="/opt/manlab-agent"
 RID=""
 FORCE=0
 UNINSTALL=0
+PREVIEW_UNINSTALL=0
 PREFER_GITHUB=""
 GITHUB_RELEASE_BASE_URL=""
 GITHUB_VERSION=""
@@ -382,6 +385,8 @@ while [[ $# -gt 0 ]]; do
       GITHUB_VERSION="${2:-}"; shift 2 ;;
     --uninstall)
       UNINSTALL=1; shift 1 ;;
+    --preview-uninstall)
+      PREVIEW_UNINSTALL=1; shift 1 ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -391,6 +396,151 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+json_escape() {
+  # Best-effort JSON string escaping.
+  # shellcheck disable=SC2001
+  echo -n "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' -e 's/\r/\\r/g' -e 's/\n/\\n/g'
+}
+
+json_array() {
+  # Args are items.
+  local first=1
+  echo -n "["
+  for item in "$@"; do
+    if [[ $first -eq 0 ]]; then echo -n ","; fi
+    first=0
+    echo -n "\"$(json_escape "$item")\""
+  done
+  echo -n "]"
+}
+
+preview_uninstall() {
+  local os_kind
+  os_kind="$(detect_os)"
+
+  local sections=""
+  local notes=()
+
+  add_section() {
+    local label="$1"; shift
+    local items=("$@")
+    local section
+    section="{\"label\":\"$(json_escape "$label")\",\"items\":$(json_array "${items[@]}")}" 
+    if [[ -z "$sections" ]]; then
+      sections="$section"
+    else
+      sections+=" ,$section"
+    fi
+  }
+
+  if [[ "$os_kind" == "linux" ]]; then
+    local service_name="manlab-agent"
+
+    local units=()
+    if command -v systemctl >/dev/null 2>&1; then
+      while IFS= read -r u; do
+        [[ -n "$u" ]] && units+=("$u")
+      done < <(systemctl list-unit-files 2>/dev/null | awk '{print $1}' | grep -E '^manlab-agent.*\.service$' || true)
+    else
+      notes+=("systemctl not found; systemd inventory unavailable")
+    fi
+    if [[ ${#units[@]} -eq 0 ]]; then
+      units+=("${service_name}.service (if present)")
+    fi
+    add_section "Systemd units" "${units[@]}"
+
+    local unit_files=()
+    for f in "/etc/systemd/system/${service_name}.service" "/lib/systemd/system/${service_name}.service" "/usr/lib/systemd/system/${service_name}.service"; do
+      if [[ -f "$f" ]]; then unit_files+=("$f"); fi
+    done
+    if [[ ${#unit_files[@]} -eq 0 ]]; then
+      unit_files+=("/etc/systemd/system/${service_name}.service")
+      unit_files+=("/lib/systemd/system/${service_name}.service")
+      unit_files+=("/usr/lib/systemd/system/${service_name}.service")
+    fi
+    add_section "Unit files" "${unit_files[@]}"
+
+    local config_files=()
+    for f in "/etc/manlab-agent.env" "/etc/default/${service_name}" "/etc/sysconfig/${service_name}"; do
+      if [[ -f "$f" ]]; then config_files+=("$f"); fi
+    done
+    if [[ ${#config_files[@]} -eq 0 ]]; then
+      config_files+=("/etc/manlab-agent.env")
+      config_files+=("/etc/default/${service_name} (if present)")
+      config_files+=("/etc/sysconfig/${service_name} (if present)")
+    fi
+    add_section "Config files" "${config_files[@]}"
+
+    local dirs=()
+    for d in "$INSTALL_DIR" "/opt/manlab-agent"; do
+      if [[ -d "$d" ]]; then dirs+=("$d"); fi
+    done
+    if [[ ${#dirs[@]} -eq 0 ]]; then
+      dirs+=("$INSTALL_DIR")
+      [[ "$INSTALL_DIR" != "/opt/manlab-agent" ]] && dirs+=("/opt/manlab-agent")
+    fi
+    add_section "Directories" "${dirs[@]}"
+
+    # Sample files
+    for d in "${dirs[@]}"; do
+      if [[ -d "$d" ]]; then
+        local files=()
+        while IFS= read -r f; do
+          [[ -n "$f" ]] && files+=("$f")
+        done < <(find "$d" -type f -maxdepth 3 2>/dev/null | head -n 20 || true)
+        if [[ ${#files[@]} -gt 0 ]]; then
+          add_section "Files (sample) — $d" "${files[@]}"
+        fi
+      fi
+    done
+
+    if [[ "$(id -u)" != "0" ]]; then
+      notes+=("Preview collected without root; some resources may not be visible")
+    fi
+  else
+    # macOS
+    local plist_name="com.manlab.agent"
+    local plist_daemon="/Library/LaunchDaemons/${plist_name}.plist"
+    local plist_agent="/Library/LaunchAgents/${plist_name}.plist"
+
+    local launchd_items=()
+    launchd_items+=("Label: ${plist_name}")
+    if [[ -f "$plist_daemon" ]]; then launchd_items+=("$plist_daemon"); else launchd_items+=("$plist_daemon (if present)"); fi
+    if [[ -f "$plist_agent" ]]; then launchd_items+=("$plist_agent"); else launchd_items+=("$plist_agent (if present)"); fi
+    add_section "launchd" "${launchd_items[@]}"
+
+    local dirs=()
+    for d in "$INSTALL_DIR" "/opt/manlab-agent"; do
+      if [[ -d "$d" ]]; then dirs+=("$d"); fi
+    done
+    if [[ ${#dirs[@]} -eq 0 ]]; then
+      dirs+=("$INSTALL_DIR")
+      [[ "$INSTALL_DIR" != "/opt/manlab-agent" ]] && dirs+=("/opt/manlab-agent")
+    fi
+    add_section "Directories" "${dirs[@]}"
+
+    for d in "${dirs[@]}"; do
+      if [[ -d "$d" ]]; then
+        local files=()
+        while IFS= read -r f; do
+          [[ -n "$f" ]] && files+=("$f")
+        done < <(find "$d" -type f -maxdepth 3 2>/dev/null | head -n 20 || true)
+        if [[ ${#files[@]} -gt 0 ]]; then
+          add_section "Files (sample) — $d" "${files[@]}"
+        fi
+      fi
+    done
+
+    if [[ "$(id -u)" != "0" ]]; then
+      notes+=("Preview collected without root; some resources may not be visible")
+    fi
+  fi
+
+  local notes_json
+  notes_json=$(json_array "${notes[@]}")
+  printf '{"success":true,"osHint":"%s","sections":[%s],"notes":%s,"error":null}\n' "$(json_escape "${os_kind^}")" "$sections" "$notes_json"
+}
 
 # Support non-interactive config via environment variables as well.
 # (Useful for SSH bootstrap flows where passing args may be cumbersome.)
@@ -403,15 +553,22 @@ if [[ -z "$TOKEN" ]]; then
   TOKEN="${MANLAB_ENROLLMENT_TOKEN:-${MANLAB_AUTH_TOKEN:-}}"
 fi
 
-require_root
 need_cmd uname
 need_cmd id
 need_cmd mkdir
 need_cmd chmod
-need_cmd tee
 need_cmd rm
 need_cmd cp
 need_cmd mktemp
+
+if [[ $PREVIEW_UNINSTALL -eq 1 ]]; then
+  # Preview mode should not require root; it is best-effort.
+  preview_uninstall
+  exit 0
+fi
+
+require_root
+need_cmd tee
 
 OS_KIND="$(detect_os)"
 if [[ "$OS_KIND" == "linux" ]]; then
@@ -423,6 +580,7 @@ fi
 # Uninstall mode does not require server/token.
 if [[ $UNINSTALL -eq 1 ]]; then
   SERVICE_NAME="manlab-agent"
+  AGENT_USER="manlab-agent"
 
   echo "Uninstalling ManLab Agent"
   echo "  Service:     $SERVICE_NAME"
@@ -430,34 +588,77 @@ if [[ $UNINSTALL -eq 1 ]]; then
 
   if [[ "$OS_KIND" == "linux" ]]; then
     ENV_FILE="/etc/manlab-agent.env"
-    UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+    UNIT_FILE_ETC="/etc/systemd/system/${SERVICE_NAME}.service"
+    UNIT_FILE_LIB="/lib/systemd/system/${SERVICE_NAME}.service"
+    UNIT_FILE_USR_LIB="/usr/lib/systemd/system/${SERVICE_NAME}.service"
 
     if ! systemctl list-unit-files >/dev/null 2>&1; then
       echo "ERROR: systemd does not appear to be available on this system." >&2
       exit 1
     fi
 
-    # Best-effort: stop/disable service if it exists.
-    systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-    systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    # Best-effort: stop/disable any matching unit variants.
+    # Older versions or manual installs might have left different unit files behind.
+    for unit in "${SERVICE_NAME}.service" "${SERVICE_NAME}"; do
+      systemctl stop "$unit" >/dev/null 2>&1 || true
+      systemctl disable "$unit" >/dev/null 2>&1 || true
+    done
+
+    # Also attempt to disable any unit names that start with manlab-agent (templated or suffixed).
+    systemctl list-unit-files 2>/dev/null | awk '{print $1}' | grep -E '^manlab-agent.*\.service$' | while read -r unit; do
+      systemctl stop "$unit" >/dev/null 2>&1 || true
+      systemctl disable "$unit" >/dev/null 2>&1 || true
+    done
 
     # Remove unit + env.
-    rm -f "$UNIT_FILE" || true
+    rm -f "$UNIT_FILE_ETC" || true
+    rm -f "$UNIT_FILE_LIB" || true
+    rm -f "$UNIT_FILE_USR_LIB" || true
     rm -f "$ENV_FILE" || true
+
+    # Distro-specific leftovers (best-effort)
+    rm -f "/etc/default/${SERVICE_NAME}" "/etc/sysconfig/${SERVICE_NAME}" 2>/dev/null || true
+
     systemctl daemon-reload || true
+
+    # Best-effort: remove the dedicated user we created during install.
+    # (Do not fail uninstall if user removal isn't supported on this distro.)
+    if id "$AGENT_USER" >/dev/null 2>&1; then
+      if command -v pkill >/dev/null 2>&1; then
+        pkill -u "$AGENT_USER" >/dev/null 2>&1 || true
+      fi
+
+      if command -v userdel >/dev/null 2>&1; then
+        userdel "$AGENT_USER" >/dev/null 2>&1 || true
+      elif command -v deluser >/dev/null 2>&1; then
+        deluser "$AGENT_USER" >/dev/null 2>&1 || true
+      fi
+
+      if command -v groupdel >/dev/null 2>&1; then
+        groupdel "$AGENT_USER" >/dev/null 2>&1 || true
+      fi
+    fi
   else
     PLIST_NAME="com.manlab.agent"
     PLIST_FILE="/Library/LaunchDaemons/${PLIST_NAME}.plist"
 
+    # Also remove LaunchAgent variants if they exist (some setups use LaunchAgents).
+    PLIST_FILE_AGENT="/Library/LaunchAgents/${PLIST_NAME}.plist"
+
     # Best-effort: unload if present.
     launchctl bootout system "$PLIST_FILE" >/dev/null 2>&1 || true
     rm -f "$PLIST_FILE" || true
+    rm -f "$PLIST_FILE_AGENT" || true
   fi
 
-  # Remove installation directory.
-  if [[ -n "$INSTALL_DIR" && "$INSTALL_DIR" != "/" ]]; then
-    rm -rf "$INSTALL_DIR" || true
-  fi
+  # Remove installation directory (plus common defaults as best-effort).
+  # Note: we intentionally keep the directory list tight to avoid accidental deletions.
+  DEFAULT_DIRS=("$INSTALL_DIR" "/opt/manlab-agent")
+  for d in "${DEFAULT_DIRS[@]}"; do
+    if [[ -n "$d" && "$d" != "/" && "$d" != "." ]]; then
+      rm -rf "$d" 2>/dev/null || true
+    fi
+  done
 
   echo "Uninstall complete."
   exit 0

@@ -152,6 +152,14 @@ public sealed class LocalAgentInstallationService
                     .OrderByDescending(n => n.LastSeen)
                     .FirstOrDefault();
 
+                // Provide a cleanup preview even when installed so the UI can show
+                // what will be removed before uninstall.
+                var resources = GetOrphanedResourcesInfo(
+                    hasSystemFiles: systemBinaryExists,
+                    hasUserFiles: userBinaryExists,
+                    hasSystemTask: systemTaskExists,
+                    hasUserTask: userTaskExists);
+
                 return new LocalAgentStatus(
                     IsSupported: true,
                     IsInstalled: true,
@@ -168,7 +176,7 @@ public sealed class LocalAgentInstallationService
                     HasUserFiles: userBinaryExists,
                     HasSystemTask: systemTaskExists,
                     HasUserTask: userTaskExists,
-                    OrphanedResources: null);
+                        OrphanedResources: resources);
             }
 
             // Check for leftover files even if not properly installed

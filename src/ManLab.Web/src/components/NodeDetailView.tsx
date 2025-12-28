@@ -939,6 +939,31 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
                   }
                   title="Delete Node"
                   message={`Are you sure you want to permanently delete "${node.hostname}"? This will remove all telemetry data and command history for this node. This action cannot be undone.`}
+                  details={
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        What will be removed
+                      </div>
+                      <ul className="list-disc pl-5 text-xs text-muted-foreground">
+                        <li>Node record (hostname, IP, OS, agent version, etc.)</li>
+                        <li>Telemetry snapshots (CPU/RAM/disk/temperature)</li>
+                        <li>Network + ping telemetry history</li>
+                        <li>Service monitoring configuration + service status history</li>
+                        <li>SMART drive history, GPU history, UPS history</li>
+                        <li>Alert rules + alert event history</li>
+                        <li>Command queue/history + outputs</li>
+                        <li>Per-node settings</li>
+                        <li>Script run history</li>
+                        <li>Log viewer policies + terminal session history</li>
+                      </ul>
+
+                      <div className="text-xs text-muted-foreground">
+                        {node.status === "Online"
+                          ? "If the agent is connected, the server will also send an uninstall command to the agent to clean up its service/files on the machine."
+                          : "If the agent happens to be connected, the server will also send an uninstall command to the agent to clean up its service/files on the machine."}
+                      </div>
+                    </div>
+                  }
                   confirmText="Delete"
                   isDestructive
                   isLoading={deleteMutation.isPending}

@@ -23,6 +23,8 @@ interface ConfirmationModalProps {
   title: string;
   /** Message/description in the dialog */
   message: string;
+  /** Optional additional details (e.g. list of resources that will be deleted) */
+  details?: ReactNode;
   /** Text for the confirm button */
   confirmText?: string;
   /** Text for the cancel button */
@@ -42,6 +44,7 @@ export function ConfirmationModal({
   trigger,
   title,
   message,
+  details,
   confirmText = "Confirm",
   cancelText = "Cancel",
   isDestructive = false,
@@ -69,7 +72,14 @@ export function ConfirmationModal({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{message}</AlertDialogDescription>
+          <AlertDialogDescription className="space-y-3">
+            <div>{message}</div>
+            {details ? (
+              <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                {details}
+              </div>
+            ) : null}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={loading}>{cancelText}</AlertDialogCancel>

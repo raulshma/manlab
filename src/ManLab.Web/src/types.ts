@@ -161,6 +161,20 @@ export interface StartUninstallResponse {
   status: OnboardingStatus;
 }
 
+export interface InventorySection {
+  label: string;
+  items: string[];
+}
+
+export interface UninstallPreviewResponse {
+  success: boolean;
+  hostKeyFingerprint: string | null;
+  requiresHostKeyTrust: boolean;
+  osHint: string | null;
+  sections: InventorySection[];
+  error: string | null;
+}
+
 export interface OnboardingLogEvent {
   machineId: string;
   timestamp: string;

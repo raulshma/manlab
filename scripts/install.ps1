@@ -70,6 +70,12 @@ param(
   [switch]$Uninstall,
 
   [Parameter(Mandatory = $false)]
+  [switch]$UninstallAll,
+
+  [Parameter(Mandatory = $false)]
+  [switch]$PreviewUninstall,
+
+  [Parameter(Mandatory = $false)]
   [switch]$UserMode,
 
   [Parameter(Mandatory = $false)]
@@ -94,6 +100,124 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function New-PreviewSection([string]$Label, [string[]]$Items) {
+  return @{ label = $Label; items = @($Items | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) }
+}
+
+function Get-DirectoryFileSample([string]$Path, [int]$Max = 20) {
+  try {
+    if (-not (Test-Path $Path)) { return @() }
+    return Get-ChildItem -Path $Path -File -Recurse -Force -ErrorAction Stop |
+      Select-Object -First $Max -ExpandProperty FullName
+  } catch {
+    return @()
+  }
+}
+
+function Get-TaskMatches {
+  $matches = @()
+  try {
+    $tasks = Get-ScheduledTask -ErrorAction Stop
+
+    foreach ($t in $tasks) {
+      $name = $t.TaskName
+      $path = $t.TaskPath
+
+      $isNameMatch = $false
+      if ($name -like '*ManLab*' -or $name -like '*manlab*' -or $name -like '*Agent*') { $isNameMatch = $true }
+
+      $actionMatch = $false
+      try {
+        foreach ($a in ($t.Actions | Where-Object { $_ -ne $null })) {
+          $exe = $a.Execute
+          $args = $a.Arguments
+          if (($exe -match 'manlab-agent' -or $exe -match 'run-agent') -or ($args -match 'manlab-agent' -or $args -match 'run-agent')) {
+            $actionMatch = $true
+          }
+        }
+      } catch {
+        # ignore action parsing issues
+      }
+
+      if ($isNameMatch -or $actionMatch) {
+        $full = if ($path -and $path -ne '\') { "$path$name" } else { $name }
+        $matches += $full
+      }
+    }
+  } catch {
+    # Fallback: schtasks summary (best-effort)
+    try {
+      $raw = schtasks /Query /FO LIST /V 2>$null
+      if ($LASTEXITCODE -eq 0 -and $raw) {
+        # Pull out task names that mention ManLab or manlab-agent.
+        $current = $null
+        foreach ($line in $raw) {
+          if ($line -match '^TaskName:\s*(.+)$') {
+            $current = $Matches[1].Trim()
+          }
+          if ($current -and ($line -match 'ManLab' -or $line -match 'manlab-agent' -or $line -match 'run-agent')) {
+            $matches += $current
+            $current = $null
+          }
+        }
+      }
+    } catch {
+      # ignore
+    }
+  }
+
+  return @($matches | Sort-Object -Unique)
+}
+
+if ($PreviewUninstall) {
+  $sections = @()
+  $notes = @()
+
+  # Services (legacy)
+  try {
+    $svc = Get-Service -Name 'manlab-agent' -ErrorAction SilentlyContinue
+    if ($svc) {
+      $sections += (New-PreviewSection -Label 'Services' -Items @("manlab-agent (state: $($svc.Status))"))
+    } else {
+      $sections += (New-PreviewSection -Label 'Services' -Items @('manlab-agent (if present)'))
+    }
+  } catch {
+    $sections += (New-PreviewSection -Label 'Services' -Items @('manlab-agent (if present)'))
+  }
+
+  # Scheduled tasks
+  $taskMatches = Get-TaskMatches
+  if ($taskMatches.Count -gt 0) {
+    $sections += (New-PreviewSection -Label 'Scheduled tasks' -Items $taskMatches)
+  } else {
+    $sections += (New-PreviewSection -Label 'Scheduled tasks' -Items @('ManLab Agent (if present)', 'ManLab Agent User (if present)'))
+  }
+
+  # Directories + file sample
+  $dirs = @('C:\ProgramData\ManLab\Agent')
+  if ($env:LOCALAPPDATA) { $dirs += (Join-Path $env:LOCALAPPDATA 'ManLab\Agent') }
+  $existingDirs = @($dirs | Where-Object { Test-Path $_ })
+  if ($existingDirs.Count -gt 0) {
+    $sections += (New-PreviewSection -Label 'Directories' -Items $existingDirs)
+    foreach ($d in $existingDirs) {
+      $files = Get-DirectoryFileSample -Path $d -Max 20
+      if ($files.Count -gt 0) {
+        $sections += (New-PreviewSection -Label "Files (sample) — $d" -Items $files)
+      }
+    }
+  } else {
+    $sections += (New-PreviewSection -Label 'Directories' -Items $dirs)
+  }
+
+  if (-not (Test-IsAdmin)) {
+    $notes += 'Preview collected without administrator privileges. Some resources may not be visible.'
+  }
+
+  $obj = @{ success = $true; osHint = 'Windows'; sections = $sections; notes = $notes; error = $null }
+  $obj | ConvertTo-Json -Depth 6
+  exit 0
+}
 
 function Get-CurrentUserId {
   # Returns DOMAIN\User (or MACHINE\User) which Task Scheduler APIs expect.
@@ -142,6 +266,16 @@ function Assert-Admin {
   $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
   if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Please run this installer from an elevated PowerShell (Run as Administrator)."
+  }
+}
+
+function Test-IsAdmin {
+  try {
+    $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  } catch {
+    return $false
   }
 }
 
@@ -525,11 +659,156 @@ if ($UserMode -and $TaskName -eq "ManLab Agent") {
 }
 
 # Only require admin if not in user mode
-if (-not $UserMode) {
+if (-not $UserMode -and -not ($Uninstall -and $UninstallAll)) {
   Assert-Admin
 }
 
 if ($Uninstall) {
+  function Invoke-UninstallSingle(
+    [string]$ThisTaskName,
+    [string]$ThisInstallDir,
+    [bool]$ThisUserMode
+  ) {
+    Write-Host "Uninstall target:"
+    Write-Host "  Task name:   $ThisTaskName"
+    Write-Host "  Install dir: $ThisInstallDir"
+
+    # Remove scheduled task if present (best-effort)
+    $task = Get-ScheduledTaskIfExists -Name $ThisTaskName
+    if ($null -ne $task) {
+      Write-Host "Removing scheduled task: $ThisTaskName"
+      Remove-ScheduledTaskIfExists -Name $ThisTaskName
+    } else {
+      # In case the ScheduledTasks module isn't available, attempt schtasks-based removal anyway.
+      try {
+        & schtasks /Query /TN "$ThisTaskName" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "Removing scheduled task (fallback): $ThisTaskName"
+          try { & schtasks /End /TN "$ThisTaskName" 2>$null | Out-Null } catch { }
+          try { & schtasks /Delete /TN "$ThisTaskName" /F 2>$null | Out-Null } catch { }
+        } else {
+          Write-Host "Scheduled task not found; skipping."
+        }
+      } catch {
+        Write-Host "Scheduled task not found; skipping."
+      }
+    }
+
+    if ($ThisUserMode) {
+      # In user mode we may have used HKCU Run as a fallback for autostart.
+      Write-Host "Removing user autostart entry (best-effort): $ThisTaskName"
+      Remove-UserAutostart -Name $ThisTaskName
+    }
+
+    # Remove install directory
+    if (-not [string]::IsNullOrWhiteSpace($ThisInstallDir) -and (Test-Path $ThisInstallDir)) {
+      # Basic safety guard
+      if ($ThisInstallDir.TrimEnd('\\') -eq 'C:' -or $ThisInstallDir.TrimEnd('\\') -eq 'C:\\') {
+        throw "Refusing to delete unsafe InstallDir: $ThisInstallDir"
+      }
+
+      Write-Host "Deleting install directory: $ThisInstallDir"
+      Remove-Item -Path $ThisInstallDir -Recurse -Force
+    } else {
+      Write-Host "Install directory not found; skipping."
+    }
+  }
+
+  if ($UninstallAll) {
+    Write-Host "Uninstalling ManLab Agent (all modes)"
+
+    # Best-effort: remove legacy Windows Service installs (older versions might have used a service).
+    try {
+      $svc = Get-Service -Name 'manlab-agent' -ErrorAction Stop
+      if ($null -ne $svc) {
+        Write-Host "Stopping legacy Windows service (best-effort): manlab-agent"
+        try { Stop-Service -Name 'manlab-agent' -Force -ErrorAction SilentlyContinue } catch { }
+        try { & sc.exe delete "manlab-agent" | Out-Null } catch { }
+      }
+    } catch {
+      # ignore if missing
+    }
+
+    # Best-effort: remove any scheduled tasks that clearly reference the agent.
+    # We do this in addition to removing the known default task names.
+    try {
+      $null = Get-Command -Name Get-ScheduledTask -ErrorAction Stop
+      $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue
+      foreach ($t in ($tasks | Where-Object { $_.TaskName -like '*ManLab*Agent*' })) {
+        $actionsText = ($t.Actions | ForEach-Object { ($_.Execute + ' ' + $_.Arguments) }) -join ' '
+        if ($actionsText -match 'manlab-agent\.exe' -or $actionsText -match 'run-agent\.ps1' -or $t.TaskName -match '^ManLab Agent') {
+          Write-Host "Removing detected scheduled task (best-effort): $($t.TaskName)"
+          try { Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false -ErrorAction SilentlyContinue } catch { }
+        }
+      }
+    } catch {
+      # ignore; we'll still remove known tasks by name via schtasks fallback below.
+    }
+
+    $systemTask = 'ManLab Agent'
+    $systemDir = 'C:\ProgramData\ManLab\Agent'
+    $userTask = 'ManLab Agent User'
+    $userDir = if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { "$env:LOCALAPPDATA\ManLab\Agent" } else { $null }
+
+    if (Test-IsAdmin) {
+      Invoke-UninstallSingle -ThisTaskName $systemTask -ThisInstallDir $systemDir -ThisUserMode:$false
+    } else {
+      Write-Host "Skipping system uninstall (requires admin): $systemTask @ $systemDir"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($userDir)) {
+      Invoke-UninstallSingle -ThisTaskName $userTask -ThisInstallDir $userDir -ThisUserMode:$true
+    } else {
+      Write-Host "Skipping user-mode directory cleanup (LOCALAPPDATA unavailable)."
+      # Still attempt scheduled task removal in case a task was registered.
+      Invoke-UninstallSingle -ThisTaskName $userTask -ThisInstallDir "" -ThisUserMode:$true
+    }
+
+    # Extra safety cleanup: remove common leftover directories from older installers.
+    # We keep this list conservative.
+    $legacyDirs = @(
+      'C:\ProgramData\ManLab\Agent',
+      'C:\ProgramData\ManLab\agent',
+      'C:\ProgramData\ManLab.Agent',
+      'C:\ProgramData\ManLab'
+    )
+
+    foreach ($d in $legacyDirs) {
+      try {
+        if (Test-Path $d) {
+          # Avoid deleting the entire ManLab folder if it contains other things.
+          if ($d -eq 'C:\ProgramData\ManLab') {
+            $agentChild = Join-Path $d 'Agent'
+            if (Test-Path $agentChild) {
+              Write-Host "Deleting leftover agent directory: $agentChild"
+              Remove-Item -Path $agentChild -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            continue
+          }
+
+          if ($d.TrimEnd('\\') -eq 'C:' -or $d.TrimEnd('\\') -eq 'C:\\') {
+            continue
+          }
+
+          Write-Host "Deleting leftover directory (best-effort): $d"
+          Remove-Item -Path $d -Recurse -Force -ErrorAction SilentlyContinue
+        }
+      } catch {
+        # ignore
+      }
+    }
+
+    # Also uninstall explicit custom path/name if provided and different from defaults.
+    if (-not [string]::IsNullOrWhiteSpace($TaskName) -and ($TaskName -ne $systemTask) -and ($TaskName -ne $userTask)) {
+      Invoke-UninstallSingle -ThisTaskName $TaskName -ThisInstallDir $InstallDir -ThisUserMode:([bool]$UserMode)
+    } elseif (-not [string]::IsNullOrWhiteSpace($InstallDir) -and ($InstallDir -ne $systemDir) -and ($null -eq $userDir -or $InstallDir -ne $userDir)) {
+      Invoke-UninstallSingle -ThisTaskName $TaskName -ThisInstallDir $InstallDir -ThisUserMode:([bool]$UserMode)
+    }
+
+    Write-Host "Uninstall complete."
+    exit 0
+  }
+
   Write-Host "Uninstalling ManLab Agent"
   Write-Host "  Task name:   $TaskName"
   Write-Host "  Install dir: $InstallDir"

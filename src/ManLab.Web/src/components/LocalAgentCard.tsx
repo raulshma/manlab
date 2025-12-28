@@ -3,7 +3,7 @@
  * Provides install/uninstall buttons and shows real-time logs.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -25,7 +25,7 @@ import {
   clearLocalAgentFiles,
 } from "../api";
 import { useSignalR } from "../SignalRContext";
-import type { LocalAgentStatus, AgentConfiguration } from "../types";
+import type { LocalAgentStatus, AgentConfiguration, FileDirectoryInfo, TaskInfo } from "../types";
 import { ConfirmationModal } from "./ConfirmationModal";
 import { ChevronRight, Server, Shield, User, Trash2, AlertTriangle, Settings } from "lucide-react";
 import {
@@ -202,6 +202,88 @@ export function LocalAgentCard() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
   };
 
+  const cleanupPreviewDetails = (() => {
+    const sections: Array<{ label: string; lines: ReactNode[] }> = [];
+
+    const addDir = (label: string, dir: FileDirectoryInfo) => {
+      const summary = `${dir.path} (${formatBytes(dir.totalSizeBytes)}, ${dir.fileCount} files)`;
+      const fileLines = (dir.files ?? []).map((f) => (
+        <li key={f} className="truncate" title={f}>
+          {f}
+        </li>
+      ));
+
+      sections.push({
+        label,
+        lines: [
+          <div key="summary" className="font-mono text-xs break-all">{summary}</div>,
+          ...(fileLines.length > 0
+            ? [
+                <div key="files" className="mt-1">
+                  <div className="text-xs font-medium">Files (sample)</div>
+                  <ul className="mt-1 list-disc pl-5 text-xs font-mono text-muted-foreground">
+                    {fileLines}
+                  </ul>
+                </div>,
+              ]
+            : []),
+        ],
+      });
+    };
+
+    const addTask = (label: string, task: TaskInfo) => {
+      const details = `${task.name} (state: ${task.state})`;
+      const lines: ReactNode[] = [
+        <div key="task" className="font-mono text-xs break-all">{details}</div>,
+      ];
+      if (task.lastRunTime) {
+        lines.push(
+          <div key="last" className="text-xs text-muted-foreground">Last run: {task.lastRunTime}</div>
+        );
+      }
+      sections.push({
+        label,
+        lines,
+      });
+    };
+
+    if (orphaned?.systemDirectory) addDir("System files", orphaned.systemDirectory);
+    if (orphaned?.userDirectory) addDir("User files", orphaned.userDirectory);
+    if (orphaned?.systemTask) addTask("System scheduled task", orphaned.systemTask);
+    if (orphaned?.userTask) addTask("User scheduled task", orphaned.userTask);
+
+    // Best-effort: the uninstaller also attempts to remove legacy service installs.
+    sections.push({
+      label: "Services",
+      lines: [
+        <div key="svc" className="text-xs text-muted-foreground">
+          Legacy Windows service (if present): <span className="font-mono">manlab-agent</span>
+        </div>,
+      ],
+    });
+
+    if (sections.length === 0) return null;
+
+    return (
+      <div className="space-y-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Cleanup preview (best-effort)
+        </div>
+        <div className="text-xs text-muted-foreground">
+          These resources are expected to be removed. If something can’t be detected, the uninstall still attempts cleanup.
+        </div>
+        <div className="space-y-2">
+          {sections.map((s) => (
+            <div key={s.label}>
+              <div className="text-xs font-medium">{s.label}</div>
+              <div className="mt-1 space-y-1">{s.lines}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  })();
+
   return (
     <Card>
       <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
@@ -253,8 +335,10 @@ export function LocalAgentCard() {
                 <ConfirmationModal
                   title="Clear Agent Resources"
                   message="This will remove all leftover agent files, configuration, and scheduled tasks. This action cannot be undone."
+                  details={cleanupPreviewDetails}
                   confirmText="Clear All"
                   isDestructive={true}
+                  isLoading={clearFilesMutation.isPending}
                   onConfirm={() => clearFilesMutation.mutate()}
                   trigger={
                     <Button
@@ -471,8 +555,10 @@ export function LocalAgentCard() {
               <ConfirmationModal
                 title="Uninstall Local Agent"
                 message="This will remove the ManLab agent from this server. You will no longer be able to monitor this machine until you reinstall the agent."
+                details={cleanupPreviewDetails}
                 confirmText="Uninstall"
                 isDestructive={true}
+                isLoading={uninstallMutation.isPending}
                 onConfirm={() => uninstallMutation.mutate()}
                 trigger={
                   <Button
