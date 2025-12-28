@@ -37,6 +37,16 @@ public sealed class ServiceMonitorSchedulerService : BackgroundService
         _scopeFactory = scopeFactory;
     }
 
+    /// <summary>
+    /// DTO to hold all needed monitoring data per node, fetched in batch.
+    /// </summary>
+    private sealed record NodeMonitorData(
+        Guid NodeId,
+        DateTime? LatestSnapshot,
+        bool HasRecentPending,
+        List<string> ServiceNames
+    );
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("ServiceMonitorSchedulerService started. Interval={Interval}s", Interval.TotalSeconds);
@@ -79,6 +89,74 @@ public sealed class ServiceMonitorSchedulerService : BackgroundService
         _logger.LogInformation("ServiceMonitorSchedulerService stopped");
     }
 
+    /// <summary>
+    /// Fetches all monitoring data in 3-4 batch queries instead of 4N per-node queries.
+    /// Reduces database roundtrips from O(4N) to O(1).
+    /// </summary>
+    private async Task<List<NodeMonitorData>> GetMonitorDataAsync(
+        DataContext db,
+        List<Guid> nodeIds,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+
+        // Query 1: Get online nodes from the candidate set
+        var onlineNodes = await db.Nodes
+            .AsNoTracking()
+            .Where(n => nodeIds.Contains(n.Id) && n.Status == NodeStatus.Online)
+            .Select(n => n.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        if (onlineNodes.Count == 0)
+            return [];
+
+        // Query 2: Get latest snapshot timestamp per online node
+        var latestSnapshots = await db.ServiceStatusSnapshots
+            .AsNoTracking()
+            .Where(s => onlineNodes.Contains(s.NodeId))
+            .GroupBy(s => s.NodeId)
+            .Select(g => new { NodeId = g.Key, LatestTimestamp = g.Max(s => s.Timestamp) })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        // Query 3: Get nodes with recent pending service.status commands
+        var recentPendingNodes = await db.CommandQueue
+            .AsNoTracking()
+            .Where(c => onlineNodes.Contains(c.NodeId))
+            .Where(c => c.CommandType == CommandType.ServiceStatus)
+            .Where(c => c.Status == CommandStatus.Queued || c.Status == CommandStatus.Sent || c.Status == CommandStatus.InProgress)
+            .Where(c => c.CreatedAt > now - PendingCommandCooldown)
+            .Select(c => c.NodeId)
+            .Distinct()
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        // Query 4: Get service monitor configs for online nodes
+        var serviceConfigs = await db.ServiceMonitorConfigs
+            .AsNoTracking()
+            .Where(c => onlineNodes.Contains(c.NodeId) && c.Enabled)
+            .OrderBy(c => c.NodeId)
+            .ThenBy(c => c.ServiceName)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        // Assemble in memory
+        var latestSnapshotDict = latestSnapshots.ToDictionary(x => x.NodeId, x => (DateTime?)x.LatestTimestamp);
+        var hasPendingSet = recentPendingNodes.ToHashSet();
+        var servicesByNode = serviceConfigs.GroupBy(c => c.NodeId)
+            .ToDictionary(g => g.Key, g => g.Select(c => c.ServiceName).ToList());
+
+        return onlineNodes.Select(nodeId =>
+        {
+            var hasPending = hasPendingSet.Contains(nodeId);
+            var latest = latestSnapshotDict.TryGetValue(nodeId, out var ts) ? ts : null;
+            var services = servicesByNode.TryGetValue(nodeId, out var svcList) ? svcList : [];
+
+            return new NodeMonitorData(nodeId, latest, hasPending, services);
+        }).ToList();
+    }
+
     private async Task TickAsync(CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -100,67 +178,31 @@ public sealed class ServiceMonitorSchedulerService : BackgroundService
             return;
         }
 
+        // BATCH fetch all necessary data in 3-4 queries (O(1) instead of O(4N))
+        var monitorDataList = await GetMonitorDataAsync(db, nodeIds, cancellationToken);
+
         var enqueued = 0;
 
-        foreach (var nodeId in nodeIds)
+        foreach (var data in monitorDataList)
         {
-            // Only monitor online nodes.
-            var isOnline = await db.Nodes
-                .AsNoTracking()
-                .AnyAsync(n => n.Id == nodeId && n.Status == NodeStatus.Online, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (!isOnline)
-            {
+            // Skip if recent pending command exists
+            if (data.HasRecentPending)
                 continue;
-            }
 
-            // Avoid duplicate pending service.status commands.
-            var hasRecentPending = await db.CommandQueue
-                .AsNoTracking()
-                .Where(c => c.NodeId == nodeId)
-                .Where(c => c.CommandType == CommandType.ServiceStatus)
-                .Where(c => c.Status == CommandStatus.Queued || c.Status == CommandStatus.Sent || c.Status == CommandStatus.InProgress)
-                .Where(c => c.CreatedAt > now - PendingCommandCooldown)
-                .AnyAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            if (hasRecentPending)
-            {
+            // Skip if snapshot is still fresh
+            if (data.LatestSnapshot.HasValue && data.LatestSnapshot.Value > now - MinSnapshotAge)
                 continue;
-            }
 
-            // If the newest snapshot is fresh, skip.
-            var latestSnapshot = await db.ServiceStatusSnapshots
-                .AsNoTracking()
-                .Where(s => s.NodeId == nodeId)
-                .MaxAsync(s => (DateTime?)s.Timestamp, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (latestSnapshot.HasValue && latestSnapshot.Value > now - MinSnapshotAge)
-            {
+            // Skip if no services configured
+            if (data.ServiceNames.Count == 0)
                 continue;
-            }
 
-            var services = await db.ServiceMonitorConfigs
-                .AsNoTracking()
-                .Where(c => c.NodeId == nodeId && c.Enabled)
-                .OrderBy(c => c.ServiceName)
-                .Select(c => c.ServiceName)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            if (services.Count == 0)
-            {
-                continue;
-            }
-
-            var payload = JsonSerializer.Serialize(new { services });
+            var payload = JsonSerializer.Serialize(new { services = data.ServiceNames });
 
             db.CommandQueue.Add(new CommandQueueItem
             {
                 Id = Guid.NewGuid(),
-                NodeId = nodeId,
+                NodeId = data.NodeId,
                 CommandType = CommandType.ServiceStatus,
                 Payload = payload,
                 Status = CommandStatus.Queued,
