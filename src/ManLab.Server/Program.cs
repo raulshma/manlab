@@ -53,6 +53,7 @@ builder.Services
 
 
 builder.Services.AddMemoryCache();
+builder.Services.AddResponseCaching();
 
 // Enhancements services
 builder.Services.AddScoped<LogViewerSessionService>();
@@ -133,6 +134,9 @@ var forwardedHeadersOptions = new ForwardedHeadersOptions
 forwardedHeadersOptions.KnownIPNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
+
+// Enable response caching middleware for ResponseCache attribute with VaryByQueryKeys support.
+app.UseResponseCaching();
 
 // Ensure the database schema exists before hosted services start querying it.
 // This prevents runtime errors like: relation "Nodes" does not exist.

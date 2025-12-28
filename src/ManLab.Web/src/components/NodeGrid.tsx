@@ -64,17 +64,15 @@ export function NodeGrid({ onSelectNode }: NodeGridProps) {
   // Empty state
   if (!nodes || nodes.length === 0) {
     return (
-      <Card>
-        <CardContent className="flex flex-col items-center justify-center py-12">
-          <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
-            <Server className="w-8 h-8 text-muted-foreground" />
-          </div>
-          <h3 className="text-foreground font-medium mb-1">No nodes connected</h3>
-          <p className="text-muted-foreground text-sm">
-            Add your first node to start monitoring
-          </p>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center animate-in fade-in-50">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+          <Server className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <h3 className="mt-4 text-lg font-semibold">No nodes connected</h3>
+        <p className="mb-4 mt-2 text-sm text-muted-foreground">
+          Add your first node to start monitoring your infrastructure.
+        </p>
+      </div>
     );
   }
 
