@@ -74,6 +74,8 @@ jobs:
           if [ "${{ matrix.rid }}" = "linux-arm64" ]; then
             # NativeAOT cross-arch linking on x64 runners is fragile.
             # Build inside an arm64 container under QEMU instead.
+            mkdir -p "./publish/linux-arm64"
+
             docker run --rm --platform linux/arm64 \
               -v "${GITHUB_WORKSPACE}":/src \
               -w /src \
@@ -89,6 +91,10 @@ jobs:
                   -p:PublishAot=true \
                   -o /src/publish/linux-arm64\
               "
+
+            # The container runs as root, so it may leave root-owned files in the workspace.
+            # Reset ownership so subsequent steps (cp/tar/upload) can write.
+            sudo chown -R "$(id -u):$(id -g)" ./publish/linux-arm64 || true
           else
             dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
               -c Release \
