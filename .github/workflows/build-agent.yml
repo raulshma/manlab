@@ -172,10 +172,9 @@ jobs:
 
   # Create a manifest of all built artifacts
   create-manifest:
-    name: Create Release Manifest
+    name: Create Manifest
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
     permissions:
       contents: write
     
@@ -203,7 +202,15 @@ jobs:
           echo "| macOS | x64 | manlab-agent-osx-x64.tar.gz |" >> manifest.md
           echo "| macOS | ARM64 | manlab-agent-osx-arm64.tar.gz |" >> manifest.md
 
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: manlab-agent-manifest
+          path: manifest.md
+          retention-days: 30
+
       - name: Upload manifest to release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: manifest.md
