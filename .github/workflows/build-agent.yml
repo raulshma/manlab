@@ -33,11 +33,11 @@ jobs:
           - os: ubuntu-latest
             rid: linux-x64
             artifact: manlab-agent
-          - os: ubuntu-latest
+          # Prefer a native ARM64 runner for linux-arm64 to avoid QEMU (much faster).
+          # Correct GitHub-hosted label is *arm64* (not just "arm").
+          - os: ubuntu-22.04-arm64
             rid: linux-arm64
             artifact: manlab-agent
-          # Use a currently available macOS runner label.
-          # (Hosted runner availability changes over time; macos-14 is generally available.)
           - os: macos-15-intel
             rid: osx-x64
             artifact: manlab-agent
@@ -60,8 +60,18 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore src/ManLab.Agent/ManLab.Agent.csproj
 
+      - name: Ensure NativeAOT toolchain (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v clang >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends clang lld zlib1g-dev
+          fi
+
       - name: Set up QEMU for cross-compilation
-        if: runner.os == 'Linux' && matrix.rid == 'linux-arm64'
+        if: runner.os == 'Linux' && runner.arch != 'ARM64' && matrix.rid == 'linux-arm64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
@@ -72,29 +82,44 @@ jobs:
           set -euo pipefail
 
           if [ "${{ matrix.rid }}" = "linux-arm64" ]; then
-            # NativeAOT cross-arch linking on x64 runners is fragile.
-            # Build inside an arm64 container under QEMU instead.
-            mkdir -p "./publish/linux-arm64"
+            if [ "${{ runner.arch }}" = "ARM64" ]; then
+              # Fast path: native arm64 runner.
+              dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
+                -c Release \
+                -r linux-arm64 \
+                --self-contained true \
+                -p:PublishAot=true \
+                -o ./publish/linux-arm64
+            else
+              # Fallback: build inside an arm64 container under QEMU.
+              mkdir -p "./publish/linux-arm64"
 
-            docker run --rm --platform linux/arm64 \
-              -v "${GITHUB_WORKSPACE}":/src \
-              -w /src \
-              mcr.microsoft.com/dotnet/sdk:10.0 \
-              bash -lc "\
-                set -euo pipefail && \
-                apt-get update && \
-                apt-get install -y --no-install-recommends clang lld zlib1g-dev && \
-                dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
-                  -c Release \
-                  -r linux-arm64 \
-                  --self-contained true \
-                  -p:PublishAot=true \
-                  -o /src/publish/linux-arm64\
-              "
+              # Reuse the host NuGet cache to avoid downloading/restoring packages under QEMU.
+              # (Host restore already ran above, so this is usually a big win.)
+              mkdir -p "$HOME/.nuget/packages"
 
-            # The container runs as root, so it may leave root-owned files in the workspace.
-            # Reset ownership so subsequent steps (cp/tar/upload) can write.
-            sudo chown -R "$(id -u):$(id -g)" ./publish/linux-arm64 || true
+              docker run --rm --platform linux/arm64 \
+                -v "${GITHUB_WORKSPACE}":/src \
+                -v "$HOME/.nuget/packages":/nuget/packages \
+                -e NUGET_PACKAGES=/nuget/packages \
+                -w /src \
+                mcr.microsoft.com/dotnet/sdk:10.0 \
+                bash -lc "\
+                  set -euo pipefail && \
+                  apt-get update && \
+                  apt-get install -y --no-install-recommends clang lld zlib1g-dev && \
+                  dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
+                    -c Release \
+                    -r linux-arm64 \
+                    --self-contained true \
+                    -p:PublishAot=true \
+                    -o /src/publish/linux-arm64\
+                "
+
+              # The container runs as root, so it may leave root-owned files in the workspace.
+              # Reset ownership so subsequent steps (cp/tar/upload) can write.
+              sudo chown -R "$(id -u):$(id -g)" ./publish/linux-arm64 || true
+            fi
           else
             dotnet publish src/ManLab.Agent/ManLab.Agent.csproj \
               -c Release \
