@@ -33,9 +33,7 @@ jobs:
           - os: ubuntu-latest
             rid: linux-x64
             artifact: manlab-agent
-          # Prefer a native ARM64 runner for linux-arm64 to avoid QEMU (much faster).
-          # Correct GitHub-hosted label is *arm64* (not just "arm").
-          - os: ubuntu-22.04-arm64
+          - os: ubuntu-22.04-arm
             rid: linux-arm64
             artifact: manlab-agent
           - os: macos-15-intel
