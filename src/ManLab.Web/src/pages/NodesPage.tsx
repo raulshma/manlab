@@ -2,21 +2,8 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  SidebarProvider,
-  Sidebar,
-  SidebarHeader,
-  SidebarContent,
-  SidebarFooter,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarMenuSkeleton,
-  SidebarInput,
-  SidebarInset,
-  SidebarGroup,
-  SidebarGroupContent,
-} from "@/components/ui/sidebar";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Empty,
   EmptyMedia,
@@ -24,7 +11,15 @@ import {
   EmptyDescription,
 } from "@/components/ui/empty";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Server, Globe, ChevronRight } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertCircle,
+  Server,
+  Globe,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeft,
+} from "lucide-react";
 import { MachineOnboardingModal } from "@/components/MachineOnboardingModal";
 import { NodeDetailView } from "@/components/NodeDetailView";
 import { fetchNodes } from "@/api";
@@ -56,6 +51,7 @@ export function NodesPage() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<NodeStatus | "All">("All");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const {
     data: nodes,
@@ -94,156 +90,215 @@ export function NodesPage() {
       : null;
 
   return (
-    <SidebarProvider
-      defaultOpen={true}
-      style={
-        {
-          "--sidebar-width": "320px",
-        } as React.CSSProperties
-      }
-    >
-      <Sidebar collapsible="none" className="border-r">
-        {/* Sidebar Header with title, onboarding, filter */}
-        <SidebarHeader>
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Nodes</h2>
-            <MachineOnboardingModal
-              trigger={<Button size="sm">Onboard</Button>}
+    <div className="flex h-[calc(100vh-5rem)] -m-4 -mb-8">
+      {/* Sidebar Panel */}
+      <div
+        className={`flex flex-col border-r border-border bg-sidebar transition-all duration-200 ${
+          sidebarCollapsed ? "w-12" : "w-80"
+        }`}
+      >
+        {/* Sidebar Header */}
+        <div className="flex items-center justify-between p-2 border-b border-border">
+          {!sidebarCollapsed && (
+            <>
+              <h2 className="text-sm font-semibold px-2">Nodes</h2>
+              <div className="flex items-center gap-1">
+                <MachineOnboardingModal
+                  trigger={
+                    <Button size="sm" variant="ghost" className="h-7 text-xs">
+                      Onboard
+                    </Button>
+                  }
+                />
+              </div>
+            </>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          >
+            {sidebarCollapsed ? (
+              <PanelLeft className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+
+        {/* Filter Controls - hidden when collapsed */}
+        {!sidebarCollapsed && (
+          <div className="p-2 space-y-2 border-b border-border">
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search nodes…"
+              className="h-8 text-sm"
             />
-          </div>
-
-          <SidebarInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search nodes…"
-          />
-
-          <div className="flex flex-wrap items-center gap-1">
-            {(["All", "Online", "Offline", "Maintenance"] as const).map((s) => (
-              <Button
-                key={s}
-                size="sm"
-                variant={status === s ? "secondary" : "ghost"}
-                onClick={() => setStatus(s)}
-                className="h-6 px-2 text-xs"
-              >
-                <StatusPill status={s} />
-              </Button>
-            ))}
-          </div>
-        </SidebarHeader>
-
-        {/* Sidebar Content - Node List */}
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {/* Loading Skeletons */}
-                {isLoading &&
-                  [...Array(5)].map((_, i) => (
-                    <SidebarMenuItem key={i}>
-                      <SidebarMenuSkeleton showIcon />
-                    </SidebarMenuItem>
-                  ))}
-
-                {/* Error State */}
-                {isError && (
-                  <Alert variant="destructive" className="mx-2">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>Error</AlertTitle>
-                    <AlertDescription>
-                      {error instanceof Error
-                        ? error.message
-                        : "Failed to load nodes"}
-                    </AlertDescription>
-                  </Alert>
-                )}
-
-                {/* Empty State */}
-                {!isLoading && !isError && filtered.length === 0 && (
-                  <Empty className="py-8 border-0">
-                    <EmptyMedia variant="icon">
-                      <Server />
-                    </EmptyMedia>
-                    <EmptyTitle>No nodes found</EmptyTitle>
-                    <EmptyDescription>
-                      Try adjusting your search or filters
-                    </EmptyDescription>
-                  </Empty>
-                )}
-
-                {/* Node List */}
-                {!isLoading &&
-                  !isError &&
-                  filtered.map((node: Node) => {
-                    const isSelected = node.id === effectiveSelectedId;
-                    const statusColor =
-                      node.status === "Online"
-                        ? "bg-green-500"
-                        : node.status === "Offline"
-                        ? "bg-red-500"
-                        : node.status === "Maintenance"
-                        ? "bg-yellow-500"
-                        : "bg-muted";
-
-                    return (
-                      <SidebarMenuItem key={node.id}>
-                        <SidebarMenuButton
-                          isActive={isSelected}
-                          onClick={() => setSelectedNodeId(node.id)}
-                          className="h-auto py-2"
-                        >
-                          <div
-                            className={`w-2 h-2 rounded-full flex-shrink-0 ${statusColor} ${
-                              node.status === "Online"
-                                ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]"
-                                : ""
-                            }`}
-                          />
-                          <div className="flex-1 min-w-0 flex flex-col items-start">
-                            <span className="font-medium text-sm truncate w-full">
-                              {node.hostname}
-                            </span>
-                            {node.ipAddress && (
-                              <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                                <Globe className="w-3 h-3" />
-                                {node.ipAddress}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex flex-col items-end gap-0.5">
-                            <span className="text-[10px] text-muted-foreground">
-                              {formatRelativeTime(node.lastSeen)}
-                            </span>
-                            <ChevronRight
-                              className={`w-4 h-4 transition-colors ${
-                                isSelected
-                                  ? "text-primary"
-                                  : "text-muted-foreground/50"
-                              }`}
-                            />
-                          </div>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-
-        {/* Sidebar Footer - Node Count */}
-        {!isLoading && !isError && (
-          <SidebarFooter>
-            <div className="text-xs text-muted-foreground text-center border-t pt-2">
-              {filtered.length} of {nodes?.length ?? 0} nodes
+            <div className="flex flex-wrap items-center gap-1">
+              {(["All", "Online", "Offline", "Maintenance"] as const).map(
+                (s) => (
+                  <Button
+                    key={s}
+                    size="sm"
+                    variant={status === s ? "secondary" : "ghost"}
+                    onClick={() => setStatus(s)}
+                    className="h-6 px-2 text-xs"
+                  >
+                    <StatusPill status={s} />
+                  </Button>
+                )
+              )}
             </div>
-          </SidebarFooter>
+          </div>
         )}
-      </Sidebar>
+
+        {/* Node List */}
+        <ScrollArea className="flex-1">
+          <div className={sidebarCollapsed ? "p-1" : "p-2 space-y-1"}>
+            {/* Loading Skeletons */}
+            {isLoading &&
+              [...Array(5)].map((_, i) => (
+                <div
+                  key={i}
+                  className={`rounded-md ${sidebarCollapsed ? "p-1" : "p-2"}`}
+                >
+                  {sidebarCollapsed ? (
+                    <Skeleton className="w-8 h-8 rounded-md" />
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="w-2 h-2 rounded-full" />
+                      <div className="flex-1 space-y-1">
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="h-3 w-16" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+            {/* Error State */}
+            {isError && !sidebarCollapsed && (
+              <Alert variant="destructive" className="mx-1">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>
+                  {error instanceof Error
+                    ? error.message
+                    : "Failed to load nodes"}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Empty State */}
+            {!isLoading && !isError && filtered.length === 0 && !sidebarCollapsed && (
+              <Empty className="py-8 border-0">
+                <EmptyMedia variant="icon">
+                  <Server />
+                </EmptyMedia>
+                <EmptyTitle>No nodes found</EmptyTitle>
+                <EmptyDescription>
+                  Try adjusting your search or filters
+                </EmptyDescription>
+              </Empty>
+            )}
+
+            {/* Node List Items */}
+            {!isLoading &&
+              !isError &&
+              filtered.map((node: Node) => {
+                const isSelected = node.id === effectiveSelectedId;
+                const statusColor =
+                  node.status === "Online"
+                    ? "bg-green-500"
+                    : node.status === "Offline"
+                    ? "bg-red-500"
+                    : node.status === "Maintenance"
+                    ? "bg-yellow-500"
+                    : "bg-muted";
+
+                if (sidebarCollapsed) {
+                  // Collapsed view - just status indicator
+                  return (
+                    <button
+                      key={node.id}
+                      onClick={() => setSelectedNodeId(node.id)}
+                      className={`w-full p-2 rounded-md transition-colors flex items-center justify-center ${
+                        isSelected
+                          ? "bg-accent"
+                          : "hover:bg-accent/50"
+                      }`}
+                      title={node.hostname}
+                    >
+                      <div
+                        className={`w-3 h-3 rounded-full ${statusColor} ${
+                          node.status === "Online"
+                            ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]"
+                            : ""
+                        }`}
+                      />
+                    </button>
+                  );
+                }
+
+                // Expanded view
+                return (
+                  <button
+                    key={node.id}
+                    onClick={() => setSelectedNodeId(node.id)}
+                    className={`w-full text-left p-2 rounded-md transition-colors flex items-center gap-2 ${
+                      isSelected
+                        ? "bg-accent"
+                        : "hover:bg-accent/50"
+                    }`}
+                  >
+                    <div
+                      className={`w-2 h-2 rounded-full flex-shrink-0 ${statusColor} ${
+                        node.status === "Online"
+                          ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]"
+                          : ""
+                      }`}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        {node.hostname}
+                      </div>
+                      {node.ipAddress && (
+                        <div className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                          <Globe className="w-3 h-3" />
+                          {node.ipAddress}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span className="text-[10px] text-muted-foreground">
+                        {formatRelativeTime(node.lastSeen)}
+                      </span>
+                      <ChevronRight
+                        className={`w-4 h-4 transition-colors ${
+                          isSelected
+                            ? "text-primary"
+                            : "text-muted-foreground/50"
+                        }`}
+                      />
+                    </div>
+                  </button>
+                );
+              })}
+          </div>
+        </ScrollArea>
+
+        {/* Sidebar Footer */}
+        {!isLoading && !isError && !sidebarCollapsed && (
+          <div className="p-2 border-t border-border text-xs text-muted-foreground text-center">
+            {filtered.length} of {nodes?.length ?? 0} nodes
+          </div>
+        )}
+      </div>
 
       {/* Main Content - Node Details */}
-      <SidebarInset>
+      <div className="flex-1 overflow-auto">
         {effectiveSelectedId ? (
           <NodeDetailView
             nodeId={effectiveSelectedId}
@@ -262,7 +317,7 @@ export function NodesPage() {
             </EmptyDescription>
           </Empty>
         )}
-      </SidebarInset>
-    </SidebarProvider>
+      </div>
+    </div>
   );
 }

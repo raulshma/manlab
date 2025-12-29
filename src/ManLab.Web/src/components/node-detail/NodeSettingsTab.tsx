@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -12,9 +13,11 @@ import {
   shutdownAgent,
   deleteNode,
 } from "../../api";
+import { useSignalR } from "../../SignalRContext";
 import { ConfirmationModal } from "../ConfirmationModal";
 import {
   Card,
+  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -28,7 +31,8 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Power, Activity, RefreshCw, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { AlertCircle, Power, Activity, RefreshCw, Trash2, ToggleLeft, ToggleRight, Terminal, X, CheckCircle2 } from "lucide-react";
 
 interface NodeSettingsTabProps {
   nodeId: string;
@@ -68,6 +72,51 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
   const updateMutation = useMutation({
     mutationFn: () => triggerSystemUpdate(nodeId),
   });
+
+  // Live command output state
+  const [activeCommandId, setActiveCommandId] = useState<string | null>(null);
+  const logContainerRef = useRef<HTMLDivElement>(null);
+  const { commandOutputLogs, subscribeToCommandOutput, unsubscribeFromCommandOutput, clearCommandOutputLogs } = useSignalR();
+
+  // Get logs for the active command
+  const activeLogs = useMemo(
+    () => (activeCommandId ? commandOutputLogs.get(activeCommandId) ?? [] : []),
+    [activeCommandId, commandOutputLogs]
+  );
+  const lastLogEntry = activeLogs[activeLogs.length - 1];
+  const commandStatus = lastLogEntry?.status ?? "Pending";
+  const isCommandComplete = commandStatus === "Completed" || commandStatus === "Failed" || commandStatus === "Cancelled";
+
+  // Auto-scroll to bottom when new logs arrive
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [activeLogs.length]);
+
+  // Subscribe to command output when command starts
+  useEffect(() => {
+    if (activeCommandId) {
+      subscribeToCommandOutput(activeCommandId);
+      return () => {
+        unsubscribeFromCommandOutput(activeCommandId);
+      };
+    }
+  }, [activeCommandId, subscribeToCommandOutput, unsubscribeFromCommandOutput]);
+
+  // Handle triggering system update with live logs
+  const handleTriggerUpdate = async () => {
+    const command = await updateMutation.mutateAsync();
+    setActiveCommandId(command.id);
+  };
+
+  // Close live logs panel
+  const handleCloseLogs = () => {
+    if (activeCommandId) {
+      clearCommandOutputLogs(activeCommandId);
+    }
+    setActiveCommandId(null);
+  };
 
   const systemShutdownMutation = useMutation({
     mutationFn: (delaySeconds: number = 0) =>
@@ -172,7 +221,7 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
               trigger={
                 <Button
                   variant="secondary"
-                  disabled={nodeStatus !== "Online"}
+                  disabled={nodeStatus !== "Online" || activeCommandId !== null}
                 >
                   Update System
                 </Button>
@@ -182,15 +231,76 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
               confirmText="Run Update"
               isDestructive
               isLoading={updateMutation.isPending}
-              onConfirm={async () => {
-                await updateMutation.mutateAsync();
-              }}
+              onConfirm={handleTriggerUpdate}
             />
           </div>
           {nodeStatus !== "Online" && (
             <p className="text-xs text-muted-foreground mt-3">
               ⚠️ System actions are only available when the node is online.
             </p>
+          )}
+
+          {/* Live Logs Panel */}
+          {activeCommandId && (
+            <Card className="mt-4 bg-muted/30 border-border">
+              <CardHeader className="py-2 px-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Terminal className="h-4 w-4" />
+                    <span className="text-sm font-medium">Live Output</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      commandStatus === "Completed" ? "bg-green-500/20 text-green-600" :
+                      commandStatus === "Failed" ? "bg-red-500/20 text-red-600" :
+                      commandStatus === "Cancelled" ? "bg-yellow-500/20 text-yellow-600" :
+                      "bg-blue-500/20 text-blue-600 animate-pulse"
+                    }`}>
+                      {commandStatus}
+                    </span>
+                  </div>
+                  {isCommandComplete && (
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={handleCloseLogs}>
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                <ScrollArea className="h-48">
+                  <div
+                    ref={logContainerRef}
+                    className="px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all"
+                  >
+                    {activeLogs.length === 0 ? (
+                      <span className="text-muted-foreground">Waiting for output...</span>
+                    ) : (
+                      activeLogs.map((entry, i) => (
+                        <div key={i}>
+                          {entry.logs}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+                {isCommandComplete && (
+                  <div className={`px-3 py-2 border-t flex items-center gap-2 text-sm ${
+                    commandStatus === "Completed" ? "text-green-600" :
+                    commandStatus === "Failed" ? "text-red-600" :
+                    "text-yellow-600"
+                  }`}>
+                    {commandStatus === "Completed" ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4" />
+                    )}
+                    <span>
+                      {commandStatus === "Completed" ? "Update completed successfully" :
+                       commandStatus === "Failed" ? "Update failed" :
+                       "Update was cancelled"}
+                    </span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
         </CardHeader>
       </Card>

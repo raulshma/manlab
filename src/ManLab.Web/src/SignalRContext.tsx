@@ -30,6 +30,17 @@ export interface LocalAgentLogEntry {
 }
 
 /**
+ * Command output entry for live command streaming.
+ */
+export interface CommandOutputEntry {
+  commandId: string;
+  nodeId: string;
+  status: string;
+  logs: string;
+  timestamp: string;
+}
+
+/**
  * Connection state for the SignalR context.
  */
 export type ConnectionStatus =
@@ -48,9 +59,14 @@ interface SignalRContextValue {
   localAgentLogs: LocalAgentLogEntry[];
   /** Map of nodeId -> backoff status for agents experiencing heartbeat failures */
   agentBackoffStatus: Map<string, AgentBackoffStatus>;
+  /** Map of commandId -> accumulated output logs */
+  commandOutputLogs: Map<string, CommandOutputEntry[]>;
   subscribeToLocalAgentLogs: (
     callback: (log: LocalAgentLogEntry) => void
   ) => () => void;
+  subscribeToCommandOutput: (commandId: string) => Promise<void>;
+  unsubscribeFromCommandOutput: (commandId: string) => Promise<void>;
+  clearCommandOutputLogs: (commandId: string) => void;
 }
 
 const SignalRContext = createContext<SignalRContextValue | null>(null);
@@ -97,6 +113,9 @@ export function SignalRProvider({
     []
   );
   const [agentBackoffStatus, setAgentBackoffStatus] = useState<Map<string, AgentBackoffStatus>>(
+    new Map()
+  );
+  const [commandOutputLogs, setCommandOutputLogs] = useState<Map<string, CommandOutputEntry[]>>(
     new Map()
   );
   const queryClient = useQueryClient();
@@ -333,6 +352,63 @@ export function SignalRProvider({
     [queryClient]
   );
 
+  // Handle command output appended events (live command streaming)
+  const handleCommandOutputAppended = useCallback(
+    (nodeId: string, commandId: string, status: string, logs: string) => {
+      const entry: CommandOutputEntry = {
+        commandId,
+        nodeId,
+        status,
+        logs,
+        timestamp: new Date().toISOString(),
+      };
+      setCommandOutputLogs((prev) => {
+        const newMap = new Map(prev);
+        const existing = newMap.get(commandId) ?? [];
+        newMap.set(commandId, [...existing, entry]);
+        return newMap;
+      });
+    },
+    []
+  );
+
+  // Subscribe to command output for a specific command
+  const subscribeToCommandOutput = useCallback(
+    async (commandId: string) => {
+      if (connection && connection.state === "Connected") {
+        try {
+          await connection.invoke("SubscribeCommandOutput", commandId);
+        } catch (err) {
+          console.error("Failed to subscribe to command output:", err);
+        }
+      }
+    },
+    [connection]
+  );
+
+  // Unsubscribe from command output for a specific command
+  const unsubscribeFromCommandOutput = useCallback(
+    async (commandId: string) => {
+      if (connection && connection.state === "Connected") {
+        try {
+          await connection.invoke("UnsubscribeCommandOutput", commandId);
+        } catch (err) {
+          console.error("Failed to unsubscribe from command output:", err);
+        }
+      }
+    },
+    [connection]
+  );
+
+  // Clear command output logs for a specific command
+  const clearCommandOutputLogs = useCallback((commandId: string) => {
+    setCommandOutputLogs((prev) => {
+      const newMap = new Map(prev);
+      newMap.delete(commandId);
+      return newMap;
+    });
+  }, []);
+
   // Use ref to track if we've started connecting (to avoid synchronous setState in effect)
   const isConnectingRef = useRef(false);
 
@@ -349,6 +425,7 @@ export function SignalRProvider({
     handleNodeDeleted,
     handleNodeErrorStateChanged,
     handleNodeErrorStateCleared,
+    handleCommandOutputAppended,
   });
 
   // Keep refs in sync with latest handlers
@@ -365,6 +442,7 @@ export function SignalRProvider({
       handleNodeDeleted,
       handleNodeErrorStateChanged,
       handleNodeErrorStateCleared,
+      handleCommandOutputAppended,
     };
   });
 
@@ -465,6 +543,12 @@ export function SignalRProvider({
     newConnection.on("NodeErrorStateChanged", nodeErrorStateChangedHandler);
     newConnection.on("NodeErrorStateCleared", nodeErrorStateClearedHandler);
 
+    // Register command output handler for live streaming
+    const commandOutputAppendedHandler = (
+      ...args: Parameters<typeof handleCommandOutputAppended>
+    ) => handlersRef.current.handleCommandOutputAppended(...args);
+    newConnection.on("CommandOutputAppended", commandOutputAppendedHandler);
+
     // Start the connection asynchronously
     // Wrap in an async IIFE to handle setState after the microtask
     const startConnection = async () => {
@@ -504,6 +588,7 @@ export function SignalRProvider({
       newConnection.off("NodeDeleted", nodeDeletedHandler);
       newConnection.off("NodeErrorStateChanged", nodeErrorStateChangedHandler);
       newConnection.off("NodeErrorStateCleared", nodeErrorStateClearedHandler);
+      newConnection.off("CommandOutputAppended", commandOutputAppendedHandler);
       newConnection.stop();
     };
   }, [finalHubUrl, queryClient]);
@@ -516,7 +601,11 @@ export function SignalRProvider({
         error,
         localAgentLogs,
         agentBackoffStatus,
+        commandOutputLogs,
         subscribeToLocalAgentLogs,
+        subscribeToCommandOutput,
+        unsubscribeFromCommandOutput,
+        clearCommandOutputLogs,
       }}
     >
       {children}
