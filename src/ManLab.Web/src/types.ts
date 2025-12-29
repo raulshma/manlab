@@ -152,6 +152,7 @@ export interface SshTestResponse {
   requiresHostKeyTrust: boolean;
   whoAmI: string | null;
   osHint: string | null;
+  hasExistingInstallation: boolean;
   error: string | null;
 }
 

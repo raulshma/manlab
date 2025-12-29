@@ -1020,7 +1020,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                         <Button
                           variant="ghost"
                           className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          disabled={isBusy || !lastTest?.success}
+                          disabled={isBusy || !(lastTest?.success || lastTest?.hasExistingInstallation)}
                           onClick={() => {
                             // Best-effort: prefetch remote inventory so the confirmation dialog
                             // can show an accurate preview of what will be removed.
@@ -1055,6 +1055,9 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       <span className="text-xs font-mono text-green-600 ml-auto flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                         Connection Verified (OS: {lastTest.osHint})
+                        {lastTest.hasExistingInstallation && (
+                          <span className="text-amber-600 ml-2">• Existing installation detected</span>
+                        )}
                       </span>
                     )}
                   </div>

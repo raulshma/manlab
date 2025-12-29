@@ -43,6 +43,7 @@ public sealed class SshProvisioningService
         bool RequiresHostKeyTrust,
         string? WhoAmI,
         string? OsHint,
+        bool HasExistingInstallation,
         string? Error);
 
     public sealed record InventorySection(string Label, IReadOnlyList<string> Items);
@@ -66,10 +67,34 @@ public sealed class SshProvisioningService
 
             var whoami = Execute(client, "whoami", maxChars: 4096);
             var target = DetectTarget(client);
+            var osHint = target.Raw;
+
+            // Probe for existing installation
+            var hasExistingInstallation = false;
+            try
+            {
+                if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(target.OsFamily, "unix", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Check for Linux agent installation
+                    var probeResult = Execute(client, "sh -c 'test -x /opt/manlab-agent/manlab-agent && echo INSTALLED || true'", maxChars: 64);
+                    hasExistingInstallation = probeResult?.Trim().Equals("INSTALLED", StringComparison.OrdinalIgnoreCase) == true;
+                }
+                else
+                {
+                    // Check for Windows agent installation
+                    var probeResult = Execute(client,
+                        "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"if (Test-Path 'C:\\\\ProgramData\\\\ManLab\\\\Agent\\\\manlab-agent.exe') { 'INSTALLED' }\"",
+                        maxChars: 128);
+                    hasExistingInstallation = probeResult?.Trim().Equals("INSTALLED", StringComparison.OrdinalIgnoreCase) == true;
+                }
+            }
+            catch
+            {
+                // Best-effort: if probe fails, assume no existing installation
+            }
 
             client.Disconnect();
-
-            var osHint = target.Raw;
 
             return new ConnectionTestResult(
                 Success: true,
@@ -77,11 +102,12 @@ public sealed class SshProvisioningService
                 RequiresHostKeyTrust: false,
                 WhoAmI: whoami?.Trim(),
                 OsHint: osHint?.Trim(),
+                HasExistingInstallation: hasExistingInstallation,
                 Error: null);
         }
         catch (SshAuthenticationException ex)
         {
-            return new ConnectionTestResult(false, hostKey.Fingerprint, false, null, null, "SSH authentication failed: " + ex.Message);
+            return new ConnectionTestResult(false, hostKey.Fingerprint, false, null, null, false, "SSH authentication failed: " + ex.Message);
         }
         catch (SshConnectionException ex)
         {
@@ -93,14 +119,15 @@ public sealed class SshProvisioningService
                     RequiresHostKeyTrust: true,
                     WhoAmI: null,
                     OsHint: null,
+                    HasExistingInstallation: false,
                     Error: "SSH host key not trusted. Confirm fingerprint to proceed.");
             }
 
-            return new ConnectionTestResult(false, hostKey.Fingerprint, false, null, null, "SSH connection failed: " + ex.Message);
+            return new ConnectionTestResult(false, hostKey.Fingerprint, false, null, null, false, "SSH connection failed: " + ex.Message);
         }
         catch (Exception ex)
         {
-            return new ConnectionTestResult(false, hostKey.Fingerprint, hostKey.TrustRequired, null, null, ex.Message);
+            return new ConnectionTestResult(false, hostKey.Fingerprint, hostKey.TrustRequired, null, null, false, ex.Message);
         }
     }
 

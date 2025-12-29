@@ -334,6 +334,7 @@ public sealed class OnboardingController : ControllerBase
             result.RequiresHostKeyTrust,
             result.WhoAmI,
             result.OsHint,
+            result.HasExistingInstallation,
             result.Error));
     }
 
@@ -656,6 +657,7 @@ public sealed class OnboardingController : ControllerBase
         bool RequiresHostKeyTrust,
         string? WhoAmI,
         string? OsHint,
+        bool HasExistingInstallation,
         string? Error);
 
     public sealed record StartInstallRequest(
