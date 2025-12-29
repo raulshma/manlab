@@ -23,6 +23,29 @@ public class HardwareTelemetryParsingTests
     }
 
     [Fact]
+    public void TryFindFirstFile_FindsNestedMatch_WithinDepth()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "manlab-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var nested = Path.Combine(root, "gt", "gt0");
+            Directory.CreateDirectory(nested);
+
+            var target = Path.Combine(nested, "gt_busy_percent");
+            File.WriteAllText(target, "42");
+
+            var found = GpuTelemetryCollector.TryFindFirstFile(Path.Combine(root, "gt"), "gt_busy_percent", maxDepth: 3);
+            Assert.Equal(target, found);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* ignore */ }
+        }
+    }
+
+    [Fact]
     public void Upsc_ParsesDeviceList_FirstLine()
     {
         var list = "ups@localhost\notherups@localhost\n";

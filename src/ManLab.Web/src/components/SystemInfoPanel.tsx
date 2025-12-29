@@ -18,14 +18,16 @@ import {
   Network,
   Info,
   Thermometer,
+  Monitor,
 } from "lucide-react";
-import type { Node, Telemetry, NetworkTelemetryPoint, PingTelemetryPoint } from "../types";
+import type { Node, Telemetry, NetworkTelemetryPoint, PingTelemetryPoint, GpuSnapshot } from "../types";
 
 interface SystemInfoPanelProps {
   node: Node;
   telemetry: Telemetry[];
   networkTelemetry: NetworkTelemetryPoint[];
   pingTelemetry: PingTelemetryPoint[];
+  gpuTelemetry: GpuSnapshot[];
 }
 
 function formatBytes(bytes: number): string {
@@ -53,11 +55,24 @@ export function SystemInfoPanel({
   telemetry,
   networkTelemetry,
   pingTelemetry,
+  gpuTelemetry,
 }: SystemInfoPanelProps) {
   // Get the latest telemetry values
   const latestTelemetry = telemetry.length > 0 ? telemetry[telemetry.length - 1] : null;
   const latestNetwork = networkTelemetry.length > 0 ? networkTelemetry[networkTelemetry.length - 1] : null;
   const latestPing = pingTelemetry.length > 0 ? pingTelemetry[pingTelemetry.length - 1] : null;
+
+  // Process GPU telemetry to get the latest snapshot for each GPU
+  const latestGpusMap = new Map<number, GpuSnapshot>();
+  gpuTelemetry.forEach((gpu) => {
+    latestGpusMap.set(gpu.gpuIndex, gpu);
+  });
+  const latestGpus = Array.from(latestGpusMap.values()).sort((a, b) => a.gpuIndex - b.gpuIndex);
+
+  const gpusWithUtil = latestGpus.filter((g) => g.utilizationPercent !== null);
+  const totalGpuUtil = gpusWithUtil.length > 0
+    ? gpusWithUtil.reduce((acc, gpu) => acc + (gpu.utilizationPercent ?? 0), 0) / gpusWithUtil.length
+    : null;
 
   return (
     <Card>
@@ -164,6 +179,56 @@ export function SystemInfoPanel({
               </div>
             </AccordionContent>
           </AccordionItem>
+
+          {/* GPU Info */}
+          {latestGpus.length > 0 && (
+            <AccordionItem value="gpu">
+              <AccordionTrigger>
+                <div className="flex items-center gap-2">
+                  <Monitor className="h-4 w-4" />
+                  <span>GPU</span>
+                  <Badge variant="outline" className="ml-2">
+                    {totalGpuUtil !== null ? `${totalGpuUtil.toFixed(1)}%` : "--"}
+                  </Badge>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-4">
+                  {latestGpus.map((gpu) => (
+                    <div key={gpu.gpuIndex} className="grid grid-cols-2 gap-4 text-sm border-b pb-2 last:border-0 last:pb-0">
+                      <div className="col-span-2">
+                         <p className="font-semibold text-xs text-muted-foreground mb-1">
+                            GPU {gpu.gpuIndex}: {gpu.name || "Unknown"} ({gpu.vendor})
+                         </p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Utilization</span>
+                        <p className="font-medium">
+                          {gpu.utilizationPercent !== null ? `${gpu.utilizationPercent.toFixed(1)}%` : "N/A"}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Memory</span>
+                        <p className="font-medium">
+                             {gpu.memoryUsedBytes !== null ? formatBytes(gpu.memoryUsedBytes) : "N/A"} 
+                             {gpu.memoryTotalBytes !== null ? ` / ${formatBytes(gpu.memoryTotalBytes)}` : ""}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground flex items-center gap-1">
+                            <Thermometer className="h-3 w-3" />
+                            Temperature
+                        </span>
+                        <p className="font-medium">
+                           {gpu.temperatureC !== null ? `${gpu.temperatureC.toFixed(1)}°C` : "N/A"}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          )}
 
           {/* RAM Info */}
           <AccordionItem value="ram">

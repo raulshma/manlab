@@ -52,7 +52,7 @@ export function GpuStatsPanel({ data }: GpuStatsPanelProps) {
             const memoryPercent = 
               gpu.memoryUsedBytes !== null && gpu.memoryTotalBytes !== null && gpu.memoryTotalBytes > 0
                 ? (gpu.memoryUsedBytes / gpu.memoryTotalBytes) * 100
-                : 0;
+                : null;
             
             return (
               <div key={gpu.gpuIndex} className="space-y-2 pb-3 border-b border-border last:border-0 last:pb-0">
@@ -77,10 +77,14 @@ export function GpuStatsPanel({ data }: GpuStatsPanelProps) {
                       {gpu.utilizationPercent !== null ? `${gpu.utilizationPercent.toFixed(0)}%` : '--'}
                     </span>
                   </div>
-                  <Progress 
-                    value={gpu.utilizationPercent ?? 0} 
-                    className="h-2"
-                  />
+                  {gpu.utilizationPercent !== null ? (
+                    <Progress 
+                      value={gpu.utilizationPercent} 
+                      className="h-2"
+                    />
+                  ) : (
+                    <div className="h-2 rounded-full bg-muted" />
+                  )}
                 </div>
 
                 {/* Memory */}
@@ -93,10 +97,14 @@ export function GpuStatsPanel({ data }: GpuStatsPanelProps) {
                         : '--'}
                     </span>
                   </div>
-                  <Progress 
-                    value={memoryPercent} 
-                    className="h-2"
-                  />
+                  {memoryPercent !== null ? (
+                    <Progress 
+                      value={memoryPercent} 
+                      className="h-2"
+                    />
+                  ) : (
+                    <div className="h-2 rounded-full bg-muted" />
+                  )}
                 </div>
               </div>
             );

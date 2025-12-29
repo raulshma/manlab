@@ -55,6 +55,26 @@ internal sealed class GpuTelemetryCollector
                 gpus.AddRange(nvidia);
             }
 
+            // Windows: best-effort adapter enumeration (helps when nvidia-smi is unavailable
+            // and enables listing non-NVIDIA GPUs on mixed systems).
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                foreach (var gpu in WindowsDxgiGpuEnumerator.EnumerateGpus())
+                {
+                    // Avoid duplicating NVIDIA entries when nvidia-smi is available.
+                    if (nvidia is { Count: > 0 } && gpu.Vendor.Equals("nvidia", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    gpus.Add(gpu);
+                    if (gpus.Count >= MaxGpuEntries)
+                    {
+                        break;
+                    }
+                }
+            }
+
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
                 foreach (var gpu in CollectLinuxSysfsGpus())
@@ -347,15 +367,18 @@ internal sealed class GpuTelemetryCollector
 
     private static string? TryFindGtBusyPercent(string cardDir, string deviceDir)
     {
-        // Try a few known locations.
-        var candidates = new[]
+        // Intel i915/xe sysfs layouts have evolved over kernel versions.
+        // Prefer known direct paths first, then probe common subfolders.
+
+        // Direct candidates.
+        var directCandidates = new[]
         {
             Path.Combine(cardDir, "gt_busy_percent"),
             Path.Combine(deviceDir, "gt_busy_percent"),
             Path.Combine(deviceDir, "drm", Path.GetFileName(cardDir) ?? string.Empty, "gt_busy_percent")
         };
 
-        foreach (var c in candidates)
+        foreach (var c in directCandidates)
         {
             if (!string.IsNullOrWhiteSpace(c) && File.Exists(c))
             {
@@ -363,7 +386,67 @@ internal sealed class GpuTelemetryCollector
             }
         }
 
+        // Newer kernels often place busy stats under gt/gt*/gt_busy_percent.
+        // Probe a few bounded patterns (avoid unbounded recursion on huge sysfs trees).
+        var boundedRoots = new[]
+        {
+            Path.Combine(deviceDir, "gt"),
+            Path.Combine(deviceDir, "drm", Path.GetFileName(cardDir) ?? string.Empty, "gt"),
+            Path.Combine(cardDir, "gt")
+        };
+
+        foreach (var root in boundedRoots)
+        {
+            var found = TryFindFirstFile(root, "gt_busy_percent", maxDepth: 3);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
         return null;
+    }
+
+    internal static string? TryFindFirstFile(string rootDir, string fileName, int maxDepth)
+    {
+        if (string.IsNullOrWhiteSpace(rootDir) || maxDepth < 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!Directory.Exists(rootDir))
+            {
+                return null;
+            }
+
+            var direct = Path.Combine(rootDir, fileName);
+            if (File.Exists(direct))
+            {
+                return direct;
+            }
+
+            if (maxDepth == 0)
+            {
+                return null;
+            }
+
+            foreach (var dir in Directory.EnumerateDirectories(rootDir))
+            {
+                var found = TryFindFirstFile(dir, fileName, maxDepth - 1);
+                if (found is not null)
+                {
+                    return found;
+                }
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string? TryFindHwmonTempMilliC(string deviceDir)

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchNodeTelemetry, fetchNodeNetworkTelemetry, fetchNodePingTelemetry } from "../../api";
+import { fetchNodeTelemetry, fetchNodeNetworkTelemetry, fetchNodePingTelemetry, fetchGpuHistory } from "../../api";
 import { SystemInfoPanel } from "../SystemInfoPanel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Clock, RefreshCw } from "lucide-react";
@@ -53,6 +53,12 @@ export function NodeOverviewTab({ nodeId, node, onPing, isPingPending }: NodeOve
         refetchInterval: 10000,
     });
 
+    const { data: gpuHistory } = useQuery({
+        queryKey: ["gpuTelemetry", nodeId],
+        queryFn: () => fetchGpuHistory(nodeId, 60),
+        refetchInterval: 10000,
+    });
+
     return (
         <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
             {/* Backoff Status Alert */}
@@ -94,6 +100,7 @@ export function NodeOverviewTab({ nodeId, node, onPing, isPingPending }: NodeOve
                 telemetry={telemetry || []}
                 networkTelemetry={networkTelemetry || []}
                 pingTelemetry={pingTelemetry || []}
+                gpuTelemetry={gpuHistory || []}
             />
         </div>
     );
