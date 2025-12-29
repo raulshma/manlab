@@ -97,6 +97,7 @@ public sealed class LocalAgentController : ControllerBase
             EnableLogViewer: false,
             EnableScripts: false,
             EnableTerminal: false,
+            EnableFileBrowser: false,
             LogMaxBytes: 64 * 1024,
             LogMinSecondsBetweenRequests: 1,
             ScriptMaxOutputBytes: 64 * 1024,
@@ -104,6 +105,7 @@ public sealed class LocalAgentController : ControllerBase
             ScriptMinSecondsBetweenRuns: 1,
             TerminalMaxOutputBytes: 64 * 1024,
             TerminalMaxDurationSeconds: 10 * 60,
+            FileBrowserMaxBytes: 2 * 1024 * 1024,
             AgentLogFilePath: null,
             AgentLogFileMaxBytes: 5 * 1024 * 1024,
             AgentLogFileRetainedFiles: 3));
@@ -325,6 +327,7 @@ public sealed class LocalAgentController : ControllerBase
         bool EnableLogViewer,
         bool EnableScripts,
         bool EnableTerminal,
+        bool EnableFileBrowser,
         int LogMaxBytes,
         int LogMinSecondsBetweenRequests,
         int ScriptMaxOutputBytes,
@@ -332,6 +335,7 @@ public sealed class LocalAgentController : ControllerBase
         int ScriptMinSecondsBetweenRuns,
         int TerminalMaxOutputBytes,
         int TerminalMaxDurationSeconds,
+        int FileBrowserMaxBytes,
         string? AgentLogFilePath,
         int AgentLogFileMaxBytes,
         int AgentLogFileRetainedFiles);

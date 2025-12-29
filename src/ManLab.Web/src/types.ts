@@ -277,6 +277,7 @@ export interface AgentConfiguration {
   enableLogViewer: boolean;
   enableScripts: boolean;
   enableTerminal: boolean;
+  enableFileBrowser: boolean;
 
   logMaxBytes: number;
   logMinSecondsBetweenRequests: number;
@@ -287,6 +288,8 @@ export interface AgentConfiguration {
 
   terminalMaxOutputBytes: number;
   terminalMaxDurationSeconds: number;
+
+  fileBrowserMaxBytes: number;
 }
 
 /**
