@@ -5,6 +5,7 @@ using ManLab.Server.Hubs;
 using ManLab.Server.Services;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Commands;
+using ManLab.Server.Services.Audit;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -27,19 +28,22 @@ public class DevicesController : ControllerBase
     private readonly IHubContext<AgentHub> _hubContext;
     private readonly AgentConnectionRegistry _connectionRegistry;
     private readonly IWakeOnLanService _wakeOnLanService;
+    private readonly IAuditLog _audit;
 
     public DevicesController(
         DataContext dbContext,
         ILogger<DevicesController> logger,
         IHubContext<AgentHub> hubContext,
         AgentConnectionRegistry connectionRegistry,
-        IWakeOnLanService wakeOnLanService)
+        IWakeOnLanService wakeOnLanService,
+        IAuditLog audit)
     {
         _dbContext = dbContext;
         _logger = logger;
         _hubContext = hubContext;
         _connectionRegistry = connectionRegistry;
         _wakeOnLanService = wakeOnLanService;
+        _audit = audit;
     }
 
     /// <summary>
@@ -596,6 +600,18 @@ public class DevicesController : ControllerBase
 
         _logger.CommandQueued(command.Id, id, commandType.ToString());
 
+        _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+            kind: "audit",
+            eventName: "command.enqueued",
+            httpContext: HttpContext,
+            success: true,
+            statusCode: 201,
+            nodeId: id,
+            commandId: command.Id,
+            category: "commands",
+            message: "Command queued",
+            dataJson: JsonSerializer.Serialize(new { commandType = CommandTypeMapper.ToExternal(commandType) })));
+
         return CreatedAtAction(nameof(GetCommands), new { id }, new CommandDto
         {
             Id = command.Id,
@@ -648,12 +664,34 @@ public class DevicesController : ControllerBase
             // Send directly to the agent (don't wait for dispatch service)
             await _hubContext.Clients.Client(connectionId)
                 .SendAsync("ExecuteCommand", uninstallCommand.Id, CommandTypes.AgentUninstall, string.Empty);
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "audit",
+                eventName: "node.uninstall.enqueued",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 202,
+                nodeId: id,
+                commandId: uninstallCommand.Id,
+                category: "nodes",
+                message: "Uninstall queued for connected agent"));
         }
 
         _dbContext.Nodes.Remove(node);
         await _dbContext.SaveChangesAsync();
 
         _logger.NodeDeleted(id, node.Hostname);
+
+        _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+            kind: "audit",
+            eventName: "node.deleted",
+            httpContext: HttpContext,
+            success: true,
+            statusCode: 204,
+            nodeId: id,
+            category: "nodes",
+            message: "Node deleted",
+            dataJson: JsonSerializer.Serialize(new { hostname = node.Hostname })));
 
         return NoContent();
     }
@@ -680,12 +718,32 @@ public class DevicesController : ControllerBase
         if (!_connectionRegistry.TryGet(id, out var connectionId))
         {
             _logger.PingRequestFailed(id);
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "audit",
+                eventName: "node.ping.requested",
+                httpContext: HttpContext,
+                success: false,
+                statusCode: 503,
+                nodeId: id,
+                category: "nodes",
+                message: "Ping requested but agent not connected"));
             return StatusCode(503, new { message = "Agent is not currently connected" });
         }
 
         await _hubContext.Clients.Client(connectionId).SendAsync("RequestPing");
 
         _logger.PingRequestSent(id);
+
+        _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+            kind: "activity",
+            eventName: "node.ping.requested",
+            httpContext: HttpContext,
+            success: true,
+            statusCode: 202,
+            nodeId: id,
+            category: "nodes",
+            message: "Ping request sent to agent"));
 
         return Accepted(new { message = "Ping request sent to agent" });
     }
@@ -727,8 +785,28 @@ public class DevicesController : ControllerBase
         if (!success)
         {
             _logger.WolPacketFailed(id);
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "audit",
+                eventName: "node.wake.sent",
+                httpContext: HttpContext,
+                success: false,
+                statusCode: 500,
+                nodeId: id,
+                category: "nodes",
+                message: "Failed to send Wake-on-LAN packet"));
             return StatusCode(500, new { message = "Failed to send Wake-on-LAN packet" });
         }
+
+        _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+            kind: "audit",
+            eventName: "node.wake.sent",
+            httpContext: HttpContext,
+            success: true,
+            statusCode: 202,
+            nodeId: id,
+            category: "nodes",
+            message: "Wake-on-LAN packet sent"));
 
         _logger.WolPacketSent(id, node.MacAddress);
 

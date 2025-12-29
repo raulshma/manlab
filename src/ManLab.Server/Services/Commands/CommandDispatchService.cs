@@ -4,6 +4,7 @@ using ManLab.Server.Data.Enums;
 using ManLab.Server.Hubs;
 using ManLab.Server.Services.Agents;
 using ManLab.Shared.Dtos;
+using ManLab.Server.Services.Audit;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -27,17 +28,20 @@ public sealed class CommandDispatchService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<AgentHub> _hubContext;
     private readonly AgentConnectionRegistry _registry;
+    private readonly IAuditLog _audit;
 
     public CommandDispatchService(
         ILogger<CommandDispatchService> logger,
         IServiceScopeFactory scopeFactory,
         IHubContext<AgentHub> hubContext,
-        AgentConnectionRegistry registry)
+        AgentConnectionRegistry registry,
+        IAuditLog audit)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
         _hubContext = hubContext;
         _registry = registry;
+        _audit = audit;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -130,6 +134,20 @@ public sealed class CommandDispatchService : BackgroundService
                 {
                     cmd.OutputLog = AppendLog(cmd.OutputLog, $"Dispatch failed: exceeded max attempts ({MaxDispatchAttempts}).");
                 }
+                _audit.TryEnqueue(new AuditEvent
+                {
+                    Kind = "audit",
+                    EventName = "command.dispatch.failed",
+                    Category = "commands",
+                    Source = "system",
+                    ActorType = "system",
+                    ActorName = nameof(CommandDispatchService),
+                    NodeId = cmd.NodeId,
+                    CommandId = cmd.Id,
+                    Success = false,
+                    Message = "Dispatch exceeded max attempts",
+                    DataJson = JsonSerializer.Serialize(new { attempts = cmd.DispatchAttempts })
+                });
             }
             else
             {
@@ -158,6 +176,20 @@ public sealed class CommandDispatchService : BackgroundService
         {
             cmd.Status = CommandStatus.Failed;
             cmd.ExecutedAt = now;
+                        _audit.TryEnqueue(new AuditEvent
+                        {
+                            Kind = "audit",
+                            EventName = "command.dispatch.failed",
+                            Category = "commands",
+                            Source = "system",
+                            ActorType = "system",
+                            ActorName = nameof(CommandDispatchService),
+                            NodeId = cmd.NodeId,
+                            CommandId = cmd.Id,
+                            Success = false,
+                            Message = "Command expired in queue",
+                            DataJson = JsonSerializer.Serialize(new { maxQueueAgeHours = MaxQueueAge.TotalHours })
+                        });
             if (ShouldAppendOperationalLogs(cmd.CommandType))
             {
                 cmd.OutputLog = AppendLog(cmd.OutputLog, $"Dispatch failed: command expired in queue after {MaxQueueAge.TotalHours:0}h.");
@@ -201,6 +233,20 @@ public sealed class CommandDispatchService : BackgroundService
             {
                 cmd.Status = CommandStatus.Failed;
                 cmd.ExecutedAt = DateTime.UtcNow;
+                                _audit.TryEnqueue(new AuditEvent
+                                {
+                                    Kind = "audit",
+                                    EventName = "command.dispatch.unsupported",
+                                    Category = "commands",
+                                    Source = "system",
+                                    ActorType = "system",
+                                    ActorName = nameof(CommandDispatchService),
+                                    NodeId = cmd.NodeId,
+                                    CommandId = cmd.Id,
+                                    Success = false,
+                                    Message = "Server cannot dispatch command type",
+                                    DataJson = JsonSerializer.Serialize(new { commandType = cmd.CommandType.ToString() })
+                                });
                 cmd.OutputLog = AppendLog(cmd.OutputLog,
                     $"Server cannot dispatch command type '{cmd.CommandType}'. (Not supported yet)");
 
@@ -237,6 +283,22 @@ public sealed class CommandDispatchService : BackgroundService
                 await TryMarkScriptRunAsync(db, cmd, ScriptRunStatus.Sent, startedAt: null, finishedAt: null, cancellationToken).ConfigureAwait(false);
             }
             await db.SaveChangesAsync(cancellationToken);
+
+            _audit.TryEnqueue(new AuditEvent
+            {
+                Kind = "activity",
+                EventName = "command.dispatched",
+                Category = "commands",
+                Source = "system",
+                ActorType = "system",
+                ActorName = nameof(CommandDispatchService),
+                NodeId = cmd.NodeId,
+                CommandId = cmd.Id,
+                Success = true,
+                Message = "Command sent to agent",
+                // Avoid storing payload or connectionId (sensitive); keep minimal.
+                DataJson = JsonSerializer.Serialize(new { commandType = cmd.CommandType.ToString(), attempt = cmd.DispatchAttempts })
+            });
 
             dispatchedAny = true;
 

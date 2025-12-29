@@ -1,6 +1,7 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Data.Enums;
+using ManLab.Server.Services.Audit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -18,12 +19,14 @@ public sealed class TerminalSessionService
     private readonly DataContext _db;
     private readonly IMemoryCache _cache;
     private readonly ILogger<TerminalSessionService> _logger;
+    private readonly IAuditLog _audit;
 
-    public TerminalSessionService(DataContext db, IMemoryCache cache, ILogger<TerminalSessionService> logger)
+    public TerminalSessionService(DataContext db, IMemoryCache cache, ILogger<TerminalSessionService> logger, IAuditLog audit)
     {
         _db = db;
         _cache = cache;
         _logger = logger;
+        _audit = audit;
     }
 
     public sealed record Session(
@@ -95,6 +98,20 @@ public sealed class TerminalSessionService
         _logger.LogInformation("Terminal session created {SessionId} for node {NodeId} by {RequestedBy}", 
             sessionId, nodeId, requestedBy ?? "unknown");
 
+        _audit.TryEnqueue(new ManLab.Server.Data.Entities.AuditEvent
+        {
+            Kind = "audit",
+            EventName = "terminal.session.created",
+            Category = "terminal",
+            Source = "system",
+            ActorType = "dashboard",
+            ActorName = requestedBy,
+            NodeId = nodeId,
+            SessionId = sessionId,
+            Success = true,
+            Message = "Terminal session created"
+        });
+
         return new CreateSessionResult(true, null, session);
     }
 
@@ -131,6 +148,20 @@ public sealed class TerminalSessionService
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Terminal session closed {SessionId}", sessionId);
+
+        _audit.TryEnqueue(new ManLab.Server.Data.Entities.AuditEvent
+        {
+            Kind = "activity",
+            EventName = "terminal.session.closed",
+            Category = "terminal",
+            Source = "system",
+            ActorType = "system",
+            ActorName = nameof(TerminalSessionService),
+            NodeId = dbSession.NodeId,
+            SessionId = sessionId,
+            Success = true,
+            Message = "Terminal session closed"
+        });
         return true;
     }
 
@@ -152,6 +183,20 @@ public sealed class TerminalSessionService
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Terminal session expired {SessionId}", sessionId);
+
+        _audit.TryEnqueue(new ManLab.Server.Data.Entities.AuditEvent
+        {
+            Kind = "activity",
+            EventName = "terminal.session.expired",
+            Category = "terminal",
+            Source = "system",
+            ActorType = "system",
+            ActorName = nameof(TerminalSessionService),
+            NodeId = dbSession.NodeId,
+            SessionId = sessionId,
+            Success = true,
+            Message = "Terminal session expired"
+        });
         return true;
     }
 
@@ -173,6 +218,20 @@ public sealed class TerminalSessionService
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Terminal session failed {SessionId}", sessionId);
+
+        _audit.TryEnqueue(new ManLab.Server.Data.Entities.AuditEvent
+        {
+            Kind = "audit",
+            EventName = "terminal.session.failed",
+            Category = "terminal",
+            Source = "system",
+            ActorType = "system",
+            ActorName = nameof(TerminalSessionService),
+            NodeId = dbSession.NodeId,
+            SessionId = sessionId,
+            Success = false,
+            Message = "Terminal session failed"
+        });
         return true;
     }
 

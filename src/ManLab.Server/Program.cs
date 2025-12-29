@@ -4,10 +4,12 @@ using ManLab.Server.Services;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Commands;
 using ManLab.Server.Services.Enhancements;
+using ManLab.Server.Services.Audit;
 using ManLab.Server.Services.Persistence;
 using ManLab.Server.Services.Retention;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -44,12 +46,25 @@ builder.Services
 
         // Limit concurrent streaming items per connection.
         hubOptions.StreamBufferCapacity = 10;
+
+        // Audit failures in SignalR invocations (best-effort).
+        hubOptions.AddFilter<AuditHubFilter>();
     })
     .AddJsonProtocol(protocolOptions =>
     {
         // JSON hub protocol uses System.Text.Json; supply our source-generated resolver.
         protocolOptions.PayloadSerializerOptions.TypeInfoResolverChain.Insert(0, ManLabJsonContext.Default);
     });
+
+// Activity/audit logging (best-effort, durable).
+builder.Services.AddOptions<AuditOptions>()
+    .Bind(builder.Configuration.GetSection(AuditOptions.SectionName));
+builder.Services.AddSingleton<AuditLogQueue>();
+builder.Services.AddSingleton<IAuditLog, AuditLogService>();
+builder.Services.AddHostedService<AuditLogWriterService>();
+builder.Services.AddHostedService<AuditRetentionCleanupService>();
+builder.Services.AddSingleton<AuditHubFilter>();
+builder.Services.AddHttpContextAccessor();
 
 
 builder.Services.AddMemoryCache();
@@ -134,6 +149,9 @@ var forwardedHeadersOptions = new ForwardedHeadersOptions
 forwardedHeadersOptions.KnownIPNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
+
+// Activity logging for mutating HTTP requests (best-effort).
+app.UseMiddleware<AuditHttpMiddleware>();
 
 // Enable response caching middleware for ResponseCache attribute with VaryByQueryKeys support.
 app.UseResponseCaching();

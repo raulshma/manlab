@@ -5,6 +5,7 @@ using ManLab.Server.Data.Enums;
 using ManLab.Server.Services.Security;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Enhancements;
+using ManLab.Server.Services.Audit;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -39,15 +40,18 @@ public class AgentHub : Hub
     private readonly ILogger<AgentHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentConnectionRegistry _connectionRegistry;
+    private readonly IAuditLog _audit;
 
     public AgentHub(
         ILogger<AgentHub> logger,
         IServiceScopeFactory scopeFactory,
-        AgentConnectionRegistry connectionRegistry)
+        AgentConnectionRegistry connectionRegistry,
+        IAuditLog audit)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
         _connectionRegistry = connectionRegistry;
+        _audit = audit;
     }
 
     /// <summary>
@@ -86,6 +90,16 @@ public class AgentHub : Hub
     {
         if (!TryGetBearerToken(out var bearerToken))
         {
+            _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
+                kind: "audit",
+                eventName: "agent.register.denied",
+                context: Context,
+                hub: nameof(AgentHub),
+                hubMethod: nameof(Register),
+                success: false,
+                category: "agents",
+                message: "Missing bearer token",
+                error: "MissingToken"));
             throw new HubException("Unauthorized: missing bearer token.");
         }
 
@@ -128,6 +142,23 @@ public class AgentHub : Hub
                 await Clients.All.SendAsync("NodeStatusChanged", authedNode.Id, authedNode.Status.ToString(), authedNode.LastSeen);
             }
 
+            _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
+                kind: "activity",
+                eventName: "agent.registered",
+                context: Context,
+                hub: nameof(AgentHub),
+                hubMethod: nameof(Register),
+                success: true,
+                nodeId: authedNode.Id,
+                category: "agents",
+                message: "Agent re-registered",
+                dataJson: JsonSerializer.Serialize(new
+                {
+                    existing = true,
+                    hostname = metadata.Hostname,
+                    agentVersion = metadata.AgentVersion
+                })));
+
             return authedNode.Id;
         }
 
@@ -136,6 +167,16 @@ public class AgentHub : Hub
 
         if (enrollment is null)
         {
+            _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
+                kind: "audit",
+                eventName: "agent.register.denied",
+                context: Context,
+                hub: nameof(AgentHub),
+                hubMethod: nameof(Register),
+                success: false,
+                category: "agents",
+                message: "Invalid or expired token",
+                error: "InvalidOrExpiredToken"));
             throw new HubException("Unauthorized: invalid or expired token.");
         }
 
@@ -186,6 +227,23 @@ public class AgentHub : Hub
         });
 
         await Clients.All.SendAsync("NodeStatusChanged", newNode.Id, newNode.Status.ToString(), newNode.LastSeen);
+
+        _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
+            kind: "audit",
+            eventName: "agent.registered",
+            context: Context,
+            hub: nameof(AgentHub),
+            hubMethod: nameof(Register),
+            success: true,
+            nodeId: newNode.Id,
+            category: "agents",
+            message: "Agent registered",
+            dataJson: JsonSerializer.Serialize(new
+            {
+                existing = false,
+                hostname = metadata.Hostname,
+                agentVersion = metadata.AgentVersion
+            })));
 
         return newNode.Id;
     }

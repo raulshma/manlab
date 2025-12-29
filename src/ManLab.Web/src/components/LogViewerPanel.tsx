@@ -3,8 +3,9 @@
  * Allows viewing log files on nodes using configured policies.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   fetchLogViewerPolicies,
   upsertLogViewerPolicy,
@@ -58,6 +59,11 @@ import {
 interface LogViewerPanelProps {
   nodeId: string;
   nodeStatus?: string;
+  /**
+   * "panel": compact (Node Tools tab)
+   * "page": dedicated page with advanced controls
+   */
+  variant?: "panel" | "page";
 }
 
 // Helper to format countdown timer
@@ -80,6 +86,7 @@ function formatCountdown(expiresAt: string): string {
 export function LogViewerPanel({
   nodeId,
   nodeStatus = "Online",
+  variant = "panel",
 }: LogViewerPanelProps) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"viewer" | "policies">("viewer");
@@ -88,6 +95,14 @@ export function LogViewerPanel({
   const [logContent, setLogContent] = useState<string>("");
   const [viewMode, setViewMode] = useState<"read" | "tail">("read");
   const [expiryCountdown, setExpiryCountdown] = useState<string>("");
+
+  // Dedicated page UX enhancements
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [wrapLines, setWrapLines] = useState(true);
+  const [filterText, setFilterText] = useState("");
+  const [tailDurationSeconds, setTailDurationSeconds] = useState<number>(10);
+  const [tailMaxBytesText, setTailMaxBytesText] = useState<string>("");
 
   // Keep UI buffers bounded to avoid runaway memory usage.
   const MAX_LOG_BUFFER_CHARS = 100 * 1024;
@@ -156,18 +171,19 @@ export function LogViewerPanel({
     onSuccess: (newSession) => {
       setSession(newSession);
       setLogContent("");
+      setIsFollowing(false);
     },
   });
 
   // Read log mutation
   const readMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (args?: { offsetBytes?: number; maxBytes?: number }) => {
       if (!session) throw new Error("No session");
-      return readLogContent(nodeId, session.sessionId);
+      return readLogContent(nodeId, session.sessionId, args?.offsetBytes, args?.maxBytes);
     },
     onSuccess: (response) => {
       setLogContent(truncateTail(response.content ?? ""));
-      if (logContentRef.current) {
+      if (autoScroll && logContentRef.current) {
         logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
       }
     },
@@ -175,16 +191,16 @@ export function LogViewerPanel({
 
   // Tail log mutation
   const tailMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (args?: { maxBytes?: number; durationSeconds?: number }) => {
       if (!session) throw new Error("No session");
-      return tailLogContent(nodeId, session.sessionId, undefined, 10);
+      return tailLogContent(nodeId, session.sessionId, args?.maxBytes, args?.durationSeconds);
     },
     onSuccess: (response) => {
       setLogContent((prev) => {
         const combined = prev + (response.content ?? "");
         return truncateTail(combined);
       });
-      if (logContentRef.current) {
+      if (autoScroll && logContentRef.current) {
         logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
       }
     },
@@ -237,13 +253,19 @@ export function LogViewerPanel({
   };
 
   const handleRead = () => {
+    setIsFollowing(false);
     setViewMode("read");
-    readMutation.mutate();
+    readMutation.mutate(undefined);
   };
 
   const handleTail = () => {
+    setIsFollowing(false);
     setViewMode("tail");
-    tailMutation.mutate();
+    const maxBytes = tailMaxBytesText.trim() ? Number(tailMaxBytesText) : undefined;
+    tailMutation.mutate({
+      maxBytes: Number.isFinite(maxBytes as number) ? (maxBytes as number) : undefined,
+      durationSeconds: tailDurationSeconds,
+    });
   };
 
   const openEditPolicyDialog = (policy: LogViewerPolicy) => {
@@ -256,6 +278,81 @@ export function LogViewerPanel({
 
   const isOnline = nodeStatus === "Online";
   const isLoading = readMutation.isPending || tailMutation.isPending;
+
+  const effectiveTailMaxBytes = useMemo(() => {
+    const trimmed = tailMaxBytesText.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return undefined;
+    // Further clamping happens server-side against the session policy.
+    return Math.max(1, Math.floor(parsed));
+  }, [tailMaxBytesText]);
+
+  const effectiveTailDuration = useMemo(() => {
+    // Server clamps 1..60; keep the UI aligned.
+    const d = Math.floor(tailDurationSeconds);
+    return Math.max(1, Math.min(60, Number.isFinite(d) ? d : 10));
+  }, [tailDurationSeconds]);
+
+  const displayedLogContent = useMemo(() => {
+    const needle = filterText.trim().toLowerCase();
+    if (!needle) return logContent;
+    // Filter lines client-side. Buffer is already bounded for safety.
+    return logContent
+      .split(/\r?\n/)
+      .filter((line) => line.toLowerCase().includes(needle))
+      .join("\n");
+  }, [filterText, logContent]);
+
+  // Follow mode: repeatedly long-poll the tail endpoint (bounded by durationSeconds).
+  useEffect(() => {
+    if (variant !== "page") return;
+    if (!isFollowing) return;
+    if (!session) return;
+    if (!isOnline) return;
+
+    let cancelled = false;
+    const sessionId = session.sessionId;
+
+    const run = async () => {
+      // Loop until cancelled or follow turned off.
+      while (!cancelled) {
+        try {
+          await tailMutation.mutateAsync({
+            maxBytes: effectiveTailMaxBytes,
+            durationSeconds: effectiveTailDuration,
+          });
+        } catch (err) {
+          if (cancelled) return;
+
+          const message = err instanceof Error ? err.message : String(err);
+          toast.error(message);
+          setIsFollowing(false);
+          return;
+        }
+
+        // Session may have been closed while we were awaiting.
+        if (cancelled) return;
+        if (!sessionId) return;
+
+        // Avoid a tight loop (and provide a breath between long-polls).
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    effectiveTailDuration,
+    effectiveTailMaxBytes,
+    isFollowing,
+    isOnline,
+    session,
+    tailMutation,
+    variant,
+  ]);
 
   return (
     <Card>
@@ -349,6 +446,9 @@ export function LogViewerPanel({
                     <span className="text-xs text-muted-foreground font-mono">
                       {session.path}
                     </span>
+                    {variant === "page" && isFollowing && (
+                      <Badge variant="outline">Following</Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <Button
@@ -369,10 +469,78 @@ export function LogViewerPanel({
                       {tailMutation.isPending && <Spinner className="h-3 w-3 mr-1" />}
                       Tail
                     </Button>
+                    {variant === "page" && (
+                      <>
+                        <Button
+                          variant={isFollowing ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => {
+                            if (!isOnline) return;
+                            setViewMode("tail");
+                            setIsFollowing((prev) => !prev);
+                          }}
+                          disabled={!isOnline}
+                        >
+                          {isFollowing ? "Pause" : "Follow"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(displayedLogContent ?? "");
+                              toast.success("Copied to clipboard");
+                            } catch (err) {
+                              toast.error(
+                                err instanceof Error ? err.message : "Failed to copy"
+                              );
+                            }
+                          }}
+                          disabled={!displayedLogContent}
+                        >
+                          Copy
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const filenameSafe = (session.displayName || "log")
+                              .replace(/[^a-z0-9._-]+/gi, "-")
+                              .replace(/-+/g, "-")
+                              .replace(/^-|-$/g, "");
+                            const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+                            const blob = new Blob([displayedLogContent ?? ""], {
+                              type: "text/plain;charset=utf-8",
+                            });
+                            const url = URL.createObjectURL(blob);
+
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `${filenameSafe || "log"}-${stamp}.log`;
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                            URL.revokeObjectURL(url);
+                          }}
+                          disabled={!displayedLogContent}
+                        >
+                          Download
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setLogContent("")}
+                          disabled={!logContent}
+                        >
+                          Clear
+                        </Button>
+                      </>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => {
+                        setIsFollowing(false);
                         setSession(null);
                         setLogContent("");
                       }}
@@ -381,11 +549,72 @@ export function LogViewerPanel({
                     </Button>
                   </div>
                 </div>
+
+                {variant === "page" && (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="logFilter">Filter</Label>
+                      <Input
+                        id="logFilter"
+                        placeholder="Show only lines containing…"
+                        value={filterText}
+                        onChange={(e) => setFilterText(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label htmlFor="tailDuration">Tail duration (seconds)</Label>
+                      <Input
+                        id="tailDuration"
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={tailDurationSeconds}
+                        onChange={(e) => setTailDurationSeconds(Number(e.target.value))}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label htmlFor="tailMaxBytes">Tail max bytes (optional)</Label>
+                      <Input
+                        id="tailMaxBytes"
+                        type="number"
+                        placeholder={`≤ ${session.maxBytesPerRequest} (policy)`}
+                        value={tailMaxBytesText}
+                        onChange={(e) => setTailMaxBytesText(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 md:col-span-3">
+                      <Button
+                        variant={autoScroll ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setAutoScroll((v) => !v)}
+                      >
+                        Auto-scroll: {autoScroll ? "On" : "Off"}
+                      </Button>
+                      <Button
+                        variant={wrapLines ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setWrapLines((v) => !v)}
+                      >
+                        Wrap: {wrapLines ? "On" : "Off"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 <pre
                   ref={logContentRef}
-                  className="bg-muted p-4 rounded-lg text-xs font-mono whitespace-pre-wrap overflow-auto max-h-96 min-h-48"
+                  className={
+                    [
+                      "bg-muted p-4 rounded-lg text-xs font-mono overflow-auto",
+                      wrapLines ? "whitespace-pre-wrap" : "whitespace-pre",
+                      variant === "page" ? "max-h-[70vh] min-h-[60vh]" : "max-h-96 min-h-48",
+                    ].join(" ")
+                  }
                 >
-                  {logContent || (
+                  {displayedLogContent || (
                     <span className="text-muted-foreground">
                       Click "Read" or "Tail" to load log content...
                     </span>

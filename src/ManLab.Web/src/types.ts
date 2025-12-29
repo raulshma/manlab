@@ -401,6 +401,39 @@ export interface AgentResourceUsage {
 }
 
 /**
+ * Server activity/audit events (GET /api/audit-events)
+ */
+export interface AuditEvent {
+  id: string;
+  timestampUtc: string;
+  kind: string;
+  eventName: string;
+  category: string | null;
+  message: string | null;
+  success: boolean | null;
+  source: string | null;
+  actorType: string | null;
+  actorId: string | null;
+  actorName: string | null;
+  actorIp: string | null;
+  nodeId: string | null;
+  commandId: string | null;
+  sessionId: string | null;
+  machineId: string | null;
+  httpStatusCode: number | null;
+  httpMethod: string | null;
+  httpPath: string | null;
+  hub: string | null;
+  hubMethod: string | null;
+  connectionId: string | null;
+  requestId: string | null;
+  traceId: string | null;
+  spanId: string | null;
+  dataJson: string | null;
+  error: string | null;
+}
+
+/**
  * Enhancements: Log viewer responses
  */
 export interface LogReadResponse {

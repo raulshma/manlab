@@ -38,6 +38,7 @@ import type {
   TerminalCloseResponse,
   TerminalSessionResponse,
   CancelScriptRunResponse,
+  AuditEvent,
 } from "./types";
 
 const API_BASE = "/api";
@@ -984,6 +985,50 @@ export async function tailLogContent(
     if (response.status === 504) throw new Error("Timed out waiting for agent response");
     throw new Error(`Failed to tail log: ${response.statusText}`);
   }
+  return response.json();
+}
+
+/**
+ * Server: Activity/audit events
+ */
+export interface FetchAuditEventsParams {
+  fromUtc?: string;
+  toUtc?: string;
+  kind?: string;
+  category?: string;
+  eventName?: string;
+  nodeId?: string;
+  commandId?: string;
+  take?: number;
+}
+
+export async function fetchAuditEvents(params?: FetchAuditEventsParams): Promise<AuditEvent[]> {
+  const qs = new URLSearchParams();
+
+  const add = (k: string, v: unknown) => {
+    if (v === undefined || v === null) return;
+    const s = String(v).trim();
+    if (!s) return;
+    qs.set(k, s);
+  };
+
+  add("fromUtc", params?.fromUtc);
+  add("toUtc", params?.toUtc);
+  add("kind", params?.kind);
+  add("category", params?.category);
+  add("eventName", params?.eventName);
+  add("nodeId", params?.nodeId);
+  add("commandId", params?.commandId);
+  if (params?.take !== undefined) {
+    add("take", Math.max(1, Math.min(2000, Math.floor(params.take))));
+  }
+
+  const url = `${API_BASE}/audit-events${qs.size ? `?${qs.toString()}` : ""}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audit events: ${response.statusText}`);
+  }
+
   return response.json();
 }
 
