@@ -62,5 +62,11 @@ public enum CommandType
     CommandCancel,
 
     /// <summary>Update agent configuration at runtime.</summary>
-    ConfigUpdate
+    ConfigUpdate,
+
+    /// <summary>List a directory (file browser).</summary>
+    FileList,
+
+    /// <summary>Read a bounded file (file browser).</summary>
+    FileRead
 }

@@ -1041,7 +1041,8 @@ public sealed class ConnectionManager : IAsyncDisposable
                 {
                     LogViewer = _config.EnableLogViewer,
                     Scripts = _config.EnableScripts,
-                    Terminal = _config.EnableTerminal
+                    Terminal = _config.EnableTerminal,
+                    FileBrowser = _config.EnableFileBrowser
                 }
             };
 

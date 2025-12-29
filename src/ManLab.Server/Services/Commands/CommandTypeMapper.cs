@@ -96,6 +96,13 @@ public static class CommandTypeMapper
             case CommandTypes.ConfigUpdate:
                 commandType = CommandType.ConfigUpdate;
                 return true;
+
+            case CommandTypes.FileList:
+                commandType = CommandType.FileList;
+                return true;
+            case CommandTypes.FileRead:
+                commandType = CommandType.FileRead;
+                return true;
         }
 
         // Legacy: enum names coming from older dashboards/clients.
@@ -126,6 +133,8 @@ public static class CommandTypeMapper
         CommandType.TerminalInput => CommandTypes.TerminalInput,
         CommandType.CommandCancel => CommandTypes.CommandCancel,
         CommandType.ConfigUpdate => CommandTypes.ConfigUpdate,
+        CommandType.FileList => CommandTypes.FileList,
+        CommandType.FileRead => CommandTypes.FileRead,
         _ => type.ToString()
     };
 }

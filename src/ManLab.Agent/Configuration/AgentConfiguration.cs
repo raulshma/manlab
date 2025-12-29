@@ -100,6 +100,12 @@ public class AgentConfiguration
     public bool EnableTerminal { get; set; } = false;
 
     /// <summary>
+    /// Enable remote file browser commands (file.list/file.read).
+    /// Default is false (default-deny).
+    /// </summary>
+    public bool EnableFileBrowser { get; set; } = false;
+
+    /// <summary>
     /// Hard upper bound for log reads/tails produced by the agent (bytes).
     /// This is a defense-in-depth limit; the server also enforces bounds.
     /// </summary>
@@ -134,6 +140,12 @@ public class AgentConfiguration
     /// Maximum terminal session duration in seconds.
     /// </summary>
     public int TerminalMaxDurationSeconds { get; set; } = 10 * 60;
+
+    /// <summary>
+    /// Hard upper bound for bytes read by file.read.
+    /// This is defense-in-depth; the server also enforces bounds.
+    /// </summary>
+    public int FileBrowserMaxBytes { get; set; } = 2 * 1024 * 1024;
 
     /// <summary>
     /// Optional file path where the agent writes its own logs.

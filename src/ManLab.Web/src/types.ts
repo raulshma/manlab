@@ -325,6 +325,64 @@ export interface LogViewerSession {
 }
 
 /**
+ * Enhancements: File browser policy + session
+ */
+export interface FileBrowserPolicy {
+  id: string;
+  nodeId: string;
+  displayName: string;
+  rootPath: string;
+  maxBytesPerRead: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FileBrowserSession {
+  sessionId: string;
+  nodeId: string;
+  policyId: string;
+  displayName: string;
+  rootPath: string;
+  maxBytesPerRead: number;
+  expiresAt: string;
+}
+
+export interface FileBrowserEntry {
+  name: string;
+  isDirectory: boolean;
+  path: string;
+  updatedAt?: string | null;
+  size?: number | null;
+}
+
+export interface FileReadResult {
+  path: string;
+  contentBase64: string;
+  truncated: boolean;
+  bytesRead: number;
+}
+
+export interface FileBrowserListResponse {
+  sessionId: string;
+  nodeId: string;
+  path: string;
+  entries: FileBrowserEntry[];
+  commandId: string;
+  status: string;
+  error?: string | null;
+}
+
+export interface FileBrowserReadResponse {
+  sessionId: string;
+  nodeId: string;
+  path: string;
+  result: FileReadResult | null;
+  commandId: string;
+  status: string;
+  error?: string | null;
+}
+
+/**
  * Enhancements: Scripts + runs
  */
 export type ScriptShell = "Bash" | "PowerShell";

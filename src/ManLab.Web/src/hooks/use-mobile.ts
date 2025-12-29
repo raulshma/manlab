@@ -28,9 +28,7 @@ export function useIsMobile(breakpointPx: number = DEFAULT_MOBILE_BREAKPOINT_PX)
     }
 
     // Safari fallback
-    // eslint-disable-next-line deprecation/deprecation
     mediaQuery.addListener(update)
-    // eslint-disable-next-line deprecation/deprecation
     return () => mediaQuery.removeListener(update)
   }, [breakpointPx])
 

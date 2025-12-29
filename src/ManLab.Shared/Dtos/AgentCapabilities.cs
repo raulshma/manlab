@@ -50,4 +50,9 @@ public sealed record AgentFeatureCapabilities
     /// Remote terminal (terminal.*).
     /// </summary>
     public bool Terminal { get; init; }
+
+    /// <summary>
+    /// Remote file browser (file.list/file.read).
+    /// </summary>
+    public bool FileBrowser { get; init; }
 }

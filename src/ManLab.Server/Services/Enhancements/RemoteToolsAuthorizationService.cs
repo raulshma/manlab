@@ -50,6 +50,16 @@ public sealed class RemoteToolsAuthorizationService
         return await CheckFeatureEnabledAsync(nodeId, "terminal", caps => caps?.Features?.Terminal ?? false);
     }
 
+    /// <summary>
+    /// Checks if the file browser feature is enabled for the specified node.
+    /// </summary>
+    /// <param name="nodeId">The node ID to check.</param>
+    /// <returns>A tuple indicating whether access is allowed and an error message if not.</returns>
+    public async Task<(bool Allowed, string? Error)> AuthorizeFileBrowserAsync(Guid nodeId)
+    {
+        return await CheckFeatureEnabledAsync(nodeId, "file browser", caps => caps?.Features?.FileBrowser ?? false);
+    }
+
     private async Task<(bool Allowed, string? Error)> CheckFeatureEnabledAsync(
         Guid nodeId,
         string featureName,

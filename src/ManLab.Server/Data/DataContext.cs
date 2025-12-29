@@ -55,6 +55,7 @@ public class DataContext : DbContext
     public DbSet<ScriptRun> ScriptRuns => Set<ScriptRun>();
 
     public DbSet<LogViewerPolicy> LogViewerPolicies => Set<LogViewerPolicy>();
+    public DbSet<FileBrowserPolicy> FileBrowserPolicies => Set<FileBrowserPolicy>();
     public DbSet<TerminalSession> TerminalSessions => Set<TerminalSession>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -146,6 +147,17 @@ public class DataContext : DbContext
 
             entity.HasOne(e => e.Node)
                 .WithMany()
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Enhancements: File browser policies
+        modelBuilder.Entity<FileBrowserPolicy>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+
+            entity.HasOne(e => e.Node)
+                .WithMany(n => n.FileBrowserPolicies)
                 .HasForeignKey(e => e.NodeId)
                 .OnDelete(DeleteBehavior.Cascade);
         });

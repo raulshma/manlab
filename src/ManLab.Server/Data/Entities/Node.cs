@@ -92,5 +92,7 @@ public class Node
     public ICollection<ScriptRun> ScriptRuns { get; set; } = [];
 
     public ICollection<LogViewerPolicy> LogViewerPolicies { get; set; } = [];
+
+    public ICollection<FileBrowserPolicy> FileBrowserPolicies { get; set; } = [];
     public ICollection<TerminalSession> TerminalSessions { get; set; } = [];
 }

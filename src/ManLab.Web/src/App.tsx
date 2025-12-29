@@ -8,6 +8,7 @@ import { NodesPage } from "./pages/NodesPage";
 import { NodeDetailsPage } from "./pages/NodeDetailsPage";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { LogViewerPage } from "./pages/LogViewerPage";
+import { FileBrowserPage } from "./pages/FileBrowserPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -28,6 +29,7 @@ function AppRoutes() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/nodes" element={<NodesPage />} />
         <Route path="/nodes/:id" element={<NodeDetailsPage />} />
+        <Route path="/files" element={<FileBrowserPage />} />
         <Route path="/logs" element={<AuditLogsPage />} />
         <Route path="/node-logs" element={<LogViewerPage />} />
         <Route path="/settings" element={<SettingsPage />} />

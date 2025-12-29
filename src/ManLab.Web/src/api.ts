@@ -11,6 +11,8 @@ import type {
   ServiceMonitorConfig,
   LogViewerPolicy,
   LogViewerSession,
+  FileBrowserPolicy,
+  FileBrowserSession,
   ScriptSummary,
   Script,
   ScriptRun,
@@ -35,6 +37,8 @@ import type {
   AgentConfiguration,
   LogReadResponse,
   LogTailResponse,
+  FileBrowserListResponse,
+  FileBrowserReadResponse,
   TerminalOpenResponse,
   TerminalInputResponse,
   TerminalCloseResponse,
@@ -441,6 +445,111 @@ export async function createLogViewerSession(
     const suffix = details?.trim() ? `: ${details.trim()}` : "";
     throw new Error(`Failed to create log viewer session (${response.status} ${response.statusText})${suffix}`);
   }
+  return response.json();
+}
+
+/**
+ * Enhancements: File browser policies + session
+ */
+export async function fetchFileBrowserPolicies(nodeId: string): Promise<FileBrowserPolicy[]> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/file-browser-policies`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch file browser policies: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function upsertFileBrowserPolicy(
+  nodeId: string,
+  policyId: string | null,
+  body: { displayName?: string; rootPath?: string; maxBytesPerRead?: number }
+): Promise<FileBrowserPolicy> {
+  const url = policyId
+    ? `${API_BASE}/devices/${nodeId}/file-browser-policies/${policyId}`
+    : `${API_BASE}/devices/${nodeId}/file-browser-policies`;
+  const method = policyId ? "PUT" : "POST";
+  const response = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Not found");
+    throw new Error(`Failed to save file browser policy: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function deleteFileBrowserPolicy(nodeId: string, policyId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/file-browser-policies/${policyId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Not found");
+    throw new Error(`Failed to delete file browser policy: ${response.statusText}`);
+  }
+}
+
+export async function createFileBrowserSession(
+  nodeId: string,
+  policyId: string,
+  ttlSeconds?: number
+): Promise<FileBrowserSession> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/file-browser-sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ policyId, ttlSeconds }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Not found");
+
+    let details = "";
+    try {
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const json = await response.json();
+        if (typeof json === "string") {
+          details = json;
+        } else if (json && typeof json === "object") {
+          const obj = json as Record<string, unknown>;
+          const msg = obj.message;
+          details = typeof msg === "string" ? msg : JSON.stringify(json);
+        }
+      } else {
+        details = await response.text();
+      }
+    } catch {
+      // ignore
+    }
+
+    const suffix = details?.trim() ? `: ${details.trim()}` : "";
+    throw new Error(`Failed to create file browser session (${response.status} ${response.statusText})${suffix}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Enhancements: File browser - Create a full-system browsing session (no policy allowlist)
+ */
+export async function createSystemFileBrowserSession(
+  nodeId: string,
+  ttlSeconds?: number,
+  maxBytesPerRead?: number
+): Promise<Pick<FileBrowserSession, "sessionId" | "nodeId" | "rootPath" | "maxBytesPerRead" | "expiresAt">> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/file-browser-sessions/system`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ttlSeconds, maxBytesPerRead }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to create file browser session: ${await response.text()}`);
+  }
+
   return response.json();
 }
 
@@ -1053,6 +1162,55 @@ export async function tailLogContent(
     if (response.status === 404) throw new Error("Session not found or expired");
     if (response.status === 504) throw new Error("Timed out waiting for agent response");
     throw new Error(`Failed to tail log: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: File browser - List directory via session
+ */
+export async function listFileBrowserEntries(
+  nodeId: string,
+  sessionId: string,
+  path?: string
+): Promise<FileBrowserListResponse> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/file-browser-sessions/${sessionId}/list`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    }
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Session not found or expired");
+    if (response.status === 504) throw new Error("Timed out waiting for agent response");
+    throw new Error(`Failed to list directory: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Enhancements: File browser - Read file via session
+ */
+export async function readFileBrowserContent(
+  nodeId: string,
+  sessionId: string,
+  path: string,
+  maxBytes?: number
+): Promise<FileBrowserReadResponse> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/file-browser-sessions/${sessionId}/read`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, maxBytes }),
+    }
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Session not found or expired");
+    if (response.status === 504) throw new Error("Timed out waiting for agent response");
+    throw new Error(`Failed to read file: ${response.statusText}`);
   }
   return response.json();
 }

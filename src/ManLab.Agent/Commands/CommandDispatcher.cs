@@ -166,6 +166,8 @@ public sealed class CommandDispatcher : IDisposable
                     var t when t == CommandTypes.TerminalOpen => await HandleTerminalOpenAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.TerminalClose => await HandleTerminalCloseAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.TerminalInput => await HandleTerminalInputAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.FileList => await HandleFileListAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.FileRead => await HandleFileReadAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.ConfigUpdate => HandleConfigUpdate(payloadRoot),
                     _ => throw new NotSupportedException($"Unknown command type: {type}")
                 };
@@ -564,6 +566,7 @@ public sealed class CommandDispatcher : IDisposable
         ApplyIfPresent("enableLogViewer", "EnableLogViewer", e => e.GetBoolean());
         ApplyIfPresent("enableScripts", "EnableScripts", e => e.GetBoolean());
         ApplyIfPresent("enableTerminal", "EnableTerminal", e => e.GetBoolean());
+        ApplyIfPresent("enableFileBrowser", "EnableFileBrowser", e => e.GetBoolean());
 
         // Ping settings
         ApplyIfPresent("pingTarget", "PingTarget", e => e.GetString());
@@ -578,6 +581,7 @@ public sealed class CommandDispatcher : IDisposable
         ApplyIfPresent("scriptMinSecondsBetweenRuns", "ScriptMinSecondsBetweenRuns", e => e.GetInt32());
         ApplyIfPresent("terminalMaxOutputBytes", "TerminalMaxOutputBytes", e => e.GetInt32());
         ApplyIfPresent("terminalMaxDurationSeconds", "TerminalMaxDurationSeconds", e => e.GetInt32());
+        ApplyIfPresent("fileBrowserMaxBytes", "FileBrowserMaxBytes", e => e.GetInt32());
 
         if (updatedFields.Count == 0)
         {
@@ -1913,7 +1917,9 @@ del ""%~f0""
             || normalizedType == CommandTypes.ScriptRun
             || normalizedType == CommandTypes.TerminalOpen
             || normalizedType == CommandTypes.TerminalClose
-            || normalizedType == CommandTypes.TerminalInput;
+            || normalizedType == CommandTypes.TerminalInput
+            || normalizedType == CommandTypes.FileList
+            || normalizedType == CommandTypes.FileRead;
     }
 
     private bool IsRemoteToolEnabled(string normalizedType)
@@ -1933,6 +1939,309 @@ del ""%~f0""
             return _config.EnableTerminal;
         }
 
+        if (normalizedType == CommandTypes.FileList || normalizedType == CommandTypes.FileRead)
+        {
+            return _config.EnableFileBrowser;
+        }
+
         return true;
+    }
+
+    private async Task<string> HandleFileListAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        var path = ExtractVirtualPathStrict(payloadRoot, required: false) ?? "/";
+        var virtualPath = NormalizeVirtualPath(path);
+
+        // Root listing on Windows maps to drives. On Unix it maps to '/'.
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && virtualPath == "/")
+        {
+            var drives = DriveInfo.GetDrives()
+                .Where(d => d.IsReady)
+                .Select(d => d.Name.TrimEnd('\\', '/'))
+                .Select(n => n.Length >= 1 ? char.ToUpperInvariant(n[0]) : '?')
+                .Where(c => char.IsLetter(c))
+                .Distinct()
+                .OrderBy(c => c)
+                .Select(c => new FileBrowserEntry
+                {
+                    Name = c.ToString(),
+                    IsDirectory = true,
+                    Path = "/" + c,
+                    UpdatedAt = null,
+                    Size = null
+                })
+                .ToList();
+
+            return JsonSerializer.Serialize(drives, ManLabJsonContext.Default.ListFileBrowserEntry);
+        }
+
+        var (actualPath, resolvedVirtualPath) = ResolveActualPathFromVirtual(virtualPath);
+
+        if (string.IsNullOrWhiteSpace(actualPath))
+        {
+            // Non-Windows root should have an actual path.
+            throw new ArgumentException("Invalid path.");
+        }
+
+        if (!Directory.Exists(actualPath))
+        {
+            throw new DirectoryNotFoundException($"Directory not found: {resolvedVirtualPath}");
+        }
+
+        // Enumerate directories first, then files, like typical file managers.
+        var entries = new List<FileBrowserEntry>(capacity: 256);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories(actualPath))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var di = new DirectoryInfo(dir);
+                    entries.Add(new FileBrowserEntry
+                    {
+                        Name = di.Name,
+                        IsDirectory = true,
+                        Path = JoinVirtualPath(resolvedVirtualPath, di.Name),
+                        UpdatedAt = di.LastWriteTimeUtc == DateTime.MinValue ? null : di.LastWriteTimeUtc.ToString("O"),
+                        Size = null
+                    });
+                }
+                catch
+                {
+                    // Skip entries we can't stat.
+                }
+            }
+
+            foreach (var file in Directory.EnumerateFiles(actualPath))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var fi = new FileInfo(file);
+                    entries.Add(new FileBrowserEntry
+                    {
+                        Name = fi.Name,
+                        IsDirectory = false,
+                        Path = JoinVirtualPath(resolvedVirtualPath, fi.Name),
+                        UpdatedAt = fi.LastWriteTimeUtc == DateTime.MinValue ? null : fi.LastWriteTimeUtc.ToString("O"),
+                        Size = fi.Exists ? fi.Length : null
+                    });
+                }
+                catch
+                {
+                    // Skip entries we can't stat.
+                }
+            }
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new InvalidOperationException($"Access denied listing '{resolvedVirtualPath}': {ex.Message}");
+        }
+
+        // Sort by name for deterministic output.
+        entries.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name));
+        // Ensure directories appear before files regardless of sort.
+        entries = entries
+            .OrderByDescending(e => e.IsDirectory)
+            .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return JsonSerializer.Serialize(entries, ManLabJsonContext.Default.ListFileBrowserEntry);
+    }
+
+    private async Task<string> HandleFileReadAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        var path = ExtractVirtualPathStrict(payloadRoot, required: true);
+        var virtualPath = NormalizeVirtualPath(path!);
+
+        if (virtualPath == "/")
+        {
+            throw new ArgumentException("file.read requires a file path, not '/'.");
+        }
+
+        var requestedMax = ExtractOptionalInt(payloadRoot, "maxBytes", "MaxBytes");
+        var effectiveMax = requestedMax ?? _config.FileBrowserMaxBytes;
+        effectiveMax = Math.Clamp(effectiveMax, 1, Math.Max(1, _config.FileBrowserMaxBytes));
+
+        var (actualPath, resolvedVirtualPath) = ResolveActualPathFromVirtual(virtualPath);
+        if (string.IsNullOrWhiteSpace(actualPath))
+        {
+            throw new ArgumentException("Invalid path.");
+        }
+
+        if (!File.Exists(actualPath))
+        {
+            throw new FileNotFoundException($"File not found: {resolvedVirtualPath}");
+        }
+
+        // Read bounded bytes and return as base64.
+        byte[] buffer;
+        int read;
+        await using (var fs = new FileStream(actualPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            var toRead = (int)Math.Min((long)effectiveMax, fs.Length);
+            buffer = new byte[toRead];
+
+            var offset = 0;
+            while (offset < toRead)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var chunk = await fs.ReadAsync(buffer.AsMemory(offset, toRead - offset), cancellationToken).ConfigureAwait(false);
+                if (chunk <= 0) break;
+                offset += chunk;
+            }
+
+            read = offset;
+        }
+
+        if (read != buffer.Length)
+        {
+            Array.Resize(ref buffer, read);
+        }
+
+        var truncated = false;
+        try
+        {
+            var fullLen = new FileInfo(actualPath).Length;
+            truncated = fullLen > read;
+        }
+        catch
+        {
+            // best-effort
+        }
+
+        var result = new FileReadResult
+        {
+            Path = resolvedVirtualPath,
+            ContentBase64 = Convert.ToBase64String(buffer),
+            Truncated = truncated,
+            BytesRead = read
+        };
+
+        return JsonSerializer.Serialize(result, ManLabJsonContext.Default.FileReadResult);
+    }
+
+    private static string? ExtractVirtualPathStrict(JsonElement? payloadRoot, bool required)
+    {
+        if (payloadRoot is null)
+        {
+            if (required) throw new ArgumentException("Command payload is required.");
+            return null;
+        }
+
+        var root = payloadRoot.Value;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("Command payload must be a JSON object.");
+        }
+
+        if (!root.TryGetProperty("path", out var pathEl) && !root.TryGetProperty("Path", out pathEl))
+        {
+            if (required) throw new ArgumentException("Command payload must include 'path'.");
+            return null;
+        }
+
+        var path = pathEl.GetString();
+        if (required && string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Command payload must include a non-empty 'path'.");
+        }
+
+        return path;
+    }
+
+    private static int? ExtractOptionalInt(JsonElement? payloadRoot, string camel, string pascal)
+    {
+        if (payloadRoot is null) return null;
+        var root = payloadRoot.Value;
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        if (root.TryGetProperty(camel, out var el) || root.TryGetProperty(pascal, out el))
+        {
+            if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var v))
+            {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    private static string NormalizeVirtualPath(string input)
+    {
+        var p = (input ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(p)) return "/";
+
+        p = p.Replace('\\', '/');
+
+        if (!p.StartsWith('/'))
+        {
+            p = "/" + p;
+        }
+
+        // Disallow colon in virtual paths to avoid mixing with OS paths.
+        if (p.Contains(':'))
+        {
+            throw new ArgumentException("Virtual paths must not contain ':'. Use '/C/...' on Windows.");
+        }
+
+        // Normalize segments, rejecting traversal.
+        var segments = p.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var normalized = new List<string>(segments.Length);
+        foreach (var seg in segments)
+        {
+            if (seg == ".") continue;
+            if (seg == "..")
+            {
+                throw new ArgumentException("Path traversal is not allowed.");
+            }
+            normalized.Add(seg);
+        }
+
+        var joined = "/" + string.Join('/', normalized);
+        return string.IsNullOrEmpty(joined) ? "/" : joined;
+    }
+
+    private static (string ActualPath, string NormalizedVirtualPath) ResolveActualPathFromVirtual(string normalizedVirtualPath)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // '/' is handled separately by callers (drive list).
+            var segments = normalizedVirtualPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0)
+            {
+                return (string.Empty, "/");
+            }
+
+            var driveSeg = segments[0];
+            if (driveSeg.Length != 1 || !char.IsLetter(driveSeg[0]))
+            {
+                throw new ArgumentException("On Windows, paths must start with a drive like '/C' or '/D'.");
+            }
+
+            var drive = char.ToUpperInvariant(driveSeg[0]);
+            var rest = segments.Skip(1).ToArray();
+            var actual = rest.Length == 0
+                ? $"{drive}:\\"
+                : $"{drive}:\\{string.Join("\\", rest)}";
+
+            var normalized = rest.Length == 0
+                ? $"/{drive}"
+                : $"/{drive}/{string.Join('/', rest)}";
+
+            return (actual, normalized);
+        }
+
+        // Unix-like: virtual path is the actual path.
+        return (normalizedVirtualPath, normalizedVirtualPath);
+    }
+
+    private static string JoinVirtualPath(string parent, string name)
+    {
+        var p = NormalizeVirtualPath(parent);
+        if (p == "/") return "/" + name;
+        return p.TrimEnd('/') + "/" + name;
     }
 }

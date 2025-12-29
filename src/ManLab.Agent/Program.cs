@@ -100,6 +100,19 @@ if (Environment.GetEnvironmentVariable("MANLAB_ENABLE_TERMINAL") is string enabl
     agentConfig.EnableTerminal = enableTerminal;
 }
 
+if (Environment.GetEnvironmentVariable("MANLAB_ENABLE_FILE_BROWSER") is string enableFileBrowserStr
+    && bool.TryParse(enableFileBrowserStr, out var enableFileBrowser))
+{
+    agentConfig.EnableFileBrowser = enableFileBrowser;
+}
+
+if (Environment.GetEnvironmentVariable("MANLAB_FILE_BROWSER_MAX_BYTES") is string fileBrowserMaxBytesStr
+    && int.TryParse(fileBrowserMaxBytesStr, out var fileBrowserMaxBytes)
+    && fileBrowserMaxBytes > 0)
+{
+    agentConfig.FileBrowserMaxBytes = fileBrowserMaxBytes;
+}
+
 // Configure logging
 using var loggerFactory = LoggerFactory.Create(builder =>
 {

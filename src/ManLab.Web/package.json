@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",
+    "@cubone/react-file-manager": "^1.35.0",
     "@fontsource-variable/nunito-sans": "^5.2.7",
     "@microsoft/signalr": "^10.0.0",
     "@tailwindcss/vite": "^4.1.17",

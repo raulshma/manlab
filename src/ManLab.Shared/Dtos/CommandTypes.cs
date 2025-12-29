@@ -42,6 +42,10 @@ public static class CommandTypes
     public const string TerminalClose = "terminal.close";
     public const string TerminalInput = "terminal.input";
 
+    // File browser (remote tools)
+    public const string FileList = "file.list";
+    public const string FileRead = "file.read";
+
     // Command lifecycle
     public const string CommandCancel = "command.cancel";
 
@@ -79,6 +83,9 @@ public static class CommandTypes
         TerminalClose,
         TerminalInput,
 
+        FileList,
+        FileRead,
+
         CommandCancel,
         ConfigUpdate
     };
@@ -93,6 +100,52 @@ public static class CommandTypes
         /// </summary>
         public int DelaySeconds { get; init; } = 0;
     }
+}
+
+/// <summary>
+/// Payload for file.list command.
+/// Virtual paths use forward slashes. Windows drive roots are represented as "/C", "/D", etc.
+/// </summary>
+public sealed record FileListPayload
+{
+    /// <summary>The virtual path to list ("/" for roots).</summary>
+    public string Path { get; init; } = "/";
+}
+
+/// <summary>
+/// Payload for file.read command.
+/// The agent returns content as Base64 (bounded by MaxBytes).
+/// </summary>
+public sealed record FileReadPayload
+{
+    /// <summary>The virtual file path to read.</summary>
+    public string Path { get; init; } = string.Empty;
+
+    /// <summary>Maximum bytes to read from the file (server + agent enforce bounds).</summary>
+    public int? MaxBytes { get; init; }
+}
+
+/// <summary>
+/// A file/directory entry returned by file.list.
+/// </summary>
+public sealed record FileBrowserEntry
+{
+    public string Name { get; init; } = string.Empty;
+    public bool IsDirectory { get; init; }
+    public string Path { get; init; } = string.Empty;
+    public string? UpdatedAt { get; init; }
+    public long? Size { get; init; }
+}
+
+/// <summary>
+/// Result returned by file.read.
+/// </summary>
+public sealed record FileReadResult
+{
+    public string Path { get; init; } = string.Empty;
+    public string ContentBase64 { get; init; } = string.Empty;
+    public bool Truncated { get; init; }
+    public long BytesRead { get; init; }
 }
 
 /// <summary>
@@ -229,6 +282,9 @@ public record ConfigUpdatePayload
     /// <summary>Enable remote terminal commands.</summary>
     public bool? EnableTerminal { get; init; }
 
+    /// <summary>Enable remote file browser commands (file.list/file.read).</summary>
+    public bool? EnableFileBrowser { get; init; }
+
     /// <summary>Ping target override (hostname or IP).</summary>
     public string? PingTarget { get; init; }
 
@@ -258,4 +314,7 @@ public record ConfigUpdatePayload
 
     /// <summary>Maximum terminal session duration in seconds.</summary>
     public int? TerminalMaxDurationSeconds { get; init; }
+
+    /// <summary>Hard upper bound for file reads returned by the agent (bytes).</summary>
+    public int? FileBrowserMaxBytes { get; init; }
 }
