@@ -200,6 +200,16 @@ public sealed class OnboardingController : ControllerBase
             return Conflict("Cannot delete machine while an onboarding job is in progress.");
         }
 
+        // Also remove the linked node if present
+        if (machine.LinkedNodeId.HasValue)
+        {
+            var linkedNode = await _db.Nodes.FirstOrDefaultAsync(n => n.Id == machine.LinkedNodeId.Value);
+            if (linkedNode != null)
+            {
+                _db.Nodes.Remove(linkedNode);
+            }
+        }
+
         _db.OnboardingMachines.Remove(machine);
         await _db.SaveChangesAsync();
 

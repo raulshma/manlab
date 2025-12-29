@@ -677,6 +677,14 @@ public class DevicesController : ControllerBase
                 message: "Uninstall queued for connected agent"));
         }
 
+        // Also remove any associated OnboardingMachine
+        var linkedOnboardingMachine = await _dbContext.OnboardingMachines
+            .FirstOrDefaultAsync(m => m.LinkedNodeId == id);
+        if (linkedOnboardingMachine != null)
+        {
+            _dbContext.OnboardingMachines.Remove(linkedOnboardingMachine);
+        }
+
         _dbContext.Nodes.Remove(node);
         await _dbContext.SaveChangesAsync();
 
