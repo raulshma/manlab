@@ -147,6 +147,8 @@ public sealed class CommandDispatcher : IDisposable
                     var t when t == CommandTypes.DockerStop => await HandleDockerStopAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.DockerStart => await HandleDockerStartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.SystemUpdate => await HandleSystemUpdateAsync(commandId, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.SystemShutdown => await HandleSystemShutdownAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.SystemRestart => await HandleSystemRestartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.AgentShutdown => HandleAgentShutdown(),
                     var t when t == CommandTypes.AgentEnableTask => await HandleTaskControlAsync(enable: true, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.AgentDisableTask => await HandleTaskControlAsync(enable: false, commandCts.Token).ConfigureAwait(false),
@@ -290,6 +292,97 @@ public sealed class CommandDispatcher : IDisposable
         
         // Status is already updated by the executor, just return the result
         return output;
+    }
+
+    private async Task<string> HandleSystemShutdownAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        var delaySeconds = ExtractDelaySeconds(payloadRoot);
+        _logger.LogInformation("System shutdown requested with delay {DelaySeconds}s", delaySeconds);
+
+        string command;
+        if (IsWindows())
+        {
+            // Windows: shutdown /s /t <seconds>
+            command = $"shutdown /s /t {delaySeconds}";
+        }
+        else
+        {
+            // Linux: shutdown -h +<minutes> or shutdown -h now
+            if (delaySeconds == 0)
+            {
+                command = "shutdown -h now";
+            }
+            else
+            {
+                // Linux shutdown uses minutes, convert seconds to minutes (round up)
+                var delayMinutes = Math.Max(1, (int)Math.Ceiling(delaySeconds / 60.0));
+                command = $"shutdown -h +{delayMinutes}";
+            }
+        }
+
+        return await ShellExecutor.ExecuteAsync(
+            command,
+            TimeSpan.FromSeconds(30),
+            MaxShellOutputChars,
+            _loggerFactory.CreateLogger("ManLab.Agent.Commands.ShellExecutor"),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleSystemRestartAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        var delaySeconds = ExtractDelaySeconds(payloadRoot);
+        _logger.LogInformation("System restart requested with delay {DelaySeconds}s", delaySeconds);
+
+        string command;
+        if (IsWindows())
+        {
+            // Windows: shutdown /r /t <seconds>
+            command = $"shutdown /r /t {delaySeconds}";
+        }
+        else
+        {
+            // Linux: shutdown -r +<minutes> or shutdown -r now
+            if (delaySeconds == 0)
+            {
+                command = "shutdown -r now";
+            }
+            else
+            {
+                var delayMinutes = Math.Max(1, (int)Math.Ceiling(delaySeconds / 60.0));
+                command = $"shutdown -r +{delayMinutes}";
+            }
+        }
+
+        return await ShellExecutor.ExecuteAsync(
+            command,
+            TimeSpan.FromSeconds(30),
+            MaxShellOutputChars,
+            _loggerFactory.CreateLogger("ManLab.Agent.Commands.ShellExecutor"),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static int ExtractDelaySeconds(JsonElement? payloadRoot)
+    {
+        if (payloadRoot is null)
+        {
+            return 0;
+        }
+
+        var root = payloadRoot.Value;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return 0;
+        }
+
+        if (root.TryGetProperty("delaySeconds", out var delayEl) || root.TryGetProperty("DelaySeconds", out delayEl))
+        {
+            if (delayEl.ValueKind == JsonValueKind.Number && delayEl.TryGetInt32(out var delay))
+            {
+                return Math.Max(0, delay);
+            }
+        }
+
+        return 0;
     }
 
     private async Task<string> HandleScriptRunAsync(Guid commandId, JsonElement? payloadRoot, CancellationToken cancellationToken)

@@ -13,6 +13,8 @@ public static class CommandTypes
 
     // System commands  
     public const string SystemUpdate = "system.update";
+    public const string SystemShutdown = "system.shutdown";
+    public const string SystemRestart = "system.restart";
 
     // Agent lifecycle / management commands
     public const string AgentShutdown = "agent.shutdown";
@@ -56,6 +58,8 @@ public static class CommandTypes
         DockerStop,
         DockerStart,
         SystemUpdate,
+        SystemShutdown,
+        SystemRestart,
         AgentShutdown,
         AgentEnableTask,
         AgentDisableTask,
@@ -78,6 +82,17 @@ public static class CommandTypes
         CommandCancel,
         ConfigUpdate
     };
+
+    /// <summary>
+    /// Payload for system.shutdown and system.restart commands.
+    /// </summary>
+    public record SystemPowerPayload
+    {
+        /// <summary>
+        /// Delay in seconds before shutdown/restart (0 = immediate).
+        /// </summary>
+        public int DelaySeconds { get; init; } = 0;
+    }
 }
 
 /// <summary>

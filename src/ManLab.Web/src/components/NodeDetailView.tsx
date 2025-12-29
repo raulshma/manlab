@@ -1,64 +1,28 @@
 /**
  * NodeDetailView component for detailed node information.
- * Shows telemetry charts, Docker containers, and system actions.
+ * Refactored to use a minimal tabbed interface with lazy loading.
  */
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
+import { Badge } from "@/components/ui/badge";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, AlertCircle, Trash2, RefreshCw, Clock, Power, Play, Square } from "lucide-react";
-import type { Container } from "../types";
-import { useSignalR } from "../SignalRContext";
-import {
-  fetchNode,
-  fetchNodeTelemetry,
-  fetchNodeCommands,
-  fetchNodeSettings,
-  upsertNodeSettings,
-  requestDockerContainerList,
-  restartContainer,
-  triggerSystemUpdate,
-  deleteNode,
-  requestAgentPing,
-  shutdownAgent,
-  enableAgentTask,
-  disableAgentTask,
-  wakeNode,
-  fetchNodeNetworkTelemetry,
-  fetchNodePingTelemetry,
-  fetchSmartHistory,
-  fetchGpuHistory,
-  fetchUpsHistory,
-} from "../api";
-import { TelemetryChart } from "./TelemetryChart";
-import { ContainerList } from "./ContainerList";
-import { ConfirmationModal } from "./ConfirmationModal";
-import { NodeCommandsPanel } from "./NodeCommandsPanel";
-import { NetworkThroughputChart } from "./NetworkThroughputChart";
-import { PingLatencyChart } from "./PingLatencyChart";
-import { SmartDrivePanel } from "./SmartDrivePanel";
-import { GpuStatsPanel } from "./GpuStatsPanel";
-import { UpsStatusPanel } from "./UpsStatusPanel";
-import { ServiceMonitoringPanel } from "./ServiceMonitoringPanel";
-import { LogViewerPanel } from "./LogViewerPanel";
-import { ScriptRunnerPanel } from "./ScriptRunnerPanel";
-import { TerminalPanel } from "./TerminalPanel";
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { AlertCircle, ArrowLeft, Clock } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { fetchNode, requestAgentPing } from "../api";
+import type { Node } from "../types";
+
+import { NodeOverviewTab } from "./node-detail/NodeOverviewTab";
+import { NodeHealthTab } from "./node-detail/NodeHealthTab";
+import { NodeWorkloadsTab } from "./node-detail/NodeWorkloadsTab";
+import { NodeToolsTab } from "./node-detail/NodeToolsTab";
+import { NodeSettingsTab } from "./node-detail/NodeSettingsTab";
 
 interface NodeDetailViewProps {
   nodeId: string;
@@ -98,51 +62,60 @@ function formatRelativeTime(dateString: string): string {
   if (diffSeconds < 60) {
     return "Just now";
   } else if (diffMinutes < 60) {
-    return `${diffMinutes} minute${diffMinutes > 1 ? "s" : ""} ago`;
+    return `${diffMinutes}m ago`;
   } else if (diffHours < 24) {
-    return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`;
+    return `${diffHours}h ago`;
   } else {
-    return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`;
+    return `${diffDays}d ago`;
   }
 }
 
-/**
- * Formats a future date to countdown (e.g., "in 30 seconds").
- */
-function formatCountdown(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = date.getTime() - now.getTime();
+// Minimal Header Component
+function NodeDetailHeader({ node, onBack }: { node: Node; onBack: () => void }) {
+    const statusVariant = getStatusVariant(node.status);
 
-  if (diffMs <= 0) {
-    return "now";
-  }
-
-  const diffSeconds = Math.floor(diffMs / 1000);
-  const diffMinutes = Math.floor(diffSeconds / 60);
-
-  if (diffSeconds < 60) {
-    return `in ${diffSeconds} second${diffSeconds !== 1 ? "s" : ""}`;
-  } else if (diffMinutes < 60) {
-    const remainingSeconds = diffSeconds % 60;
-    if (remainingSeconds > 0) {
-      return `in ${diffMinutes}m ${remainingSeconds}s`;
-    }
-    return `in ${diffMinutes} minute${diffMinutes !== 1 ? "s" : ""}`;
-  } else {
-    const hours = Math.floor(diffMinutes / 60);
-    const mins = diffMinutes % 60;
-    return `in ${hours}h ${mins}m`;
-  }
+    return (
+        <div className="flex items-center gap-4 py-6">
+            <Button variant="ghost" size="icon" onClick={onBack} className="-ml-2">
+                <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <div>
+                <div className="flex items-center gap-3">
+                    <h1 className="text-2xl font-bold tracking-tight">{node.hostname}</h1>
+                    <div
+                        className={`w-2.5 h-2.5 rounded-full ${
+                            node.status === "Online"
+                                ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]"
+                                : node.status === "Offline"
+                                ? "bg-red-500"
+                                : node.status === "Maintenance"
+                                ? "bg-yellow-500"
+                                : "bg-muted"
+                        }`}
+                    />
+                    <Badge variant={statusVariant} className="text-xs px-2 py-0 h-5 font-normal">
+                        {node.status}
+                    </Badge>
+                </div>
+                <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1 font-mono">
+                    <span>{node.ipAddress || "No IP"}</span>
+                    <span className="text-border">|</span>
+                    <span className="truncate max-w-[200px]" title={node.os ?? undefined}>{node.os || "Unknown OS"}</span>
+                    <span className="text-border">|</span>
+                    <span>v{node.agentVersion || "?"}</span>
+                    <span className="text-border">|</span>
+                    <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {formatRelativeTime(node.lastSeen)}
+                    </span>
+                </div>
+            </div>
+        </div>
+    );
 }
 
-/**
- * NodeDetailView displays detailed information about a specific node.
- */
+
 export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
-  const { agentBackoffStatus } = useSignalR();
-  const backoffStatus = agentBackoffStatus.get(nodeId);
-
   // Fetch node details
   const {
     data: node,
@@ -153,207 +126,23 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
     queryFn: () => fetchNode(nodeId),
   });
 
-  // Fetch telemetry history
-  const { data: telemetry } = useQuery({
-    queryKey: ["telemetry", nodeId],
-    queryFn: () => fetchNodeTelemetry(nodeId, 30),
-    refetchInterval: 10000, // Refetch every 10 seconds
-  });
-
-  // Fetch command history (used for docker container list + command panel)
-  const { data: commands } = useQuery({
-    queryKey: ["commands", nodeId],
-    queryFn: () => fetchNodeCommands(nodeId, 50),
-    refetchInterval: 5000,
-  });
-
-  // Fetch per-node settings (used for update channel and future update policies)
-  const { data: nodeSettings } = useQuery({
-    queryKey: ["nodeSettings", nodeId],
-    queryFn: () => fetchNodeSettings(nodeId),
-    refetchInterval: 30000,
-  });
-
-  // Fetch network telemetry history
-  const { data: networkTelemetry } = useQuery({
-    queryKey: ["networkTelemetry", nodeId],
-    queryFn: () => fetchNodeNetworkTelemetry(nodeId, 60),
-    refetchInterval: 10000,
-  });
-
-  // Fetch ping telemetry history
-  const { data: pingTelemetry } = useQuery({
-    queryKey: ["pingTelemetry", nodeId],
-    queryFn: () => fetchNodePingTelemetry(nodeId, 60),
-    refetchInterval: 10000,
-  });
-
-  // Fetch SMART drive history
-  const { data: smartData } = useQuery({
-    queryKey: ["smartData", nodeId],
-    queryFn: () => fetchSmartHistory(nodeId, 50),
-    refetchInterval: 60000, // Less frequent for hardware data
-  });
-
-  // Fetch GPU history
-  const { data: gpuData } = useQuery({
-    queryKey: ["gpuData", nodeId],
-    queryFn: () => fetchGpuHistory(nodeId, 50),
-    refetchInterval: 10000,
-  });
-
-  // Fetch UPS history
-  const { data: upsData } = useQuery({
-    queryKey: ["upsData", nodeId],
-    queryFn: () => fetchUpsHistory(nodeId, 50),
-    refetchInterval: 10000,
-  });
-
-  const currentChannel =
-    nodeSettings?.find((s) => s.key === "agent.update.channel")?.value ??
-    "stable";
-
-  const dockerListCommand = (commands ?? []).find(
-    (c) => c.commandType === "docker.list" && c.status !== "Failed"
-  );
-  const latestSuccessfulDockerList = (commands ?? []).find(
-    (c) =>
-      c.commandType === "docker.list" && c.status === "Success" && !!c.outputLog
-  );
-
-  let dockerContainers: Container[] = [];
-  let dockerListError: string | null = null;
-  if (latestSuccessfulDockerList?.outputLog) {
-    try {
-      // The output may contain agent dispatch messages before the actual JSON.
-      // Extract the JSON portion by finding the first '[' or '{' character.
-      let jsonContent = latestSuccessfulDockerList.outputLog;
-      const arrayStart = jsonContent.indexOf('[');
-      const objectStart = jsonContent.indexOf('{');
-      
-      // Determine which comes first (or only one exists)
-      let jsonStart = -1;
-      if (arrayStart >= 0 && objectStart >= 0) {
-        jsonStart = Math.min(arrayStart, objectStart);
-      } else if (arrayStart >= 0) {
-        jsonStart = arrayStart;
-      } else if (objectStart >= 0) {
-        jsonStart = objectStart;
-      }
-      
-      if (jsonStart > 0) {
-        jsonContent = jsonContent.substring(jsonStart);
-      }
-      
-      const parsed = JSON.parse(jsonContent);
-      if (Array.isArray(parsed)) {
-        dockerContainers = parsed as Container[];
-      } else if (
-        parsed &&
-        typeof parsed === "object" &&
-        typeof parsed.error === "string"
-      ) {
-        dockerListError = parsed.error;
-      } else {
-        // Unexpected structure
-        dockerListError = `Unexpected response format: ${JSON.stringify(parsed).substring(0, 100)}`;
-      }
-    } catch (e) {
-      const preview = latestSuccessfulDockerList.outputLog.substring(0, 100);
-      dockerListError = `Failed to parse docker list output: ${e instanceof Error ? e.message : "Unknown error"}. Preview: ${preview}`;
-    }
-  }
-
-  const isDockerListRunning =
-    dockerListCommand?.status === "Queued" ||
-    dockerListCommand?.status === "Sent" ||
-    dockerListCommand?.status === "InProgress";
-
-  const dockerListMutation = useMutation({
-    mutationFn: () => requestDockerContainerList(nodeId),
-  });
-
-  // Restart container mutation
-  const restartMutation = useMutation({
-    mutationFn: (containerId: string) => restartContainer(nodeId, containerId),
-    onSuccess: () => {
-      // Refresh the container list after restart
-      dockerListMutation.mutate();
-    },
-  });
-
-  // System update mutation
-  const updateMutation = useMutation({
-    mutationFn: () => triggerSystemUpdate(nodeId),
-    onSuccess: () => {
-      // Could show success notification
-    },
-  });
-
-  // Delete node mutation
-  const queryClient = useQueryClient();
-  const deleteMutation = useMutation({
-    mutationFn: () => deleteNode(nodeId),
-    onSuccess: () => {
-      // Invalidate nodes list and navigate back
-      queryClient.invalidateQueries({ queryKey: ["nodes"] });
-      onBack();
-    },
-  });
-
   // Ping agent mutation
   const pingMutation = useMutation({
     mutationFn: () => requestAgentPing(nodeId),
   });
 
-  // Agent control mutations
-  const shutdownMutation = useMutation({
-    mutationFn: () => shutdownAgent(nodeId),
-  });
-
-  const enableTaskMutation = useMutation({
-    mutationFn: () => enableAgentTask(nodeId),
-  });
-
-  const disableTaskMutation = useMutation({
-    mutationFn: () => disableAgentTask(nodeId),
-  });
-
-  // Wake-on-LAN mutation for restarting offline nodes
-  const wakeMutation = useMutation({
-    mutationFn: () => wakeNode(nodeId),
-  });
-
-  const updateChannelMutation = useMutation({
-    mutationFn: (channel: string) =>
-      upsertNodeSettings(nodeId, [
-        {
-          key: "agent.update.channel",
-          value: channel,
-          category: "Updates",
-          description: "Distribution channel used for agent updates (stable/beta).",
-        },
-      ]),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["nodeSettings", nodeId] });
-    },
-  });
-
   if (nodeLoading) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        <div className="flex items-center gap-3">
-          <Spinner className="h-6 w-6" />
-          <span className="text-muted-foreground">Loading node details...</span>
-        </div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Spinner className="h-6 w-6" />
       </div>
     );
   }
 
   if (nodeError || !node) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
-        <div className="text-center max-w-md">
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center max-w-md p-6">
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Node Not Found</AlertTitle>
@@ -367,626 +156,77 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
     );
   }
 
-  const statusVariant = getStatusVariant(node.status);
-
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
-      <header className="bg-card border-b border-border px-6 py-4">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={onBack}>
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-            <div className="flex-1">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`w-3 h-3 rounded-full ${
-                    node.status === "Online"
-                      ? "bg-primary animate-pulse"
-                      : node.status === "Offline"
-                      ? "bg-destructive"
-                      : node.status === "Maintenance"
-                      ? "bg-secondary animate-pulse"
-                      : "bg-muted"
-                  }`}
-                />
-                <h1 className="text-xl font-semibold">{node.hostname}</h1>
-                <Badge variant={statusVariant}>{node.status}</Badge>
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                Last seen: {formatRelativeTime(node.lastSeen)}
-              </p>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <div className="max-w-7xl mx-auto w-full px-6 flex-1 flex flex-col">
+        {/* Minimal Header */}
+        <NodeDetailHeader node={node} onBack={onBack} />
 
-      {/* Backoff Status Alert */}
-      {backoffStatus && (
-        <div className="max-w-7xl mx-auto px-6 pt-4">
-          <Alert variant="destructive">
-            <Clock className="h-4 w-4" />
-            <AlertTitle>Agent Heartbeat Backoff Active</AlertTitle>
-            <AlertDescription className="flex items-center justify-between">
-              <span>
-                Failed to send {backoffStatus.consecutiveFailures} consecutive heartbeat{backoffStatus.consecutiveFailures !== 1 ? "s" : ""}.
-                Next ping expected{" "}
-                <strong>{formatCountdown(backoffStatus.nextRetryTimeUtc ?? "")}</strong>.
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => pingMutation.mutate()}
-                disabled={pingMutation.isPending}
-                className="ml-4"
+        {/* Tabs Interface */}
+        <Tabs defaultValue="overview" className="flex-1 flex flex-col space-y-6">
+          <div className="border-b border-border">
+            <TabsList className="bg-transparent h-auto p-0 gap-6">
+              <TabsTrigger
+                value="overview"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-3 text-muted-foreground hover:text-foreground transition-all"
               >
-                {pingMutation.isPending ? (
-                  <>
-                    <Spinner className="h-4 w-4 mr-2" />
-                    Pinging...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Ping Now
-                  </>
-                )}
-              </Button>
-            </AlertDescription>
-          </Alert>
-          {pingMutation.isError && (
-            <Alert variant="destructive" className="mt-2">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                {pingMutation.error instanceof Error
-                  ? pingMutation.error.message
-                  : "Failed to send ping request"}
-              </AlertDescription>
-            </Alert>
-          )}
-        </div>
-      )}
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* Node Info Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <Card>
-            <CardContent className="pt-4">
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">
-                IP Address
-              </dt>
-              <dd className="text-sm font-mono text-foreground mt-1">
-                {node.ipAddress || "N/A"}
-              </dd>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4">
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">
-                Operating System
-              </dt>
-              <dd className="text-sm text-foreground mt-1 truncate">
-                {node.os || "N/A"}
-              </dd>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4">
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">
-                Agent Version
-              </dt>
-              <dd className="text-sm text-foreground mt-1">
-                {node.agentVersion ? `v${node.agentVersion}` : "N/A"}
-              </dd>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4">
-              <dt className="text-xs text-muted-foreground uppercase tracking-wider">
-                Registered
-              </dt>
-              <dd className="text-sm text-foreground mt-1">
-                {new Date(node.createdAt).toLocaleDateString()}
-              </dd>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Telemetry Charts */}
-        <section className="mb-8">
-          <h2 className="text-lg font-semibold text-foreground mb-4">
-            System Telemetry
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <TelemetryChart
-              data={telemetry || []}
-              metric="cpuUsage"
-              label="CPU Usage"
-              color="hsl(var(--chart-1))"
-            />
-            <TelemetryChart
-              data={telemetry || []}
-              metric="ramUsage"
-              label="RAM Usage"
-              color="hsl(var(--chart-2))"
-            />
-            <TelemetryChart
-              data={telemetry || []}
-              metric="diskUsage"
-              label="Disk Usage"
-              color="hsl(var(--chart-3))"
-            />
+                Overview
+              </TabsTrigger>
+              <TabsTrigger
+                value="health"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-3 text-muted-foreground hover:text-foreground transition-all"
+              >
+                Health
+              </TabsTrigger>
+              <TabsTrigger
+                value="workloads"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-3 text-muted-foreground hover:text-foreground transition-all"
+              >
+                Workloads
+              </TabsTrigger>
+              <TabsTrigger
+                value="tools"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-3 text-muted-foreground hover:text-foreground transition-all"
+              >
+                Tools
+              </TabsTrigger>
+              <TabsTrigger
+                value="settings"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-3 text-muted-foreground hover:text-foreground transition-all"
+              >
+                Settings
+              </TabsTrigger>
+            </TabsList>
           </div>
-        </section>
 
-        {/* Network Monitoring */}
-        <section className="mb-8">
-          <h2 className="text-lg font-semibold text-foreground mb-4">
-            Network Monitoring
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <NetworkThroughputChart data={networkTelemetry || []} />
-            <PingLatencyChart data={pingTelemetry || []} />
-          </div>
-        </section>
-
-        {/* Hardware Health */}
-        {((smartData && smartData.length > 0) || (gpuData && gpuData.length > 0) || (upsData && upsData.length > 0)) && (
-          <section className="mb-8">
-            <h2 className="text-lg font-semibold text-foreground mb-4">
-              Hardware Health
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <SmartDrivePanel data={smartData || []} />
-              <GpuStatsPanel data={gpuData || []} />
-              <UpsStatusPanel data={upsData || []} />
-            </div>
-          </section>
-        )}
-
-        {/* Docker Containers */}
-        <section className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-foreground">
-              Docker Containers
-            </h2>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={
-                node.status !== "Online" || dockerListMutation.isPending
-              }
-              onClick={() => dockerListMutation.mutate()}
-            >
-              Refresh
-            </Button>
-          </div>
-          {dockerListError && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Docker list failed</AlertTitle>
-              <AlertDescription>{dockerListError}</AlertDescription>
-            </Alert>
-          )}
-          <ContainerList
-            containers={dockerContainers}
-            isLoading={isDockerListRunning || dockerListMutation.isPending}
-            onRestart={async (containerId) => {
-              await restartMutation.mutateAsync(containerId);
-            }}
-          />
-          {node.status !== "Online" && (
-            <p className="text-xs text-muted-foreground mt-3">
-              Docker queries are only available when the node is online.
-            </p>
-          )}
-        </section>
-
-        {/* Service Monitoring */}
-        <section className="mb-8">
-          <ServiceMonitoringPanel nodeId={nodeId} nodeStatus={node.status} />
-        </section>
-
-        {/* Remote Tools */}
-        <section className="mb-8">
-          <h2 className="text-lg font-semibold text-foreground mb-4">
-            Remote Tools
-          </h2>
-          <div className="space-y-6">
-            <LogViewerPanel nodeId={nodeId} nodeStatus={node.status} />
-            <ScriptRunnerPanel nodeId={nodeId} nodeStatus={node.status} />
-            <TerminalPanel nodeId={nodeId} nodeStatus={node.status} />
-          </div>
-        </section>
-
-        {/* Commands */}
-        <section className="mb-8">
-          <NodeCommandsPanel nodeId={nodeId} />
-        </section>
-
-        {/* System Actions */}
-        <section>
-          <h2 className="text-lg font-semibold text-foreground mb-4">
-            System Actions
-          </h2>
-
-          {/* Update Settings */}
-          <Card className="mb-4">
-            <CardHeader>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <CardTitle className="text-sm">Update Channel</CardTitle>
-                  <CardDescription>
-                    Controls which agent update track this node follows.
-                  </CardDescription>
-                </div>
-                <div className="min-w-45">
-                  <Select
-                    value={currentChannel}
-                    onValueChange={(value) => {
-                      if (value === null) return;
-                      updateChannelMutation.mutate(value);
-                    }}
-                    disabled={updateChannelMutation.isPending}
-                  >
-                    <SelectTrigger className="h-9">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="stable">stable</SelectItem>
-                      <SelectItem value="beta">beta</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {updateChannelMutation.isError && (
-                <Alert variant="destructive" className="mt-3">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    {updateChannelMutation.error instanceof Error
-                      ? updateChannelMutation.error.message
-                      : "Failed to update channel"}
-                  </AlertDescription>
-                </Alert>
-              )}
-              {updateChannelMutation.isSuccess && (
-                <Alert className="mt-3">
-                  <AlertDescription>Update channel saved.</AlertDescription>
-                </Alert>
-              )}
-            </CardHeader>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm">System Update</CardTitle>
-                  <CardDescription>
-                    Run system package updates on this node. This will update
-                    all installed packages.
-                  </CardDescription>
-                </div>
-                <ConfirmationModal
-                  trigger={
-                    <Button
-                      variant="secondary"
-                      disabled={node.status !== "Online"}
-                    >
-                      Update System
-                    </Button>
-                  }
-                  title="Confirm System Update"
-                  message={`Are you sure you want to run a system update on "${node.hostname}"? This may require a reboot and could cause temporary service interruption.`}
-                  confirmText="Run Update"
-                  isDestructive
-                  isLoading={updateMutation.isPending}
-                  onConfirm={async () => {
-                    await updateMutation.mutateAsync();
-                  }}
+          <div className="pb-10 min-h-[500px]">
+            <TabsContent value="overview" className="mt-0 focus-visible:outline-none">
+                <NodeOverviewTab 
+                    nodeId={nodeId} 
+                    node={node}
+                    onPing={() => pingMutation.mutate()}
+                    isPingPending={pingMutation.isPending}
                 />
-              </div>
-              {node.status !== "Online" && (
-                <p className="text-xs text-muted-foreground mt-3">
-                  ⚠️ System actions are only available when the node is online.
-                </p>
-              )}
-            </CardHeader>
-          </Card>
+            </TabsContent>
+            
+            <TabsContent value="health" className="mt-0 focus-visible:outline-none">
+                <NodeHealthTab nodeId={nodeId} />
+            </TabsContent>
 
-          {/* Ping Agent */}
-          <Card className="mt-4">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <RefreshCw className="h-4 w-4" />
-                    Ping Agent
-                  </CardTitle>
-                  <CardDescription>
-                    Request an immediate connectivity check from the agent.
-                    Resets any heartbeat backoff if successful.
-                  </CardDescription>
-                </div>
-                <Button
-                  variant="secondary"
-                  disabled={node.status !== "Online" || pingMutation.isPending}
-                  onClick={() => pingMutation.mutate()}
-                >
-                  {pingMutation.isPending ? (
-                    <>
-                      <Spinner className="h-4 w-4 mr-2" />
-                      Pinging...
-                    </>
-                  ) : (
-                    "Ping Now"
-                  )}
-                </Button>
-              </div>
-              {pingMutation.isSuccess && (
-                <Alert className="mt-3">
-                  <AlertDescription>Ping request sent successfully.</AlertDescription>
-                </Alert>
-              )}
-              {pingMutation.isError && (
-                <Alert variant="destructive" className="mt-3">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    {pingMutation.error instanceof Error
-                      ? pingMutation.error.message
-                      : "Failed to send ping request"}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardHeader>
-          </Card>
+            <TabsContent value="workloads" className="mt-0 focus-visible:outline-none">
+                <NodeWorkloadsTab nodeId={nodeId} nodeStatus={node.status} />
+            </TabsContent>
 
-          {/* Agent Control - Enable/Disable Task */}
-          <Card className="mt-4">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Power className="h-4 w-4" />
-                    Agent Scheduled Task
-                  </CardTitle>
-                  <CardDescription>
-                    Enable or disable the agent's Windows scheduled task.
-                    Disabling prevents the agent from auto-starting.
-                  </CardDescription>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="secondary"
-                    disabled={node.status !== "Online" || enableTaskMutation.isPending}
-                    onClick={() => enableTaskMutation.mutate()}
-                  >
-                    {enableTaskMutation.isPending ? (
-                      <Spinner className="h-4 w-4" />
-                    ) : (
-                      <>
-                        <Play className="h-4 w-4 mr-1" />
-                        Enable
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={node.status !== "Online" || disableTaskMutation.isPending}
-                    onClick={() => disableTaskMutation.mutate()}
-                  >
-                    {disableTaskMutation.isPending ? (
-                      <Spinner className="h-4 w-4" />
-                    ) : (
-                      <>
-                        <Square className="h-4 w-4 mr-1" />
-                        Disable
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-              {(enableTaskMutation.isSuccess || disableTaskMutation.isSuccess) && (
-                <Alert className="mt-3">
-                  <AlertDescription>Task control command sent successfully.</AlertDescription>
-                </Alert>
-              )}
-              {(enableTaskMutation.isError || disableTaskMutation.isError) && (
-                <Alert variant="destructive" className="mt-3">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>Failed to send task control command.</AlertDescription>
-                </Alert>
-              )}
-            </CardHeader>
-          </Card>
+            <TabsContent value="tools" className="mt-0 focus-visible:outline-none">
+                <NodeToolsTab nodeId={nodeId} nodeStatus={node.status} />
+            </TabsContent>
 
-          {/* Shutdown Agent */}
-          <Card className="mt-4">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Power className="h-4 w-4" />
-                    Shutdown Agent
-                  </CardTitle>
-                  <CardDescription>
-                    Gracefully terminate the agent process. The agent will
-                    restart automatically via its scheduled task.
-                  </CardDescription>
-                </div>
-                <ConfirmationModal
-                  trigger={
-                    <Button
-                      variant="secondary"
-                      disabled={node.status !== "Online"}
-                    >
-                      Shutdown
-                    </Button>
-                  }
-                  title="Shutdown Agent"
-                  message={`Are you sure you want to shutdown the agent on "${node.hostname}"? The agent will terminate and restart via its scheduled task.`}
-                  confirmText="Shutdown"
-                  isDestructive
-                  isLoading={shutdownMutation.isPending}
-                  onConfirm={async () => {
-                    await shutdownMutation.mutateAsync();
-                  }}
-                />
-              </div>
-              {shutdownMutation.isSuccess && (
-                <Alert className="mt-3">
-                  <AlertDescription>Shutdown command sent. Agent will restart shortly.</AlertDescription>
-                </Alert>
-              )}
-              {shutdownMutation.isError && (
-                <Alert variant="destructive" className="mt-3">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    {shutdownMutation.error instanceof Error
-                      ? shutdownMutation.error.message
-                      : "Failed to send shutdown command"}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardHeader>
-          </Card>
-
-          {/* Wake Node (for offline nodes) */}
-          {node.status === "Offline" && (
-            <Card className="mt-4">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Power className="h-4 w-4" />
-                      Wake Node
-                    </CardTitle>
-                    <CardDescription>
-                      Send a Wake-on-LAN magic packet to restart this offline node.
-                      {!node.macAddress && (
-                        <span className="block text-xs text-muted-foreground mt-1">
-                          ⚠️ No MAC address available. The agent must connect at least once to report its MAC address.
-                        </span>
-                      )}
-                    </CardDescription>
-                  </div>
-                  <ConfirmationModal
-                    trigger={
-                      <Button
-                        variant="secondary"
-                        disabled={!node.macAddress || wakeMutation.isPending}
-                      >
-                        {wakeMutation.isPending ? (
-                          <>
-                            <Spinner className="h-4 w-4 mr-2" />
-                            Sending...
-                          </>
-                        ) : (
-                          "Wake"
-                        )}
-                      </Button>
-                    }
-                    title="Wake Node"
-                    message={`Are you sure you want to send a Wake-on-LAN packet to "${node.hostname}"? This will attempt to power on the machine if it supports WoL and is properly configured.`}
-                    confirmText="Wake"
-                    isLoading={wakeMutation.isPending}
-                    onConfirm={async () => {
-                      await wakeMutation.mutateAsync();
-                    }}
-                  />
-                </div>
-                {wakeMutation.isSuccess && (
-                  <Alert className="mt-3">
-                    <AlertDescription>Wake-on-LAN packet sent successfully. The node may take a few minutes to boot.</AlertDescription>
-                  </Alert>
-                )}
-                {wakeMutation.isError && (
-                  <Alert variant="destructive" className="mt-3">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>
-                      {wakeMutation.error instanceof Error
-                        ? wakeMutation.error.message
-                        : "Failed to send Wake-on-LAN packet"}
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </CardHeader>
-            </Card>
-          )}
-          
-          {/* Delete Node */}
-          <Card className="mt-4 border-destructive/50">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                    Delete Node
-                  </CardTitle>
-                  <CardDescription>
-                    Permanently remove this node and all its telemetry data.
-                    This action cannot be undone.
-                  </CardDescription>
-                </div>
-                <ConfirmationModal
-                  trigger={
-                    <Button variant="destructive">
-                      Delete Node
-                    </Button>
-                  }
-                  title="Delete Node"
-                  message={`Are you sure you want to permanently delete "${node.hostname}"? This will remove all telemetry data and command history for this node. This action cannot be undone.`}
-                  details={
-                    <div className="space-y-2">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        What will be removed
-                      </div>
-                      <ul className="list-disc pl-5 text-xs text-muted-foreground">
-                        <li>Node record (hostname, IP, OS, agent version, etc.)</li>
-                        <li>Telemetry snapshots (CPU/RAM/disk/temperature)</li>
-                        <li>Network + ping telemetry history</li>
-                        <li>Service monitoring configuration + service status history</li>
-                        <li>SMART drive history, GPU history, UPS history</li>
-                        <li>Alert rules + alert event history</li>
-                        <li>Command queue/history + outputs</li>
-                        <li>Per-node settings</li>
-                        <li>Script run history</li>
-                        <li>Log viewer policies + terminal session history</li>
-                      </ul>
-
-                      <div className="text-xs text-muted-foreground">
-                        {node.status === "Online"
-                          ? "If the agent is connected, the server will also send an uninstall command to the agent to clean up its service/files on the machine."
-                          : "If the agent happens to be connected, the server will also send an uninstall command to the agent to clean up its service/files on the machine."}
-                      </div>
-                    </div>
-                  }
-                  confirmText="Delete"
-                  isDestructive
-                  isLoading={deleteMutation.isPending}
-                  onConfirm={async () => {
-                    await deleteMutation.mutateAsync();
-                  }}
-                />
-              </div>
-              {deleteMutation.isError && (
-                <Alert variant="destructive" className="mt-3">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Failed to delete node</AlertTitle>
-                  <AlertDescription>
-                    {deleteMutation.error instanceof Error
-                      ? deleteMutation.error.message
-                      : "Unknown error occurred"}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardHeader>
-          </Card>
-        </section>
-      </main>
+            <TabsContent value="settings" className="mt-0 focus-visible:outline-none">
+                <NodeSettingsTab nodeId={nodeId} nodeStatus={node.status} hostname={node.hostname} />
+            </TabsContent>
+          </div>
+        </Tabs>
+      </div>
     </div>
   );
 }

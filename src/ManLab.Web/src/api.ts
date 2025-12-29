@@ -598,6 +598,30 @@ export async function triggerSystemUpdate(nodeId: string): Promise<Command> {
 }
 
 /**
+ * Shuts down the system (the actual machine, not just the agent).
+ * @param nodeId The node to shutdown.
+ * @param delaySeconds Optional delay in seconds before shutdown (default: 0 = immediate).
+ */
+export async function shutdownSystem(
+  nodeId: string,
+  delaySeconds: number = 0
+): Promise<Command> {
+  return createCommand(nodeId, "system.shutdown", { delaySeconds });
+}
+
+/**
+ * Restarts the system (the actual machine, not just the agent).
+ * @param nodeId The node to restart.
+ * @param delaySeconds Optional delay in seconds before restart (default: 0 = immediate).
+ */
+export async function restartSystem(
+  nodeId: string,
+  delaySeconds: number = 0
+): Promise<Command> {
+  return createCommand(nodeId, "system.restart", { delaySeconds });
+}
+
+/**
  * Requests a Docker container list from a node.
  * The server will dispatch this to the agent and store the output in the command log.
  */
