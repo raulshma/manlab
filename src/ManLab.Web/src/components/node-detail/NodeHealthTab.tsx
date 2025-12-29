@@ -6,6 +6,7 @@ import {
   fetchSmartHistory,
   fetchGpuHistory,
   fetchUpsHistory,
+  fetchAgentResourceUsage,
 } from "../../api";
 import { TelemetryChart } from "../TelemetryChart";
 import { NetworkThroughputChart } from "../NetworkThroughputChart";
@@ -13,6 +14,7 @@ import { PingLatencyChart } from "../PingLatencyChart";
 import { SmartDrivePanel } from "../SmartDrivePanel";
 import { GpuStatsPanel } from "../GpuStatsPanel";
 import { UpsStatusPanel } from "../UpsStatusPanel";
+import { AgentResourceUsagePanel } from "../AgentResourceUsagePanel";
 
 interface NodeHealthTabProps {
   nodeId: string;
@@ -61,6 +63,13 @@ export function NodeHealthTab({ nodeId }: NodeHealthTabProps) {
     refetchInterval: 10000,
   });
 
+  // Fetch agent resource usage
+  const { data: agentResourceUsage } = useQuery({
+    queryKey: ["agentResourceUsage", nodeId],
+    queryFn: () => fetchAgentResourceUsage(nodeId, 60),
+    refetchInterval: 10000,
+  });
+
   return (
     <div className="space-y-8 animate-in fade-in zoom-in-95 duration-200">
       {/* Telemetry Charts */}
@@ -100,6 +109,18 @@ export function NodeHealthTab({ nodeId }: NodeHealthTabProps) {
           <PingLatencyChart data={pingTelemetry || []} />
         </div>
       </section>
+
+      {/* Agent Resource Usage */}
+      {agentResourceUsage && agentResourceUsage.length > 0 && (
+        <section>
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            Agent Process
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <AgentResourceUsagePanel data={agentResourceUsage} />
+          </div>
+        </section>
+      )}
 
       {/* Hardware Health */}
       {((smartData && smartData.length > 0) ||

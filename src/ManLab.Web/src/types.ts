@@ -390,6 +390,17 @@ export interface UpsSnapshot {
 }
 
 /**
+ * Agent resource usage telemetry.
+ */
+export interface AgentResourceUsage {
+  timestamp: string;
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  gcHeapBytes: number | null;
+  threadCount: number | null;
+}
+
+/**
  * Enhancements: Log viewer responses
  */
 export interface LogReadResponse {

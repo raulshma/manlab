@@ -21,6 +21,7 @@ import type {
   SmartDriveSnapshot,
   GpuSnapshot,
   UpsSnapshot,
+  AgentResourceUsage,
   OnboardingMachine,
   SshTestResponse,
   StartInstallResponse,
@@ -249,6 +250,23 @@ export async function fetchUpsHistory(
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
     throw new Error(`Failed to fetch UPS history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Fetches agent resource usage history for a node.
+ */
+export async function fetchAgentResourceUsage(
+  nodeId: string,
+  count: number = 120
+): Promise<AgentResourceUsage[]> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/telemetry/agent-resources?count=${count}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch agent resource usage: ${response.statusText}`);
   }
   return response.json();
 }

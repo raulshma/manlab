@@ -44,6 +44,20 @@ public class TelemetryData
 
     /// <summary>Optional UPS telemetry.</summary>
     public UpsTelemetry? Ups { get; set; }
+
+    // --- Agent process resource usage ---
+
+    /// <summary>Agent process CPU usage percentage (0-100, null if unavailable).</summary>
+    public float? AgentCpuPercent { get; set; }
+
+    /// <summary>Agent process memory (working set) in bytes (null if unavailable).</summary>
+    public long? AgentMemoryBytes { get; set; }
+
+    /// <summary>Agent process GC heap size in bytes (null if unavailable).</summary>
+    public long? AgentGcHeapBytes { get; set; }
+
+    /// <summary>Agent process thread count (null if unavailable).</summary>
+    public int? AgentThreadCount { get; set; }
 }
 
 /// <summary>

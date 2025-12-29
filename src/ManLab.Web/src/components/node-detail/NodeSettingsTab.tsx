@@ -1,10 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import {
   fetchNodeSettings,
   upsertNodeSettings,
   triggerSystemUpdate,
   shutdownSystem,
   restartSystem,
+  requestAgentPing,
+  enableAgentTask,
+  disableAgentTask,
+  shutdownAgent,
+  deleteNode,
 } from "../../api";
 import { ConfirmationModal } from "../ConfirmationModal";
 import {
@@ -22,7 +28,7 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Power } from "lucide-react";
+import { AlertCircle, Power, Activity, RefreshCw, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
 
 interface NodeSettingsTabProps {
   nodeId: string;
@@ -71,6 +77,33 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
   const systemRestartMutation = useMutation({
     mutationFn: (delaySeconds: number = 0) =>
       restartSystem(nodeId, delaySeconds),
+  });
+
+  // Agent control mutations
+  const pingMutation = useMutation({
+    mutationFn: () => requestAgentPing(nodeId),
+  });
+
+  const enableAgentMutation = useMutation({
+    mutationFn: () => enableAgentTask(nodeId),
+  });
+
+  const disableAgentMutation = useMutation({
+    mutationFn: () => disableAgentTask(nodeId),
+  });
+
+  const restartAgentMutation = useMutation({
+    mutationFn: () => shutdownAgent(nodeId),
+  });
+
+  const navigate = useNavigate();
+  const deleteNodeMutation = useMutation({
+    mutationFn: () => deleteNode(nodeId),
+    onSuccess: () => {
+      // Navigate back to dashboard after successful deletion
+      queryClient.invalidateQueries({ queryKey: ["nodes"] });
+      navigate("/");
+    },
   });
 
   return (
@@ -232,6 +265,218 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
                   : systemRestartMutation.error instanceof Error
                   ? systemRestartMutation.error.message
                   : "Failed to send power command"}
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardHeader>
+      </Card>
+
+      {/* Agent Management */}
+      <h2 className="text-lg font-semibold text-foreground pt-4">Agent Management</h2>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Activity className="h-4 w-4" />
+                Request Ping
+              </CardTitle>
+              <CardDescription>
+                Send an immediate ping request to verify agent connectivity.
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => pingMutation.mutate()}
+              disabled={nodeStatus !== "Online" || pingMutation.isPending}
+            >
+              {pingMutation.isPending ? "Pinging..." : "Ping Agent"}
+            </Button>
+          </div>
+          {pingMutation.isSuccess && (
+            <Alert className="mt-3">
+              <AlertDescription>Ping request sent successfully.</AlertDescription>
+            </Alert>
+          )}
+          {pingMutation.isError && (
+            <Alert variant="destructive" className="mt-3">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {pingMutation.error instanceof Error
+                  ? pingMutation.error.message
+                  : "Failed to send ping request"}
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <ToggleRight className="h-4 w-4" />
+                Enable/Disable Agent Task
+              </CardTitle>
+              <CardDescription>
+                Control the agent's scheduled task. Disabling prevents automatic startup.
+              </CardDescription>
+            </div>
+            <div className="flex gap-2">
+              <ConfirmationModal
+                trigger={
+                  <Button
+                    variant="outline"
+                    disabled={nodeStatus !== "Online" || enableAgentMutation.isPending}
+                  >
+                    <ToggleRight className="h-4 w-4 mr-2" />
+                    Enable
+                  </Button>
+                }
+                title="Enable Agent Task"
+                message={`Are you sure you want to enable the agent task on "${hostname}"? The agent will start automatically on system boot.`}
+                confirmText="Enable Task"
+                isLoading={enableAgentMutation.isPending}
+                onConfirm={async () => {
+                  await enableAgentMutation.mutateAsync();
+                }}
+              />
+              <ConfirmationModal
+                trigger={
+                  <Button
+                    variant="secondary"
+                    disabled={nodeStatus !== "Online" || disableAgentMutation.isPending}
+                  >
+                    <ToggleLeft className="h-4 w-4 mr-2" />
+                    Disable
+                  </Button>
+                }
+                title="Disable Agent Task"
+                message={`Are you sure you want to disable the agent task on "${hostname}"? The agent will not start automatically on system boot.`}
+                confirmText="Disable Task"
+                isDestructive
+                isLoading={disableAgentMutation.isPending}
+                onConfirm={async () => {
+                  await disableAgentMutation.mutateAsync();
+                }}
+              />
+            </div>
+          </div>
+          {(enableAgentMutation.isSuccess || disableAgentMutation.isSuccess) && (
+            <Alert className="mt-3">
+              <AlertDescription>
+                {enableAgentMutation.isSuccess
+                  ? "Agent task enabled successfully."
+                  : "Agent task disabled successfully."}
+              </AlertDescription>
+            </Alert>
+          )}
+          {(enableAgentMutation.isError || disableAgentMutation.isError) && (
+            <Alert variant="destructive" className="mt-3">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {enableAgentMutation.error instanceof Error
+                  ? enableAgentMutation.error.message
+                  : disableAgentMutation.error instanceof Error
+                  ? disableAgentMutation.error.message
+                  : "Failed to update agent task"}
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <RefreshCw className="h-4 w-4" />
+                Restart Agent
+              </CardTitle>
+              <CardDescription>
+                Gracefully restart the agent to apply updates or configuration changes.
+              </CardDescription>
+            </div>
+            <ConfirmationModal
+              trigger={
+                <Button
+                  variant="secondary"
+                  disabled={nodeStatus !== "Online"}
+                >
+                  Restart Agent
+                </Button>
+              }
+              title="Restart Agent"
+              message={`Are you sure you want to restart the agent on "${hostname}"? The agent will temporarily disconnect and reconnect after restarting.`}
+              confirmText="Restart Now"
+              isLoading={restartAgentMutation.isPending}
+              onConfirm={async () => {
+                await restartAgentMutation.mutateAsync();
+              }}
+            />
+          </div>
+          {restartAgentMutation.isSuccess && (
+            <Alert className="mt-3">
+              <AlertDescription>Restart command sent. Agent will reconnect shortly.</AlertDescription>
+            </Alert>
+          )}
+          {restartAgentMutation.isError && (
+            <Alert variant="destructive" className="mt-3">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {restartAgentMutation.error instanceof Error
+                  ? restartAgentMutation.error.message
+                  : "Failed to restart agent"}
+              </AlertDescription>
+            </Alert>
+          )}
+          {nodeStatus !== "Online" && (
+            <p className="text-xs text-muted-foreground mt-3">
+              ⚠️ Agent management actions are only available when the node is online.
+            </p>
+          )}
+        </CardHeader>
+      </Card>
+
+      {/* Danger Zone */}
+      <h2 className="text-lg font-semibold text-destructive pt-4">Danger Zone</h2>
+      <Card className="border-destructive/50">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm flex items-center gap-2 text-destructive">
+                <Trash2 className="h-4 w-4" />
+                Delete Node
+              </CardTitle>
+              <CardDescription>
+                Permanently remove this node from ManLab. This action cannot be undone.
+              </CardDescription>
+            </div>
+            <ConfirmationModal
+              trigger={
+                <Button variant="destructive">
+                  Delete Node
+                </Button>
+              }
+              title="Delete Node"
+              message={`Are you sure you want to permanently delete "${hostname}"? This will remove all telemetry data, settings, and command history. If the agent is connected, it will be uninstalled. This action cannot be undone.`}
+              confirmText="Delete Permanently"
+              isDestructive
+              isLoading={deleteNodeMutation.isPending}
+              onConfirm={async () => {
+                await deleteNodeMutation.mutateAsync();
+              }}
+            />
+          </div>
+          {deleteNodeMutation.isError && (
+            <Alert variant="destructive" className="mt-3">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {deleteNodeMutation.error instanceof Error
+                  ? deleteNodeMutation.error.message
+                  : "Failed to delete node"}
               </AlertDescription>
             </Alert>
           )}

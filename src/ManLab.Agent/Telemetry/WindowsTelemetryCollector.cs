@@ -62,6 +62,7 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
 
             PopulateNetworkTelemetry(data);
             PopulatePingTelemetry(data);
+            PopulateAgentResourceUsage(data);
 
             // Optional: advanced hardware stats.
             data.Gpus = _gpuCollector.Collect();
@@ -73,6 +74,59 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
         }
 
         return data;
+    }
+
+    // Agent process CPU tracking state
+    private TimeSpan _prevAgentCpuTime;
+    private DateTime _prevAgentSampleAtUtc;
+    private bool _agentCpuInitialized;
+
+    private void PopulateAgentResourceUsage(TelemetryData data)
+    {
+        try
+        {
+            using var currentProcess = System.Diagnostics.Process.GetCurrentProcess();
+
+            // Memory stats (working set)
+            data.AgentMemoryBytes = currentProcess.WorkingSet64;
+
+            // GC heap size
+            data.AgentGcHeapBytes = GC.GetTotalMemory(forceFullCollection: false);
+
+            // Thread count
+            data.AgentThreadCount = currentProcess.Threads.Count;
+
+            // CPU usage (delta-based calculation)
+            var now = DateTime.UtcNow;
+            var cpuTime = currentProcess.TotalProcessorTime;
+
+            if (!_agentCpuInitialized)
+            {
+                _prevAgentCpuTime = cpuTime;
+                _prevAgentSampleAtUtc = now;
+                _agentCpuInitialized = true;
+                return;
+            }
+
+            var elapsed = now - _prevAgentSampleAtUtc;
+            if (elapsed.TotalSeconds < 0.5)
+            {
+                return;
+            }
+
+            var cpuDelta = cpuTime - _prevAgentCpuTime;
+            var cpuPercent = (float)(cpuDelta.TotalMilliseconds / elapsed.TotalMilliseconds / Environment.ProcessorCount * 100);
+
+            // Clamp to valid range
+            data.AgentCpuPercent = Math.Clamp(cpuPercent, 0f, 100f);
+
+            _prevAgentCpuTime = cpuTime;
+            _prevAgentSampleAtUtc = now;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to collect agent resource usage");
+        }
     }
 
     private void PopulateNetworkTelemetry(TelemetryData data)

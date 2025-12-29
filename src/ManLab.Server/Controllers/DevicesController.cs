@@ -338,6 +338,40 @@ public class DevicesController : ControllerBase
     }
 
     /// <summary>
+    /// Gets agent resource usage history for a specific node.
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/agent-resources")]
+    [ResponseCache(Duration = 5, VaryByQueryKeys = ["count"])]
+    public async Task<ActionResult<IEnumerable<AgentResourceUsageDto>>> GetAgentResourceUsage(Guid id, [FromQuery] int count = 120)
+    {
+        if (count <= 0) count = 120;
+        count = Math.Min(count, 2_000);
+
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var items = await _dbContext.TelemetrySnapshots
+            .AsNoTracking()
+            .Where(t => t.NodeId == id && t.AgentCpuPercent != null)
+            .OrderByDescending(t => t.Timestamp)
+            .Take(count)
+            .Select(t => new AgentResourceUsageDto
+            {
+                Timestamp = t.Timestamp,
+                CpuPercent = t.AgentCpuPercent,
+                MemoryBytes = t.AgentMemoryBytes,
+                GcHeapBytes = t.AgentGcHeapBytes,
+                ThreadCount = t.AgentThreadCount
+            })
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
+    /// <summary>
     /// Gets command history for a specific node.
     /// </summary>
     /// <param name="id">The node ID.</param>
@@ -822,4 +856,16 @@ public record UpsertNodeSettingRequest
     public string? Value { get; init; }
     public string? Category { get; init; }
     public string? Description { get; init; }
+}
+
+/// <summary>
+/// DTO for agent resource usage returned by the API.
+/// </summary>
+public record AgentResourceUsageDto
+{
+    public DateTime Timestamp { get; init; }
+    public float? CpuPercent { get; init; }
+    public long? MemoryBytes { get; init; }
+    public long? GcHeapBytes { get; init; }
+    public int? ThreadCount { get; init; }
 }

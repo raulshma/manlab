@@ -47,6 +47,20 @@ public class TelemetrySnapshot
     /// <summary>Ping packet loss percentage (0-100, nullable if unavailable).</summary>
     public float? PingPacketLossPercent { get; set; }
 
+    // --- Agent process resource usage ---
+
+    /// <summary>Agent process CPU usage percentage (0-100, nullable if unavailable).</summary>
+    public float? AgentCpuPercent { get; set; }
+
+    /// <summary>Agent process memory (working set) in bytes (nullable if unavailable).</summary>
+    public long? AgentMemoryBytes { get; set; }
+
+    /// <summary>Agent process GC heap size in bytes (nullable if unavailable).</summary>
+    public long? AgentGcHeapBytes { get; set; }
+
+    /// <summary>Agent process thread count (nullable if unavailable).</summary>
+    public int? AgentThreadCount { get; set; }
+
     // Navigation property
     [ForeignKey(nameof(NodeId))]
     public Node Node { get; set; } = null!;

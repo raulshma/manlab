@@ -267,7 +267,13 @@ public class AgentHub : Hub
             NetTxBytesPerSec = data.NetTxBytesPerSec,
             PingTarget = NormalizeTrimmedOrNull(data.PingTarget, MaxPingTargetChars),
             PingRttMs = data.PingRttMs,
-            PingPacketLossPercent = data.PingPacketLossPercent
+            PingPacketLossPercent = data.PingPacketLossPercent,
+
+            // Agent process resource usage
+            AgentCpuPercent = data.AgentCpuPercent,
+            AgentMemoryBytes = data.AgentMemoryBytes,
+            AgentGcHeapBytes = data.AgentGcHeapBytes,
+            AgentThreadCount = data.AgentThreadCount
         };
 
         // Optional: persist GPU snapshots when provided in heartbeat.
