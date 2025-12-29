@@ -27,6 +27,7 @@ import { NodeSettingsTab } from "./node-detail/NodeSettingsTab";
 interface NodeDetailViewProps {
   nodeId: string;
   onBack: () => void;
+  showBackButton?: boolean;
 }
 
 /**
@@ -71,14 +72,16 @@ function formatRelativeTime(dateString: string): string {
 }
 
 // Minimal Header Component
-function NodeDetailHeader({ node, onBack }: { node: Node; onBack: () => void }) {
+function NodeDetailHeader({ node, onBack, showBackButton = true }: { node: Node; onBack: () => void; showBackButton?: boolean }) {
     const statusVariant = getStatusVariant(node.status);
 
     return (
         <div className="flex items-center gap-4 py-6">
-            <Button variant="ghost" size="icon" onClick={onBack} className="-ml-2">
-                <ArrowLeft className="w-5 h-5" />
-            </Button>
+            {showBackButton && (
+                <Button variant="ghost" size="icon" onClick={onBack} className="-ml-2">
+                    <ArrowLeft className="w-5 h-5" />
+                </Button>
+            )}
             <div>
                 <div className="flex items-center gap-3">
                     <h1 className="text-2xl font-bold tracking-tight">{node.hostname}</h1>
@@ -115,7 +118,7 @@ function NodeDetailHeader({ node, onBack }: { node: Node; onBack: () => void }) 
 }
 
 
-export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
+export function NodeDetailView({ nodeId, onBack, showBackButton = true }: NodeDetailViewProps) {
   // Fetch node details
   const {
     data: node,
@@ -160,7 +163,7 @@ export function NodeDetailView({ nodeId, onBack }: NodeDetailViewProps) {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <div className="max-w-7xl mx-auto w-full px-6 flex-1 flex flex-col">
         {/* Minimal Header */}
-        <NodeDetailHeader node={node} onBack={onBack} />
+        <NodeDetailHeader node={node} onBack={onBack} showBackButton={showBackButton} />
 
         {/* Tabs Interface */}
         <Tabs defaultValue="overview" className="flex-1 flex flex-col space-y-6">

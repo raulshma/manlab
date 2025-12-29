@@ -1,21 +1,32 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  SidebarProvider,
+  Sidebar,
+  SidebarHeader,
+  SidebarContent,
+  SidebarFooter,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarMenuSkeleton,
+  SidebarInput,
+  SidebarInset,
+  SidebarGroup,
+  SidebarGroupContent,
+} from "@/components/ui/sidebar";
+import {
+  Empty,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+} from "@/components/ui/empty";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Server } from "lucide-react";
+import { AlertCircle, Server, Globe, ChevronRight } from "lucide-react";
 import { MachineOnboardingModal } from "@/components/MachineOnboardingModal";
-import { NodeCard } from "@/components/NodeCard";
+import { NodeDetailView } from "@/components/NodeDetailView";
 import { fetchNodes } from "@/api";
 import type { Node, NodeStatus } from "@/types";
 
@@ -26,10 +37,25 @@ function StatusPill({ status }: { status: NodeStatus | "All" }) {
   return <Badge variant="secondary">Maintenance</Badge>;
 }
 
+function formatRelativeTime(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSeconds < 60) return "Just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${diffDays}d ago`;
+}
+
 export function NodesPage() {
-  const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<NodeStatus | "All">("All");
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const {
     data: nodes,
@@ -59,123 +85,184 @@ export function NodesPage() {
       });
   }, [nodes, query, status]);
 
-  return (
-    <Card>
-      <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div className="min-w-0">
-          <CardTitle>Nodes</CardTitle>
-          <CardDescription>
-            Browse and manage registered devices
-          </CardDescription>
-        </div>
+  // Auto-select first node if none is selected
+  const effectiveSelectedId =
+    selectedNodeId && filtered.find((n) => n.id === selectedNodeId)
+      ? selectedNodeId
+      : filtered.length > 0
+      ? filtered[0].id
+      : null;
 
-        <div className="flex items-center gap-2">
-          <MachineOnboardingModal trigger={<Button>Onboard machine</Button>} />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <Input
+  return (
+    <SidebarProvider
+      defaultOpen={true}
+      style={
+        {
+          "--sidebar-width": "320px",
+        } as React.CSSProperties
+      }
+    >
+      <Sidebar collapsible="none" className="border-r">
+        {/* Sidebar Header with title, onboarding, filter */}
+        <SidebarHeader>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Nodes</h2>
+            <MachineOnboardingModal
+              trigger={<Button size="sm">Onboard</Button>}
+            />
+          </div>
+
+          <SidebarInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search hostname, IP, OS…"
+            placeholder="Search nodes…"
           />
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant={status === "All" ? "secondary" : "ghost"}
-              onClick={() => setStatus("All")}
-            >
-              <StatusPill status="All" />
-            </Button>
-            <Button
-              size="sm"
-              variant={status === "Online" ? "secondary" : "ghost"}
-              onClick={() => setStatus("Online")}
-            >
-              <StatusPill status="Online" />
-            </Button>
-            <Button
-              size="sm"
-              variant={status === "Offline" ? "secondary" : "ghost"}
-              onClick={() => setStatus("Offline")}
-            >
-              <StatusPill status="Offline" />
-            </Button>
-            <Button
-              size="sm"
-              variant={status === "Maintenance" ? "secondary" : "ghost"}
-              onClick={() => setStatus("Maintenance")}
-            >
-              <StatusPill status="Maintenance" />
-            </Button>
-          </div>
-        </div>
-
-        {isLoading && (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {[...Array(6)].map((_, i) => (
-              <Card key={i}>
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <Skeleton className="w-2.5 h-2.5 rounded-full" />
-                    <Skeleton className="h-5 w-32" />
-                  </div>
-                  <div className="space-y-2">
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="h-4 w-36" />
-                  </div>
-                </CardContent>
-              </Card>
+          <div className="flex flex-wrap items-center gap-1">
+            {(["All", "Online", "Offline", "Maintenance"] as const).map((s) => (
+              <Button
+                key={s}
+                size="sm"
+                variant={status === s ? "secondary" : "ghost"}
+                onClick={() => setStatus(s)}
+                className="h-6 px-2 text-xs"
+              >
+                <StatusPill status={s} />
+              </Button>
             ))}
           </div>
-        )}
+        </SidebarHeader>
 
-        {isError && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Failed to load nodes</AlertTitle>
-            <AlertDescription>
-              {error instanceof Error
-                ? error.message
-                : "Unknown error occurred"}
-            </AlertDescription>
-          </Alert>
-        )}
+        {/* Sidebar Content - Node List */}
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {/* Loading Skeletons */}
+                {isLoading &&
+                  [...Array(5)].map((_, i) => (
+                    <SidebarMenuItem key={i}>
+                      <SidebarMenuSkeleton showIcon />
+                    </SidebarMenuItem>
+                  ))}
 
-        {!isLoading && !isError && filtered.length === 0 && (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
-                <Server className="w-8 h-8 text-muted-foreground" />
-              </div>
-              <h3 className="text-foreground font-medium mb-1">
-                No nodes found
-              </h3>
-              <p className="text-muted-foreground text-sm">
-                Try adjusting your search or filters
-              </p>
-            </CardContent>
-          </Card>
-        )}
+                {/* Error State */}
+                {isError && (
+                  <Alert variant="destructive" className="mx-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Error</AlertTitle>
+                    <AlertDescription>
+                      {error instanceof Error
+                        ? error.message
+                        : "Failed to load nodes"}
+                    </AlertDescription>
+                  </Alert>
+                )}
 
-        {!isLoading && !isError && filtered.length > 0 && (
-          <div
-            role="list"
-            aria-label="Device nodes"
-            className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
-          >
-            {filtered.map((node: Node) => (
-              <NodeCard
-                key={node.id}
-                node={node}
-                onClick={() => navigate(`/nodes/${node.id}`)}
-              />
-            ))}
-          </div>
+                {/* Empty State */}
+                {!isLoading && !isError && filtered.length === 0 && (
+                  <Empty className="py-8 border-0">
+                    <EmptyMedia variant="icon">
+                      <Server />
+                    </EmptyMedia>
+                    <EmptyTitle>No nodes found</EmptyTitle>
+                    <EmptyDescription>
+                      Try adjusting your search or filters
+                    </EmptyDescription>
+                  </Empty>
+                )}
+
+                {/* Node List */}
+                {!isLoading &&
+                  !isError &&
+                  filtered.map((node: Node) => {
+                    const isSelected = node.id === effectiveSelectedId;
+                    const statusColor =
+                      node.status === "Online"
+                        ? "bg-green-500"
+                        : node.status === "Offline"
+                        ? "bg-red-500"
+                        : node.status === "Maintenance"
+                        ? "bg-yellow-500"
+                        : "bg-muted";
+
+                    return (
+                      <SidebarMenuItem key={node.id}>
+                        <SidebarMenuButton
+                          isActive={isSelected}
+                          onClick={() => setSelectedNodeId(node.id)}
+                          className="h-auto py-2"
+                        >
+                          <div
+                            className={`w-2 h-2 rounded-full flex-shrink-0 ${statusColor} ${
+                              node.status === "Online"
+                                ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]"
+                                : ""
+                            }`}
+                          />
+                          <div className="flex-1 min-w-0 flex flex-col items-start">
+                            <span className="font-medium text-sm truncate w-full">
+                              {node.hostname}
+                            </span>
+                            {node.ipAddress && (
+                              <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                                <Globe className="w-3 h-3" />
+                                {node.ipAddress}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatRelativeTime(node.lastSeen)}
+                            </span>
+                            <ChevronRight
+                              className={`w-4 h-4 transition-colors ${
+                                isSelected
+                                  ? "text-primary"
+                                  : "text-muted-foreground/50"
+                              }`}
+                            />
+                          </div>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+
+        {/* Sidebar Footer - Node Count */}
+        {!isLoading && !isError && (
+          <SidebarFooter>
+            <div className="text-xs text-muted-foreground text-center border-t pt-2">
+              {filtered.length} of {nodes?.length ?? 0} nodes
+            </div>
+          </SidebarFooter>
         )}
-      </CardContent>
-    </Card>
+      </Sidebar>
+
+      {/* Main Content - Node Details */}
+      <SidebarInset>
+        {effectiveSelectedId ? (
+          <NodeDetailView
+            nodeId={effectiveSelectedId}
+            onBack={() => setSelectedNodeId(null)}
+            showBackButton={false}
+          />
+        ) : (
+          <Empty className="h-full border-0">
+            <EmptyMedia variant="icon">
+              <Server />
+            </EmptyMedia>
+            <EmptyTitle>Select a Node</EmptyTitle>
+            <EmptyDescription>
+              Choose a node from the sidebar to view its details, health, and
+              workloads.
+            </EmptyDescription>
+          </Empty>
+        )}
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
