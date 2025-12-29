@@ -125,27 +125,112 @@ public class UpdateExecutor
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
             var distro = GetLinuxDistro();
+            var sudoPrefix = IsRunningAsRoot() ? "" : "sudo ";
             
             return distro.ToLowerInvariant() switch
             {
                 "debian" or "ubuntu" or "linuxmint" or "pop" => 
-                    ("/bin/bash", "-c \"sudo apt-get update && sudo apt-get upgrade -y\""),
+                    ("/bin/bash", $"-c \"{sudoPrefix}apt-get update && {sudoPrefix}apt-get upgrade -y\""),
                 "fedora" or "rhel" or "centos" or "rocky" or "almalinux" => 
-                    ("/bin/bash", "-c \"sudo dnf upgrade -y\""),
+                    ("/bin/bash", $"-c \"{sudoPrefix}dnf upgrade -y\""),
                 "arch" or "manjaro" => 
-                    ("/bin/bash", "-c \"sudo pacman -Syu --noconfirm\""),
+                    ("/bin/bash", $"-c \"{sudoPrefix}pacman -Syu --noconfirm\""),
                 "opensuse" or "sles" => 
-                    ("/bin/bash", "-c \"sudo zypper update -y\""),
-                _ => ("/bin/bash", "-c \"sudo apt-get update && sudo apt-get upgrade -y\"") // Default to apt
+                    ("/bin/bash", $"-c \"{sudoPrefix}zypper update -y\""),
+                _ => ("/bin/bash", $"-c \"{sudoPrefix}apt-get update && {sudoPrefix}apt-get upgrade -y\"") // Default to apt
             };
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
+            // brew typically should NOT run as root, so we don't add sudo here
             return ("/bin/bash", "-c \"brew update && brew upgrade\"");
         }
 
         return (string.Empty, string.Empty);
+    }
+
+    /// <summary>
+    /// Checks if the current process is running as root (UID 0) on Unix systems.
+    /// </summary>
+    private static bool IsRunningAsRoot()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return false; // Windows doesn't use UID concept
+        }
+
+        try
+        {
+            // On Unix systems, UID 0 is root
+            var uid = GetEffectiveUserId();
+            return uid == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Gets the effective user ID on Unix systems using /proc/self/status or id command.
+    /// </summary>
+    private static int GetEffectiveUserId()
+    {
+        // Try reading from /proc/self/status first (Linux)
+        try
+        {
+            if (File.Exists("/proc/self/status"))
+            {
+                var lines = File.ReadAllLines("/proc/self/status");
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith("Uid:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Format: Uid: <real> <effective> <saved> <filesystem>
+                        var parts = line.Split('\t', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 2 && int.TryParse(parts[1], out var euid))
+                        {
+                            return euid;
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fall through to alternative method
+        }
+
+        // Fallback: run 'id -u' command
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "/usr/bin/id",
+                    Arguments = "-u",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            process.Start();
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit();
+            
+            if (int.TryParse(output, out var uid))
+            {
+                return uid;
+            }
+        }
+        catch
+        {
+            // Ignore
+        }
+
+        return -1; // Unknown
     }
 
     private static string GetLinuxDistro()

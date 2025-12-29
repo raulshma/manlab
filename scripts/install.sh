@@ -808,7 +808,7 @@ $UNIT_USER_DIRECTIVE
 EnvironmentFile=$ENV_FILE
 
 # Hardening (best-effort; may vary by distro)
-NoNewPrivileges=true
+# Note: NoNewPrivileges is intentionally NOT set to allow sudo for system updates
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
