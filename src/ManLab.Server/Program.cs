@@ -86,6 +86,7 @@ builder.Services.AddScoped<ManLab.Server.Services.Ssh.SshAuditService>();
 builder.Services.AddSingleton<ManLab.Server.Services.Ssh.SshRateLimitService>();
 builder.Services.AddSingleton<OnboardingJobRunner>();
 builder.Services.AddSingleton<LocalAgentInstallationService>();
+builder.Services.AddScoped<ManLab.Server.Services.CredentialEncryptionService>();
 
 builder.Services.AddHttpClient();
 builder.Services.AddOptions<DiscordOptions>()

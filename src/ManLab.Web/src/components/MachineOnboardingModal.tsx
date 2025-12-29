@@ -9,6 +9,9 @@ import {
   testSshConnection,
   uninstallAgent,
   deleteOnboardingMachine,
+  saveMachineCredentials,
+  clearMachineCredentials,
+  updateMachineConfiguration,
 } from "../api";
 import type {
   OnboardingMachine,
@@ -16,6 +19,8 @@ import type {
   SshAuthMode,
   SshTestResponse,
   UninstallPreviewResponse,
+  SaveCredentialsRequest,
+  UpdateConfigurationRequest,
 } from "../types";
 import { useSignalR } from "../SignalRContext";
 import { ConfirmationModal } from "./ConfirmationModal";
@@ -26,7 +31,6 @@ import {
   DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,10 +44,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { AlertCircle, Terminal, Trash2 } from "lucide-react";
+import { Terminal, Trash2, ChevronDown, Plus, X, Settings2, Key } from "lucide-react";
 
 const EMPTY_MACHINES: OnboardingMachine[] = [];
 
@@ -90,7 +99,8 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const [password, setPassword] = useState("");
   const [privateKeyPem, setPrivateKeyPem] = useState("");
   const [privateKeyPassphrase, setPrivateKeyPassphrase] = useState("");
-  const [trustHostKey, setTrustHostKey] = useState(false);
+  const [trustHostKey, setTrustHostKey] = useState(true);
+  const [rememberCredentials, setRememberCredentials] = useState(false);
   const [lastTest, setLastTest] = useState<SshTestResponse | null>(null);
   // Use a ref to track if user has manually edited the server base URL
   const serverBaseUrlDirtyRef = useRef(false);
@@ -101,6 +111,29 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const [runAsRoot, setRunAsRoot] = useState(false);
   const [sudoPassword, setSudoPassword] = useState("");
 
+  // Track configuration changes to auto-save them
+  const prevTrustHostKey = useRef(trustHostKey);
+  const prevForceInstall = useRef(forceInstall);
+  const prevRunAsRoot = useRef(runAsRoot);
+  const prevServerBaseUrlOverride = useRef(serverBaseUrlOverride);
+
+  // Update refs when values change
+  useEffect(() => {
+    prevTrustHostKey.current = trustHostKey;
+  }, [trustHostKey]);
+
+  useEffect(() => {
+    prevForceInstall.current = forceInstall;
+  }, [forceInstall]);
+
+  useEffect(() => {
+    prevRunAsRoot.current = runAsRoot;
+  }, [runAsRoot]);
+
+  useEffect(() => {
+    prevServerBaseUrlOverride.current = serverBaseUrlOverride;
+  }, [serverBaseUrlOverride]);
+
   const [logs, setLogs] = useState<Array<{ ts: string; msg: string }>>([]);
 
   const [remoteUninstallPreview, setRemoteUninstallPreview] = useState<UninstallPreviewResponse | null>(null);
@@ -110,13 +143,25 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       if (!selected) throw new Error("No machine selected");
       if (!lastTest?.success) throw new Error("Test connection first");
 
+      const useSavedAuth =
+        selected.hasSavedCredentials === true &&
+        (selected.authMode === "Password"
+          ? (!password || password === "•••••")
+          : (!privateKeyPem || privateKeyPem === "•••••"));
+
+      const useSavedSudo =
+        selected.hasSavedSudoPassword === true &&
+        (!sudoPassword || sudoPassword === "•••••");
+
+      const useSavedCredentials = useSavedAuth || useSavedSudo;
       return fetchUninstallPreview(selected.id, {
         serverBaseUrl,
         trustHostKey,
-        password: password || undefined,
-        privateKeyPem: privateKeyPem || undefined,
-        privateKeyPassphrase: privateKeyPassphrase || undefined,
-        sudoPassword: sudoPassword || undefined,
+        password: useSavedAuth ? undefined : (password || undefined),
+        privateKeyPem: useSavedAuth ? undefined : (privateKeyPem || undefined),
+        privateKeyPassphrase: useSavedAuth ? undefined : (privateKeyPassphrase || undefined),
+        sudoPassword: useSavedSudo ? undefined : (sudoPassword || undefined),
+        useSavedCredentials,
       });
     },
     onSuccess: (data) => {
@@ -383,19 +428,56 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   };
 
   const selectMachine = (id: string) => {
+    const machine = machines.find((m) => m.id === id);
     setSelectedId(id);
     setLogs([]);
     setLastTest(null);
-    setTrustHostKey(false);
     setCredErrors({});
-    setSudoPassword("");
+
+    if (!machine) return;
+
+    // Reset credentials state - they'll be loaded from saved if available
+    setPassword(machine.hasSavedCredentials ? "•••••" : "");
+    setPrivateKeyPem(machine.hasSavedCredentials ? "•••••" : "");
+    setPrivateKeyPassphrase("");
+    // Show masked sudo password if saved, otherwise empty
+    setSudoPassword(machine.hasSavedSudoPassword ? "•••••" : "");
+    setRememberCredentials(false);
+
+    // Load saved configuration preferences
+    // Default Trust Host Key to true for a better first-run experience.
+    setTrustHostKey(machine.trustHostKey ?? true);
+    setForceInstall(machine.forceInstall ?? true);
+    // If sudo password is saved, ensure runAsRoot is also checked
+    const runAsRootValue = machine.hasSavedSudoPassword ? true : (machine.runAsRoot ?? false);
+    setRunAsRoot(runAsRootValue);
+
+    // Load saved serverBaseUrl override
+    if (machine.serverBaseUrlOverride) {
+      setServerBaseUrlOverride(machine.serverBaseUrlOverride);
+      serverBaseUrlDirtyRef.current = true;
+    } else {
+      setServerBaseUrlOverride(null);
+      serverBaseUrlDirtyRef.current = false;
+    }
   };
+
+  // Hydrate the form for the implicitly selected first machine.
+  // Without this, `selected` can be machines[0] while the input state remains blank until a click,
+  // leading to "Missing SSH credentials" even though credentials are saved.
+  useEffect(() => {
+    if (selectedId) return;
+    if (machines.length === 0) return;
+    selectMachine(machines[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machines, selectedId]);
 
   // Auto-scroll logs
   const logsEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
+
 
   const createMachineMutation = useMutation({
     mutationFn: createOnboardingMachine,
@@ -419,12 +501,25 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const testMutation = useMutation({
     mutationFn: async () => {
       if (!selected) throw new Error("No machine selected");
+
+      const useSavedAuth =
+        selected.hasSavedCredentials === true &&
+        (selected.authMode === "Password"
+          ? (!password || password === "•••••")
+          : (!privateKeyPem || privateKeyPem === "•••••"));
+
+      const useSavedSudo =
+        selected.hasSavedSudoPassword === true &&
+        (!sudoPassword || sudoPassword === "•••••");
+
+      const useSavedCredentials = useSavedAuth || useSavedSudo;
       return testSshConnection(selected.id, {
-        password: password || undefined,
-        privateKeyPem: privateKeyPem || undefined,
-        privateKeyPassphrase: privateKeyPassphrase || undefined,
-        sudoPassword: sudoPassword || undefined,
+        password: useSavedAuth ? undefined : (password || undefined),
+        privateKeyPem: useSavedAuth ? undefined : (privateKeyPem || undefined),
+        privateKeyPassphrase: useSavedAuth ? undefined : (privateKeyPassphrase || undefined),
+        sudoPassword: useSavedSudo ? undefined : (sudoPassword || undefined),
         trustHostKey,
+        useSavedCredentials,
       });
     },
     onSuccess: async (res) => {
@@ -448,15 +543,28 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const installMutation = useMutation({
     mutationFn: async () => {
       if (!selected) throw new Error("No machine selected");
+
+      const useSavedAuth =
+        selected.hasSavedCredentials === true &&
+        (selected.authMode === "Password"
+          ? (!password || password === "•••••")
+          : (!privateKeyPem || privateKeyPem === "•••••"));
+
+      const useSavedSudo =
+        selected.hasSavedSudoPassword === true &&
+        (!sudoPassword || sudoPassword === "•••••");
+
+      const useSavedCredentials = useSavedAuth || useSavedSudo;
       return installAgent(selected.id, {
         serverBaseUrl: effectiveServerBaseUrl,
         force: forceInstall,
         runAsRoot,
         trustHostKey,
-        password: password || undefined,
-        privateKeyPem: privateKeyPem || undefined,
-        privateKeyPassphrase: privateKeyPassphrase || undefined,
-        sudoPassword: sudoPassword || undefined,
+        password: useSavedAuth ? undefined : (password || undefined),
+        privateKeyPem: useSavedAuth ? undefined : (privateKeyPem || undefined),
+        privateKeyPassphrase: useSavedAuth ? undefined : (privateKeyPassphrase || undefined),
+        sudoPassword: useSavedSudo ? undefined : (sudoPassword || undefined),
+        useSavedCredentials,
       });
     },
     onSuccess: async () => {
@@ -475,13 +583,26 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const uninstallMutation = useMutation({
     mutationFn: async () => {
       if (!selected) throw new Error("No machine selected");
+
+      const useSavedAuth =
+        selected.hasSavedCredentials === true &&
+        (selected.authMode === "Password"
+          ? (!password || password === "•••••")
+          : (!privateKeyPem || privateKeyPem === "•••••"));
+
+      const useSavedSudo =
+        selected.hasSavedSudoPassword === true &&
+        (!sudoPassword || sudoPassword === "•••••");
+
+      const useSavedCredentials = useSavedAuth || useSavedSudo;
       return uninstallAgent(selected.id, {
         serverBaseUrl: effectiveServerBaseUrl,
         trustHostKey,
-        password: password || undefined,
-        privateKeyPem: privateKeyPem || undefined,
-        privateKeyPassphrase: privateKeyPassphrase || undefined,
-        sudoPassword: sudoPassword || undefined,
+        password: useSavedAuth ? undefined : (password || undefined),
+        privateKeyPem: useSavedAuth ? undefined : (privateKeyPem || undefined),
+        privateKeyPassphrase: useSavedAuth ? undefined : (privateKeyPassphrase || undefined),
+        sudoPassword: useSavedSudo ? undefined : (sudoPassword || undefined),
+        useSavedCredentials,
       });
     },
     onSuccess: async () => {
@@ -510,12 +631,106 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     },
   });
 
+  // Mutation to save credentials
+  const saveCredentialsMutation = useMutation({
+    mutationFn: async (input: SaveCredentialsRequest) => {
+      if (!selected) throw new Error("No machine selected");
+      return saveMachineCredentials(selected.id, input);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["onboardingMachines"] });
+
+      // Reflect saved state in the UI (without requiring a re-select).
+      if (selected?.authMode === "Password") {
+        setPassword("•••••");
+      } else {
+        setPrivateKeyPem("•••••");
+      }
+
+      if (sudoPassword) {
+        setSudoPassword("•••••");
+        setRunAsRoot(true);
+      }
+
+      toast.success("Credentials saved");
+    },
+    onError: (err) => {
+      toast.error("Failed to save credentials", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    },
+  });
+
+  // Mutation to clear credentials
+  const clearCredentialsMutation = useMutation({
+    mutationFn: async () => {
+      if (!selected) throw new Error("No machine selected");
+      return clearMachineCredentials(selected.id);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["onboardingMachines"] });
+      setRememberCredentials(false);
+
+      // Clear local input state as well.
+      setPassword("");
+      setPrivateKeyPem("");
+      setPrivateKeyPassphrase("");
+      setSudoPassword("");
+
+      toast.success("Credentials cleared");
+    },
+    onError: (err) => {
+      toast.error("Failed to clear credentials", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    },
+  });
+
+  // Mutation to update configuration
+  const updateConfigurationMutation = useMutation({
+    mutationFn: async (input: UpdateConfigurationRequest) => {
+      if (!selected) throw new Error("No machine selected");
+      return updateMachineConfiguration(selected.id, input);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["onboardingMachines"] });
+      // Silent auto-save - no toast to avoid noise
+    },
+    onError: (err) => {
+      toast.error("Failed to update configuration", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    },
+  });
+
+  // Auto-save configuration when settings change
+  useEffect(() => {
+    if (!selected) return;
+
+    const hasTrustHostKeyChanged = prevTrustHostKey.current !== trustHostKey;
+    const hasForceInstallChanged = prevForceInstall.current !== forceInstall;
+    const hasRunAsRootChanged = prevRunAsRoot.current !== runAsRoot;
+    const hasServerBaseUrlOverrideChanged = prevServerBaseUrlOverride.current !== serverBaseUrlOverride;
+
+    if (hasTrustHostKeyChanged || hasForceInstallChanged || hasRunAsRootChanged || hasServerBaseUrlOverrideChanged) {
+      updateConfigurationMutation.mutate({
+        trustHostKey: hasTrustHostKeyChanged ? trustHostKey : undefined,
+        forceInstall: hasForceInstallChanged ? forceInstall : undefined,
+        runAsRoot: hasRunAsRootChanged ? runAsRoot : undefined,
+        serverBaseUrlOverride: hasServerBaseUrlOverrideChanged ? serverBaseUrlOverride : undefined,
+      });
+    }
+  }, [trustHostKey, forceInstall, runAsRoot, serverBaseUrlOverride, selected, updateConfigurationMutation]);
+
   const isBusy =
     createMachineMutation.isPending ||
     deleteMachineMutation.isPending ||
     testMutation.isPending ||
     installMutation.isPending ||
-    uninstallMutation.isPending;
+    uninstallMutation.isPending ||
+    saveCredentialsMutation.isPending ||
+    clearCredentialsMutation.isPending ||
+    updateConfigurationMutation.isPending;
 
   // Form Validation State for "Add Machine"
   const [addMachineErrors, setAddMachineErrors] = useState<{
@@ -541,213 +756,177 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const validateCredentials = () => {
     if (!selected) return false;
     const errors: { password?: string; privateKey?: string } = {};
-    if (selected.authMode === "Password" && !password) {
-      errors.password = "Password is required";
+    
+    // If credentials are saved, we can use them (represented by "•••••" in the field)
+    // Otherwise, require actual input
+    if (selected.authMode === "Password") {
+      // "•••••" indicates saved credentials, or require actual password input
+      if (!password && !selected.hasSavedCredentials) {
+        errors.password = "Password is required";
+      }
     }
-    if (selected.authMode === "PrivateKey" && !privateKeyPem) {
-      errors.privateKey = "Private key is required";
+    if (selected.authMode === "PrivateKey") {
+      // "•••••" indicates saved credentials, or require actual key input
+      if (!privateKeyPem && !selected.hasSavedCredentials) {
+        errors.privateKey = "Private key is required";
+      }
     }
     setCredErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
+  // State for collapsible sections
+  const [addFormOpen, setAddFormOpen] = useState(machines.length === 0);
+
   return (
     <Dialog>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent
-        className="w-[95vw] sm:max-w-[95vw] h-[95vh] p-0 gap-0 overflow-hidden flex flex-col md:flex-row"
+        className="w-[95vw] sm:max-w-[80vw] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col md:flex-row"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">Machine Onboarding</DialogTitle>
-        {/* Left Sidebar: Add Machine & Inventory */}
-        <div className="w-full md:w-80 shrink-0 flex flex-col border-r bg-muted/10">
-          <div className="p-4 border-b flex items-center justify-between bg-background">
-            <h2 className="font-semibold text-sm tracking-tight">Machines</h2>
-            <DialogClose asChild>
-              <Button variant="ghost" size="icon" className="md:hidden h-8 w-8">
-                <span className="sr-only">Close</span>✕
-              </Button>
-            </DialogClose>
-          </div>
-
-          <div className="p-4 border-b space-y-3 bg-background/50">
-            <div className="flex items-center justify-between">
-              <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
-                New Connection
-              </Label>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="col-span-2">
-                <Input
-                  value={host}
-                  onChange={(e) => {
-                    setHost(e.target.value);
-                    if (addMachineErrors.host)
-                      setAddMachineErrors({
-                        ...addMachineErrors,
-                        host: undefined,
-                      });
-                  }}
-                  className={cn(
-                    "h-8 text-xs font-mono",
-                    addMachineErrors.host && "border-destructive"
-                  )}
-                  placeholder="Host (192.168.1.10)"
-                />
-              </div>
-              <div className="col-span-1">
-                <Input
-                  value={port}
-                  onChange={(e) => setPort(e.target.value)}
-                  className="h-8 text-xs font-mono"
-                  placeholder="22"
-                />
-              </div>
-            </div>
-            {addMachineErrors.host && (
-              <p className="text-[10px] text-destructive mt-0.5">
-                {addMachineErrors.host}
-              </p>
-            )}
-
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                value={username}
-                onChange={(e) => {
-                  setUsername(e.target.value);
-                  if (addMachineErrors.username)
-                    setAddMachineErrors({
-                      ...addMachineErrors,
-                      username: undefined,
-                    });
-                }}
-                className={cn(
-                  "h-8 text-xs font-mono",
-                  addMachineErrors.username && "border-destructive"
-                )}
-                placeholder="root"
-              />
-              <Select
-                value={authMode}
-                onValueChange={(value) => setAuthMode(value as SshAuthMode)}
+        {/* Left Sidebar: Compact Machine List */}
+        <div className="w-full md:w-64 shrink-0 flex flex-col border-r bg-muted/5">
+          <div className="px-3 py-2 border-b flex items-center justify-between bg-background">
+            <h2 className="font-semibold text-xs tracking-tight">Machines</h2>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={() => setAddFormOpen(!addFormOpen)}
               >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue>{authMode}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="PrivateKey">PrivateKey</SelectItem>
-                  <SelectItem value="Password">Password</SelectItem>
-                </SelectContent>
-              </Select>
+                <Plus className={cn("h-3.5 w-3.5 transition-transform", addFormOpen && "rotate-45")} />
+              </Button>
+              <DialogClose asChild>
+                <Button variant="ghost" size="icon" className="h-6 w-6">
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </DialogClose>
             </div>
-            {addMachineErrors.username && (
-              <p className="text-[10px] text-destructive mt-0.5">
-                {addMachineErrors.username}
-              </p>
-            )}
-
-            {createMachineMutation.isError && (
-              <Alert variant="destructive" className="py-2 px-3 text-xs">
-                <AlertCircle className="h-3 w-3" />
-                <AlertTitle className="text-xs font-semibold ml-1 inline">
-                  Error
-                </AlertTitle>
-                <AlertDescription className="ml-1 inline">
-                  {createMachineMutation.error instanceof Error
-                    ? createMachineMutation.error.message
-                    : "Failed"}
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <Button
-              size="sm"
-              className="w-full h-8 text-xs font-medium"
-              disabled={isBusy}
-              onClick={() => {
-                if (!validateAddMachine()) return;
-                createMachineMutation.mutate({
-                  host: host.trim(),
-                  port: Number(port || "22"),
-                  username: username.trim(),
-                  authMode,
-                });
-              }}
-            >
-              Add to Inventory
-            </Button>
           </div>
 
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
-              {machinesQuery.isLoading && (
-                <div className="p-4 text-xs text-center text-muted-foreground">
-                  Loading inventory...
+          {/* Compact Add Machine Form */}
+          <Collapsible open={addFormOpen} onOpenChange={setAddFormOpen}>
+            <CollapsibleContent>
+              <div className="p-2 border-b space-y-2 bg-muted/10">
+                <div className="flex gap-1">
+                  <Input
+                    value={host}
+                    onChange={(e) => {
+                      setHost(e.target.value);
+                      if (addMachineErrors.host) setAddMachineErrors({ ...addMachineErrors, host: undefined });
+                    }}
+                    className={cn("h-7 text-xs font-mono flex-1", addMachineErrors.host && "border-destructive")}
+                    placeholder="Host"
+                  />
+                  <Input
+                    value={port}
+                    onChange={(e) => setPort(e.target.value)}
+                    className="h-7 text-xs font-mono w-14"
+                    placeholder="22"
+                  />
                 </div>
+                <div className="flex gap-1">
+                  <Input
+                    value={username}
+                    onChange={(e) => {
+                      setUsername(e.target.value);
+                      if (addMachineErrors.username) setAddMachineErrors({ ...addMachineErrors, username: undefined });
+                    }}
+                    className={cn("h-7 text-xs font-mono flex-1", addMachineErrors.username && "border-destructive")}
+                    placeholder="user"
+                  />
+                  <Select value={authMode} onValueChange={(value) => setAuthMode(value as SshAuthMode)}>
+                    <SelectTrigger className="h-7 text-xs w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PrivateKey">Key</SelectItem>
+                      <SelectItem value="Password">Pass</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {(addMachineErrors.host || addMachineErrors.username) && (
+                  <p className="text-[10px] text-destructive">{addMachineErrors.host || addMachineErrors.username}</p>
+                )}
+                {createMachineMutation.isError && (
+                  <p className="text-[10px] text-destructive">
+                    {createMachineMutation.error instanceof Error ? createMachineMutation.error.message : "Failed"}
+                  </p>
+                )}
+                <Button
+                  size="sm"
+                  className="w-full h-7 text-xs"
+                  disabled={isBusy}
+                  onClick={() => {
+                    if (!validateAddMachine()) return;
+                    createMachineMutation.mutate({
+                      host: host.trim(),
+                      port: Number(port || "22"),
+                      username: username.trim(),
+                      authMode,
+                      trustHostKey: true,
+                      forceInstall: true,
+                      runAsRoot: false,
+                      serverBaseUrlOverride: null,
+                    });
+                  }}
+                >
+                  Add
+                </Button>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Machine List */}
+          <ScrollArea className="flex-1">
+            <div className="p-1 space-y-0.5">
+              {machinesQuery.isLoading && (
+                <div className="p-3 text-xs text-center text-muted-foreground">Loading...</div>
               )}
               {machines.map((m) => (
                 <div key={m.id} className="relative group">
                   <button
                     onClick={() => selectMachine(m.id)}
                     className={cn(
-                      "w-full text-left p-3 rounded-md border transition-all hover:bg-muted/50 flex flex-col gap-1 pr-8",
-                      selected?.id === m.id
-                        ? "bg-background border-primary shadow-sm"
-                        : "bg-transparent border-transparent hover:border-border"
+                      "w-full text-left px-2 py-1.5 rounded text-xs transition-all hover:bg-muted/50",
+                      selected?.id === m.id ? "bg-muted border-l-2 border-primary" : "bg-transparent"
                     )}
                   >
-                    <div className="flex items-center justify-between w-full">
-                      <span className="font-mono text-xs font-semibold truncate">
-                        {m.host}
-                      </span>
-                      <Badge
-                        variant={getStatusVariant(m.status)}
-                        className={cn(
-                          "text-[10px] h-4 px-1.5",
-                          m.status === "Failed" && "animate-pulse"
-                        )}
-                      >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-medium truncate">{m.host}</span>
+                      <Badge variant={getStatusVariant(m.status)} className="text-[9px] h-4 px-1 scale-90">
                         {m.status}
                       </Badge>
                     </div>
-                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                      <span>
-                        {m.username}@{m.port}
-                      </span>
-                      <span>{m.authMode}</span>
-                    </div>
+                    <div className="text-[10px] text-muted-foreground">{m.username}:{m.port}</div>
                   </button>
-                  {/* Delete Button with ConfirmationModal */}
                   <ConfirmationModal
                     trigger={
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="absolute right-1 top-2 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        className="absolute right-0.5 top-1 h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                       >
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     }
                     title="Remove Machine"
-                    message={`Are you sure you want to remove ${m.host} from the inventory?`}
+                    message={`Remove ${m.host}?`}
                     confirmText="Remove"
                     isDestructive
                     isLoading={deleteMachineMutation.isPending}
                     onConfirm={async () => {
                       await deleteMachineMutation.mutateAsync(m.id);
-                      if (selectedId === m.id) {
-                        setSelectedId(null);
-                      }
+                      if (selectedId === m.id) setSelectedId(null);
                     }}
                   />
                 </div>
               ))}
               {machines.length === 0 && !machinesQuery.isLoading && (
-                <div className="p-8 text-center">
-                  <p className="text-xs text-muted-foreground">
-                    No machines added yet.
-                  </p>
-                </div>
+                <div className="p-4 text-center text-xs text-muted-foreground">No machines</div>
               )}
             </div>
           </ScrollArea>
@@ -755,265 +934,208 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
 
         {/* Right Content: Selected Machine Details */}
         <div className="flex-1 flex flex-col h-full bg-background relative">
-          <div className="hidden md:flex absolute top-4 right-4 z-10">
-            <DialogClose asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-foreground"
-              >
-                <span className="sr-only">Close</span>✕
-              </Button>
-            </DialogClose>
-          </div>
-
           {!selected ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-10">
-              <div className="w-16 h-16 rounded-full bg-muted/30 flex items-center justify-center mb-4 text-2xl">
-                ⚡
-              </div>
-              <h3 className="font-medium text-sm">
-                Select a machine to configure
-              </h3>
+            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-6">
+              <div className="w-12 h-12 rounded-full bg-muted/30 flex items-center justify-center mb-3 text-xl">⚡</div>
+              <h3 className="font-medium text-sm">Select a machine</h3>
               <p className="text-xs mt-1 text-center max-w-xs opacity-70">
-                Choose a machine from the inventory on the left to view
-                connection details and install the agent.
+                Choose a machine from the list to configure and install the agent.
               </p>
             </div>
           ) : (
             <>
-              {/* Header */}
-              <div className="px-6 py-4 border-b flex items-center gap-4 bg-background">
-                <div>
-                  <h2 className="text-lg font-bold tracking-tight">
-                    {selected.host}
-                  </h2>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono mt-0.5">
-                    <span>ID: {selected.id.split("-")[0]}...</span>
-                    <span>•</span>
-                    <span
-                      className={cn(
-                        selected.status === "Succeeded" ? "text-green-500" : ""
-                      )}
-                    >
-                      {selected.status}
+              {/* Compact Header */}
+              <div className="px-4 py-2 border-b flex items-center justify-between bg-background">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-sm font-bold tracking-tight font-mono">{selected.host}</h2>
+                  <Badge variant={getStatusVariant(selected.status)} className="text-[10px] h-5">
+                    {selected.status}
+                  </Badge>
+                  {lastTest?.success && (
+                    <span className="text-[10px] font-mono text-green-600 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                      {lastTest.osHint}
+                      {lastTest.hasExistingInstallation && <span className="text-amber-600 ml-1">• Installed</span>}
                     </span>
-                  </div>
+                  )}
                 </div>
               </div>
 
-              {/* Main Content Scroll */}
+              {/* Main Content */}
               <ScrollArea className="flex-1">
-                <div className="p-6 space-y-8 max-w-4xl mx-auto">
-                  {/* Configuration Section */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {/* Auth Credentials */}
-                    <div className="space-y-4">
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                        🔒 Credentials
-                      </h3>
-                      <Card className="border-dashed shadow-none bg-muted/5">
-                        <CardContent className="pt-4 space-y-3">
-                          {selected.authMode === "Password" ? (
-                            <div>
-                              <Label className="text-xs mb-1.5 block">
-                                SSH Password
-                              </Label>
-                              <Input
-                                type="password"
-                                value={password}
-                                onChange={(e) => {
-                                  setPassword(e.target.value);
-                                  if (credErrors.password)
-                                    setCredErrors({
-                                      ...credErrors,
-                                      password: undefined,
-                                    });
-                                }}
-                                placeholder="••••••••"
-                                className={cn(
-                                  "bg-background",
-                                  credErrors.password && "border-destructive"
-                                )}
-                              />
-                              {credErrors.password && (
-                                <p className="text-[10px] text-destructive mt-1">
-                                  {credErrors.password}
-                                </p>
-                              )}
-                            </div>
-                          ) : (
-                            <>
-                              <div>
-                                <Label className="text-xs mb-1.5 block">
-                                  Private Key (PEM)
-                                </Label>
-                                <Textarea
-                                  value={privateKeyPem}
-                                  onChange={(e) => {
-                                    setPrivateKeyPem(e.target.value);
-                                    if (credErrors.privateKey)
-                                      setCredErrors({
-                                        ...credErrors,
-                                        privateKey: undefined,
-                                      });
-                                  }}
-                                  className={cn(
-                                    "font-mono text-[10px] min-h-30 bg-background resize-none leading-tight",
-                                    credErrors.privateKey &&
-                                      "border-destructive"
-                                  )}
-                                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                                />
-                                {credErrors.privateKey && (
-                                  <p className="text-[10px] text-destructive mt-1">
-                                    {credErrors.privateKey}
-                                  </p>
-                                )}
-                              </div>
-                              <div>
-                                <Label className="text-xs mb-1.5 block">
-                                  Passphrase (Optional)
-                                </Label>
-                                <Input
-                                  type="password"
-                                  value={privateKeyPassphrase}
-                                  onChange={(e) =>
-                                    setPrivateKeyPassphrase(e.target.value)
-                                  }
-                                  placeholder="••••••••"
-                                  className="bg-background"
-                                />
-                              </div>
-                            </>
-                          )}
-                        </CardContent>
-                      </Card>
-                    </div>
-
-                    {/* Connection Settings */}
-                    <div className="space-y-4">
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                        ⚙️ Installation Settings
-                      </h3>
-                      <Card className="border-dashed shadow-none bg-muted/5">
-                        <CardContent className="pt-4 space-y-4">
+                <div className="p-4 space-y-3">
+                  {/* Credentials Section - Collapsible */}
+                  <Collapsible defaultOpen>
+                    <CollapsibleTrigger className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors w-full">
+                      <Key className="h-3 w-3" />
+                      <span>Credentials</span>
+                      <ChevronDown className="h-3 w-3 ml-auto transition-transform in-data-[state=open]:rotate-180" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-2">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 p-3 rounded-md border bg-muted/5">
+                        {selected.authMode === "Password" ? (
                           <div>
-                            <Label className="text-xs mb-1.5 block">
-                              Agent Server URL
-                            </Label>
-                            <Input
-                              value={serverBaseUrl}
-                              onChange={(e) =>
-                                handleServerBaseUrlChange(e.target.value)
-                              }
-                              className="font-mono text-xs bg-background"
-                              placeholder="http://..."
-                            />
-                            <p className="text-[10px] text-muted-foreground mt-1.5">
-                              The address the agent will use to call back home (origin only — no <span className="font-mono">/api</span> or <span className="font-mono">/hubs/agent</span>).
-                            </p>
-                          </div>
-
-                          <div className="flex flex-col gap-3 py-1">
-                            <label className="flex items-start gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer transition-colors border border-transparent hover:border-border">
-                              <input
-                                type="checkbox"
-                                className="mt-1"
-                                checked={trustHostKey}
-                                onChange={(e) =>
-                                  setTrustHostKey(e.target.checked)
-                                }
-                              />
-                              <div className="space-y-0.5">
-                                <span className="text-sm font-medium leading-none">
-                                  Trust Host Key (TOFU)
-                                </span>
-                                <p className="text-xs text-muted-foreground">
-                                  Automatically accept the SSH fingerprint.
-                                </p>
-                                {selected.hostKeyFingerprint && (
-                                  <div className="inline-block mt-1 px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono break-all text-muted-foreground border">
-                                    {selected.hostKeyFingerprint}
-                                  </div>
-                                )}
-                              </div>
-                            </label>
-
-                            <label className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer transition-colors border border-transparent hover:border-border">
-                              <input
-                                type="checkbox"
-                                checked={forceInstall}
-                                onChange={(e) =>
-                                  setForceInstall(e.target.checked)
-                                }
-                              />
-                              <span className="text-sm font-medium leading-none">
-                                Force Re-install
-                              </span>
-                            </label>
-
-                            <label className="flex items-start gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer transition-colors border border-transparent hover:border-border">
-                              <input
-                                type="checkbox"
-                                className="mt-1"
-                                checked={runAsRoot}
-                                onChange={(e) =>
-                                  setRunAsRoot(e.target.checked)
-                                }
-                              />
-                              <div className="space-y-0.5">
-                                <span className="text-sm font-medium leading-none">
-                                  Run agent as root
-                                </span>
-                                <p className="text-xs text-muted-foreground">
-                                  Required for system updates without passwordless sudo. 
-                                  Less secure but enables full management capabilities (package updates, service control).
-                                </p>
-                              </div>
-                            </label>
-                          </div>
-
-                          <div>
-                            <Label className="text-xs mb-1.5 block">
-                              Sudo Password (Optional)
-                            </Label>
+                            <Label className="text-[10px] mb-1 block text-muted-foreground">SSH Password</Label>
                             <Input
                               type="password"
-                              value={sudoPassword}
-                              onChange={(e) => setSudoPassword(e.target.value)}
+                              value={password}
+                              onChange={(e) => {
+                                setPassword(e.target.value);
+                                if (credErrors.password) setCredErrors({ ...credErrors, password: undefined });
+                              }}
                               placeholder="••••••••"
-                              className="bg-background"
+                              className={cn("h-8 text-xs", credErrors.password && "border-destructive")}
                             />
-                            <p className="text-[10px] text-muted-foreground mt-1.5">
-                              Only needed for Linux if the SSH user requires a password for sudo. Leave empty if running as root or if passwordless sudo is configured.
-                            </p>
+                            {credErrors.password && <p className="text-[10px] text-destructive mt-0.5">{credErrors.password}</p>}
                           </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  </div>
+                        ) : (
+                          <>
+                            <div className="md:col-span-2">
+                              <Label className="text-[10px] mb-1 block text-muted-foreground">Private Key (PEM)</Label>
+                              <Textarea
+                                value={privateKeyPem}
+                                onChange={(e) => {
+                                  setPrivateKeyPem(e.target.value);
+                                  if (credErrors.privateKey) setCredErrors({ ...credErrors, privateKey: undefined });
+                                }}
+                                className={cn(
+                                  "font-mono text-[10px] min-h-20 resize-none leading-tight",
+                                  credErrors.privateKey && "border-destructive"
+                                )}
+                                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                              />
+                              {credErrors.privateKey && <p className="text-[10px] text-destructive mt-0.5">{credErrors.privateKey}</p>}
+                            </div>
+                            <div>
+                              <Label className="text-[10px] mb-1 block text-muted-foreground">Passphrase</Label>
+                              <Input
+                                type="password"
+                                value={privateKeyPassphrase}
+                                onChange={(e) => setPrivateKeyPassphrase(e.target.value)}
+                                placeholder="Optional"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                          </>
+                        )}
+                        <div>
+                          <Label className="text-[10px] mb-1 block text-muted-foreground">Sudo Password</Label>
+                          <Input
+                            type="password"
+                            value={sudoPassword}
+                            onChange={(e) => {
+                              const newPassword = e.target.value;
+                              setSudoPassword(newPassword);
+                              // Auto-check Run as root if sudo password is provided and not already checked
+                              if (newPassword && !runAsRoot) {
+                                setRunAsRoot(true);
+                              }
+                              // Auto-uncheck Run as root if sudo password is cleared
+                              else if (!newPassword && runAsRoot) {
+                                setRunAsRoot(false);
+                              }
+                            }}
+                            placeholder="Optional"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer pt-2">
+                          <Checkbox checked={rememberCredentials} onCheckedChange={(c) => setRememberCredentials(c === true)} />
+                          <span>Remember credentials</span>
+                        </label>
+                        {rememberCredentials ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full h-7 text-xs mt-1"
+                            disabled={saveCredentialsMutation.isPending || isBusy}
+                            onClick={() => {
+                              saveCredentialsMutation.mutate({
+                                password: selected?.authMode === "Password" ? password : undefined,
+                                privateKeyPem: selected?.authMode === "PrivateKey" ? privateKeyPem : undefined,
+                                privateKeyPassphrase: selected?.authMode === "PrivateKey" ? privateKeyPassphrase : undefined,
+                                sudoPassword: sudoPassword || undefined,
+                              });
+                            }}
+                          >
+                            {saveCredentialsMutation.isPending ? "Saving..." : "Save Credentials"}
+                          </Button>
+                        ) : (selected?.hasSavedCredentials) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full h-7 text-xs mt-1"
+                            disabled={clearCredentialsMutation.isPending || isBusy}
+                            onClick={() => {
+                              clearCredentialsMutation.mutate();
+                            }}
+                          >
+                            {clearCredentialsMutation.isPending ? "Clearing..." : "Clear Credentials"}
+                          </Button>
+                        )}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
 
-                  {/* Actions Toolbar */}
-                  <div className="flex flex-wrap items-center gap-3">
+                  {/* Settings Section - Collapsible */}
+                  <Collapsible defaultOpen>
+                    <CollapsibleTrigger className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors w-full">
+                      <Settings2 className="h-3 w-3" />
+                      <span>Settings</span>
+                      <ChevronDown className="h-3 w-3 ml-auto transition-transform in-data-[state=open]:rotate-180" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pt-2">
+                      <div className="p-3 rounded-md border bg-muted/5 space-y-3">
+                        <div>
+                          <Label className="text-[10px] mb-1 block text-muted-foreground">Server URL</Label>
+                          <Input
+                            value={serverBaseUrl}
+                            onChange={(e) => handleServerBaseUrlChange(e.target.value)}
+                            className="font-mono text-xs h-8"
+                            placeholder="http://..."
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-4">
+                          <label className="flex items-center gap-2 text-xs cursor-pointer">
+                            <Checkbox checked={trustHostKey} onCheckedChange={(c) => setTrustHostKey(c === true)} />
+                            <span>Trust Host Key</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-xs cursor-pointer">
+                            <Checkbox checked={forceInstall} onCheckedChange={(c) => setForceInstall(c === true)} />
+                            <span>Force Re-install</span>
+                          </label>
+                          <label className="flex items-center gap-2 text-xs cursor-pointer">
+                            <Checkbox checked={runAsRoot} onCheckedChange={(c) => setRunAsRoot(c === true)} />
+                            <span>Run as root</span>
+                          </label>
+                        </div>
+                        {selected.hostKeyFingerprint && (
+                          <div className="text-[10px] font-mono text-muted-foreground px-2 py-1 bg-muted rounded break-all">
+                            {selected.hostKeyFingerprint}
+                          </div>
+                        )}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+
+                  {/* Actions Bar */}
+                  <div className="flex items-center gap-2 pt-2 border-t">
                     <Button
                       variant="secondary"
+                      size="sm"
                       disabled={isBusy}
                       onClick={() => {
                         if (validateCredentials()) testMutation.mutate();
                       }}
-                      className="min-w-30"
+                      className="h-8 text-xs"
                     >
-                      {testMutation.isPending
-                        ? "Testing..."
-                        : "Test Connection"}
+                      {testMutation.isPending ? "Testing..." : "Test Connection"}
                     </Button>
-
-                    <div className="h-6 w-px bg-border mx-1" />
 
                     <ConfirmationModal
                       trigger={
                         <Button
+                          size="sm"
                           disabled={isBusy || !lastTest?.success}
                           onClick={(e) => {
                             if (!validateCredentials()) {
@@ -1021,13 +1143,13 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                               e.stopPropagation();
                             }
                           }}
-                          className="min-w-25"
+                          className="h-8 text-xs"
                         >
-                          Install Agent
+                          Install
                         </Button>
                       }
                       title="Install ManLab Agent"
-                      message={`Connect to ${selected.host} and install agent? Target must have root/sudo access.`}
+                      message={`Install agent on ${selected.host}?`}
                       confirmText="Install"
                       isLoading={installMutation.isPending}
                       onConfirm={async () => {
@@ -1041,11 +1163,10 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       trigger={
                         <Button
                           variant="ghost"
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 text-xs"
                           disabled={isBusy || !(lastTest?.success || lastTest?.hasExistingInstallation)}
                           onClick={() => {
-                            // Best-effort: prefetch remote inventory so the confirmation dialog
-                            // can show an accurate preview of what will be removed.
                             if (validateCredentials() && !previewUninstallMutation.isPending) {
                               previewUninstallMutation.mutate();
                             }
@@ -1055,7 +1176,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                         </Button>
                       }
                       title="Uninstall Agent"
-                      message={`Remove ManLab agent from ${selected.host}?`}
+                      message={`Remove agent from ${selected.host}?`}
                       details={uninstallPreview}
                       confirmText="Uninstall"
                       isLoading={uninstallMutation.isPending}
@@ -1066,32 +1187,18 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                     />
 
                     {lastTest?.error && (
-                      <span
-                        className="text-xs font-mono text-destructive ml-auto max-w-xs truncate"
-                        title={lastTest.error}
-                      >
-                        Error: {lastTest.error}
-                      </span>
-                    )}
-                    {lastTest?.success && (
-                      <span className="text-xs font-mono text-green-600 ml-auto flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                        Connection Verified (OS: {lastTest.osHint})
-                        {lastTest.hasExistingInstallation && (
-                          <span className="text-amber-600 ml-2">• Existing installation detected</span>
-                        )}
+                      <span className="text-xs font-mono text-destructive ml-auto truncate max-w-40" title={lastTest.error}>
+                        {lastTest.error}
                       </span>
                     )}
                   </div>
                 </div>
               </ScrollArea>
 
-              {/* Log Console Footer */}
-              <div className="border-t bg-black text-white h-64 flex flex-col shrink-0">
-                <div className="flex items-center justify-between px-3 py-1.5 bg-neutral-900 border-b border-neutral-800">
-                  <span className="text-[10px] font-mono tracking-wider text-neutral-400 uppercase">
-                    Terminal Output
-                  </span>
+              {/* Compact Terminal */}
+              <div className="border-t bg-black text-white h-72 flex flex-col shrink-0">
+                <div className="flex items-center justify-between px-3 py-1 bg-neutral-900 border-b border-neutral-800">
+                  <span className="text-[10px] font-mono tracking-wider text-neutral-400 uppercase">Output</span>
                   <button
                     onClick={() => setLogs([])}
                     className="text-[10px] text-neutral-500 hover:text-neutral-300 transition-colors"
@@ -1099,32 +1206,23 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                     Clear
                   </button>
                 </div>
-                <div className="flex-1 overflow-auto font-mono text-xs p-3">
+                <div className="flex-1 overflow-auto font-mono text-[11px] p-2">
                   {logs.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-neutral-600 space-y-2 select-none">
-                      <Terminal className="h-8 w-8 opacity-20" />
-                      <span className="italic">Waiting for job output...</span>
+                    <div className="flex flex-col items-center justify-center h-full text-neutral-600 space-y-1 select-none">
+                      <Terminal className="h-5 w-5 opacity-20" />
+                      <span className="italic text-[10px]">Waiting for output...</span>
                     </div>
                   ) : (
                     <div className="flex flex-col">
                       {logs.map((l, i) => (
-                        <div
-                          key={i}
-                          className="flex gap-2 hover:bg-neutral-900/50 -mx-1 px-1 rounded-sm"
-                        >
-                          <span className="text-neutral-600 select-none w-16 shrink-0">
-                            {new Date(l.ts).toLocaleTimeString([], {
-                              hour12: false,
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            })}
+                        <div key={i} className="flex gap-1.5 hover:bg-neutral-900/50 -mx-1 px-1 rounded-sm">
+                          <span className="text-neutral-600 select-none text-[10px] w-14 shrink-0">
+                            {new Date(l.ts).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                           </span>
                           <span
                             className={cn(
                               "break-all whitespace-pre-wrap flex-1",
-                              l.msg.toLowerCase().includes("error") ||
-                                l.msg.toLowerCase().includes("failed")
+                              l.msg.toLowerCase().includes("error") || l.msg.toLowerCase().includes("failed")
                                 ? "text-red-400 font-semibold"
                                 : l.msg.toLowerCase().includes("success")
                                 ? "text-green-400"

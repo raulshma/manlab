@@ -22,6 +22,7 @@ public sealed class OnboardingController : ControllerBase
     private readonly SshAuditService _audit;
     private readonly SshRateLimitService _rateLimit;
     private readonly SshProvisioningOptions _sshOptions;
+    private readonly CredentialEncryptionService _encryptionService;
 
     public OnboardingController(
         DataContext db,
@@ -29,7 +30,8 @@ public sealed class OnboardingController : ControllerBase
         SshProvisioningService ssh,
         SshAuditService audit,
         SshRateLimitService rateLimit,
-        IOptions<SshProvisioningOptions> sshOptions)
+        IOptions<SshProvisioningOptions> sshOptions,
+        CredentialEncryptionService encryptionService)
     {
         _db = db;
         _jobRunner = jobRunner;
@@ -37,6 +39,7 @@ public sealed class OnboardingController : ControllerBase
         _audit = audit;
         _rateLimit = rateLimit;
         _sshOptions = sshOptions.Value;
+        _encryptionService = encryptionService;
     }
 
     /// <summary>
@@ -138,7 +141,15 @@ public sealed class OnboardingController : ControllerBase
                 m.LastError,
                 m.LinkedNodeId,
                 m.CreatedAt,
-                m.UpdatedAt))
+                m.UpdatedAt,
+                // Include saved configuration and whether credentials are saved
+                HasSavedCredentials: !string.IsNullOrWhiteSpace(m.EncryptedSshPassword) || !string.IsNullOrWhiteSpace(m.EncryptedPrivateKeyPem),
+                // Include whether a saved sudo password is available
+                HasSavedSudoPassword: !string.IsNullOrWhiteSpace(m.EncryptedSudoPassword),
+                TrustHostKey: m.TrustHostKey,
+                ForceInstall: m.ForceInstall,
+                RunAsRoot: m.RunAsRoot,
+                ServerBaseUrlOverride: m.ServerBaseUrlOverride))
             .ToListAsync();
 
         return Ok(machines);
@@ -176,8 +187,16 @@ public sealed class OnboardingController : ControllerBase
             LastError = null,
             LinkedNodeId = null,
             CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
+            UpdatedAt = DateTime.UtcNow,
+            // Save configuration preferences
+            TrustHostKey = request.TrustHostKey,
+            ForceInstall = request.ForceInstall,
+            RunAsRoot = request.RunAsRoot,
+            ServerBaseUrlOverride = request.ServerBaseUrlOverride?.Trim()
         };
+
+        // Encryption service for saving credentials (not used in CreateMachine since credentials aren't provided yet)
+        // Credentials will be saved via PUT /machines/{id}/credentials endpoint
 
         _db.OnboardingMachines.Add(machine);
         await _db.SaveChangesAsync();
@@ -216,6 +235,100 @@ public sealed class OnboardingController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Save or update encrypted credentials for a machine.
+    /// </summary>
+    [HttpPut("machines/{id:guid}/credentials")]
+    public async Task<IActionResult> SaveCredentials(Guid id, [FromBody] SaveCredentialsRequest request, CancellationToken cancellationToken)
+    {
+        var machine = await _db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
+        if (machine is null)
+        {
+            return NotFound();
+        }
+
+        // Encrypt and save credentials based on auth mode
+        if (machine.AuthMode == SshAuthMode.Password && !string.IsNullOrWhiteSpace(request.Password))
+        {
+            machine.EncryptedSshPassword = await _encryptionService.EncryptAsync(request.Password, cancellationToken);
+            machine.EncryptedPrivateKeyPem = null;
+            machine.EncryptedPrivateKeyPassphrase = null;
+        }
+        else if (machine.AuthMode == SshAuthMode.PrivateKey && !string.IsNullOrWhiteSpace(request.PrivateKeyPem))
+        {
+            machine.EncryptedSshPassword = null;
+            machine.EncryptedPrivateKeyPem = await _encryptionService.EncryptAsync(request.PrivateKeyPem, cancellationToken);
+            machine.EncryptedPrivateKeyPassphrase = string.IsNullOrWhiteSpace(request.PrivateKeyPassphrase)
+                ? null
+                : await _encryptionService.EncryptAsync(request.PrivateKeyPassphrase, cancellationToken);
+        }
+        else
+        {
+            return BadRequest("Invalid credentials for the machine's auth mode.");
+        }
+
+        // Save sudo password if provided
+        if (!string.IsNullOrWhiteSpace(request.SudoPassword))
+        {
+            machine.EncryptedSudoPassword = await _encryptionService.EncryptAsync(request.SudoPassword, cancellationToken);
+        }
+
+        machine.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Clear saved credentials for a machine.
+    /// </summary>
+    [HttpDelete("machines/{id:guid}/credentials")]
+    public async Task<IActionResult> ClearCredentials(Guid id, CancellationToken cancellationToken)
+    {
+        var machine = await _db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
+        if (machine is null)
+        {
+            return NotFound();
+        }
+
+        machine.EncryptedSshPassword = null;
+        machine.EncryptedPrivateKeyPem = null;
+        machine.EncryptedPrivateKeyPassphrase = null;
+        machine.EncryptedSudoPassword = null;
+
+        machine.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Update configuration preferences for a machine.
+    /// </summary>
+    [HttpPut("machines/{id:guid}/configuration")]
+    public async Task<IActionResult> UpdateConfiguration(Guid id, [FromBody] UpdateConfigurationRequest request, CancellationToken cancellationToken)
+    {
+        var machine = await _db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
+        if (machine is null)
+        {
+            return NotFound();
+        }
+
+        if (request.TrustHostKey.HasValue)
+            machine.TrustHostKey = request.TrustHostKey.Value;
+        if (request.ForceInstall.HasValue)
+            machine.ForceInstall = request.ForceInstall.Value;
+        if (request.RunAsRoot.HasValue)
+            machine.RunAsRoot = request.RunAsRoot.Value;
+        if (request.ServerBaseUrlOverride != null)
+            machine.ServerBaseUrlOverride = string.IsNullOrWhiteSpace(request.ServerBaseUrlOverride) ? null : request.ServerBaseUrlOverride.Trim();
+
+        machine.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return NoContent();
+    }
+
     [HttpPost("machines/{id:guid}/ssh/test")]
     public async Task<ActionResult<SshTestResponse>> TestSsh(Guid id, [FromBody] SshTestRequest request, CancellationToken cancellationToken)
     {
@@ -235,10 +348,11 @@ public sealed class OnboardingController : ControllerBase
             return StatusCode(StatusCodes.Status429TooManyRequests, ex.Message);
         }
 
-        var auth = BuildAuth(machine.AuthMode, request);
+        // Build auth from provided credentials or fall back to saved credentials when UseSavedCredentials is true
+        var auth = await BuildAuthAsync(machine.AuthMode, request, _encryptionService, machine, cancellationToken);
         if (auth is null)
         {
-            return BadRequest("Missing SSH credentials for selected auth mode.");
+            return BadRequest("Missing SSH credentials. Provide credentials or enable UseSavedCredentials.");
         }
 
         if (request.TrustHostKey && !_sshOptions.AllowTrustOnFirstUse)
@@ -362,10 +476,17 @@ public sealed class OnboardingController : ControllerBase
             return Conflict("An install is already running for this machine.");
         }
 
-        var auth = BuildAuth(machine.AuthMode, request);
+        var auth = await BuildAuthAsync(machine.AuthMode, request, _encryptionService, machine, cancellationToken: default);
         if (auth is null)
         {
-            return BadRequest("Missing SSH credentials for selected auth mode.");
+            return BadRequest("Missing SSH credentials. Provide credentials or enable UseSavedCredentials.");
+        }
+
+        // Decrypt sudo password if saved and not provided in request
+        var sudoPassword = request.SudoPassword;
+        if (string.IsNullOrWhiteSpace(sudoPassword) && request.UseSavedCredentials && !string.IsNullOrWhiteSpace(machine.EncryptedSudoPassword))
+        {
+            sudoPassword = await _encryptionService.DecryptAsync(machine.EncryptedSudoPassword, cancellationToken: default);
         }
 
         if (request.TrustHostKey && !_sshOptions.AllowTrustOnFirstUse)
@@ -383,7 +504,7 @@ public sealed class OnboardingController : ControllerBase
             ServerBaseUrl: request.ServerBaseUrl,
             Force: request.Force,
             Auth: auth,
-            SudoPassword: request.SudoPassword,
+            SudoPassword: sudoPassword ?? "",
             RunAsRoot: request.RunAsRoot,
             TrustOnFirstUse: request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
             ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
@@ -443,10 +564,10 @@ public sealed class OnboardingController : ControllerBase
             return Conflict("A job is already running for this machine.");
         }
 
-        var auth = BuildAuth(machine.AuthMode, request);
+        var auth = await BuildAuthAsync(machine.AuthMode, request, _encryptionService, machine, cancellationToken: default);
         if (auth is null)
         {
-            return BadRequest("Missing SSH credentials for selected auth mode.");
+            return BadRequest("Missing SSH credentials. Provide credentials or enable UseSavedCredentials.");
         }
 
         if (request.TrustHostKey && !_sshOptions.AllowTrustOnFirstUse)
@@ -460,10 +581,17 @@ public sealed class OnboardingController : ControllerBase
             return BadRequest("Host key not trusted yet. Run Test Connection and confirm fingerprint first.");
         }
 
+        // Decrypt sudo password if saved and not provided in request
+        var sudoPassword = request.SudoPassword;
+        if (string.IsNullOrWhiteSpace(sudoPassword) && request.UseSavedCredentials && !string.IsNullOrWhiteSpace(machine.EncryptedSudoPassword))
+        {
+            sudoPassword = await _encryptionService.DecryptAsync(machine.EncryptedSudoPassword, cancellationToken: default);
+        }
+
         var started = _jobRunner.TryStartUninstall(id, new OnboardingJobRunner.UninstallRequest(
             ServerBaseUrl: request.ServerBaseUrl,
             Auth: auth,
-            SudoPassword: request.SudoPassword,
+            SudoPassword: sudoPassword ?? "",
             TrustOnFirstUse: request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
             ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
             Actor: User?.Identity?.Name,
@@ -517,10 +645,10 @@ public sealed class OnboardingController : ControllerBase
             return StatusCode(StatusCodes.Status429TooManyRequests, ex.Message);
         }
 
-        var auth = BuildAuth(machine.AuthMode, request);
+        var auth = await BuildAuthAsync(machine.AuthMode, request, _encryptionService, machine, cancellationToken);
         if (auth is null)
         {
-            return BadRequest("Missing SSH credentials for selected auth mode.");
+            return BadRequest("Missing SSH credentials. Provide credentials or enable UseSavedCredentials.");
         }
 
         if (request.TrustHostKey && !_sshOptions.AllowTrustOnFirstUse)
@@ -608,6 +736,53 @@ public sealed class OnboardingController : ControllerBase
         };
     }
 
+    /// <summary>
+    /// Build auth options from request, falling back to encrypted credentials stored on machine if UseSavedCredentials is true.
+    /// </summary>
+    private static async Task<SshProvisioningService.AuthOptions?> BuildAuthAsync(
+        SshAuthMode mode,
+        ISshAuthRequest request,
+        CredentialEncryptionService encryptionService,
+        OnboardingMachine machine,
+        CancellationToken cancellationToken)
+    {
+        var password = request.Password;
+        var privateKeyPem = request.PrivateKeyPem;
+        var privateKeyPassphrase = request.PrivateKeyPassphrase;
+
+        // If UseSavedCredentials is true and credentials aren't provided, fall back to encrypted values
+        if (request.UseSavedCredentials)
+        {
+            if (string.IsNullOrWhiteSpace(password) && !string.IsNullOrWhiteSpace(machine.EncryptedSshPassword))
+            {
+                password = await encryptionService.DecryptAsync(machine.EncryptedSshPassword, cancellationToken);
+            }
+
+            if (string.IsNullOrWhiteSpace(privateKeyPem) && !string.IsNullOrWhiteSpace(machine.EncryptedPrivateKeyPem))
+            {
+                privateKeyPem = await encryptionService.DecryptAsync(machine.EncryptedPrivateKeyPem, cancellationToken);
+            }
+
+            if (string.IsNullOrWhiteSpace(privateKeyPassphrase) && !string.IsNullOrWhiteSpace(machine.EncryptedPrivateKeyPassphrase))
+            {
+                privateKeyPassphrase = await encryptionService.DecryptAsync(machine.EncryptedPrivateKeyPassphrase, cancellationToken);
+            }
+        }
+
+        return mode switch
+        {
+            SshAuthMode.Password => string.IsNullOrWhiteSpace(password)
+                ? null
+                : new SshProvisioningService.PasswordAuth(password),
+
+            SshAuthMode.PrivateKey => string.IsNullOrWhiteSpace(privateKeyPem)
+                ? null
+                : new SshProvisioningService.PrivateKeyAuth(privateKeyPem, privateKeyPassphrase),
+
+            _ => null
+        };
+    }
+
     private static OnboardingMachineDto ToDto(OnboardingMachine m)
         => new(
             m.Id,
@@ -620,7 +795,16 @@ public sealed class OnboardingController : ControllerBase
             m.LastError,
             m.LinkedNodeId,
             m.CreatedAt,
-            m.UpdatedAt);
+            m.UpdatedAt,
+            // Indicates whether saved credentials are available for this machine
+            HasSavedCredentials: !string.IsNullOrWhiteSpace(m.EncryptedSshPassword) || !string.IsNullOrWhiteSpace(m.EncryptedPrivateKeyPem),
+            // Indicates whether a saved sudo password is available
+            HasSavedSudoPassword: !string.IsNullOrWhiteSpace(m.EncryptedSudoPassword),
+            // Saved configuration preferences
+            TrustHostKey: m.TrustHostKey,
+            ForceInstall: m.ForceInstall,
+            RunAsRoot: m.RunAsRoot,
+            ServerBaseUrlOverride: m.ServerBaseUrlOverride);
 
     public sealed record OnboardingMachineDto(
         Guid Id,
@@ -633,9 +817,29 @@ public sealed class OnboardingController : ControllerBase
         string? LastError,
         Guid? LinkedNodeId,
         DateTime CreatedAt,
-        DateTime UpdatedAt);
+        DateTime UpdatedAt,
+        // Indicates whether saved credentials are available for this machine
+        bool HasSavedCredentials = false,
+        // Indicates whether a saved sudo password is available
+        bool HasSavedSudoPassword = false,
+        // Saved configuration preferences
+        bool TrustHostKey = false,
+        bool ForceInstall = true,
+        bool RunAsRoot = false,
+        string? ServerBaseUrlOverride = null);
 
-    public sealed record CreateMachineRequest(string Host, int Port, string Username, string AuthMode);
+    public sealed record CreateMachineRequest(
+        string Host,
+        int Port,
+        string Username,
+        string AuthMode,
+        // Allow frontend to specify whether to save credentials for new machines
+        bool RememberCredentials = false,
+        // Configuration preferences to save
+        bool TrustHostKey = false,
+        bool ForceInstall = true,
+        bool RunAsRoot = false,
+        string? ServerBaseUrlOverride = null);
 
     public interface ISshAuthRequest
     {
@@ -643,6 +847,7 @@ public sealed class OnboardingController : ControllerBase
         string? PrivateKeyPem { get; }
         string? PrivateKeyPassphrase { get; }
         string? SudoPassword { get; }
+        bool UseSavedCredentials { get; }
     }
 
     public sealed record SshTestRequest(
@@ -650,7 +855,8 @@ public sealed class OnboardingController : ControllerBase
         string? PrivateKeyPem,
         string? PrivateKeyPassphrase,
         string? SudoPassword,
-        bool TrustHostKey) : ISshAuthRequest;
+        bool TrustHostKey,
+        bool UseSavedCredentials = false) : ISshAuthRequest;
 
     public sealed record SshTestResponse(
         bool Success,
@@ -669,7 +875,8 @@ public sealed class OnboardingController : ControllerBase
         string? Password,
         string? PrivateKeyPem,
         string? PrivateKeyPassphrase,
-        string? SudoPassword) : ISshAuthRequest;
+        string? SudoPassword,
+        bool UseSavedCredentials = false) : ISshAuthRequest;
 
     public sealed record StartInstallResponse(Guid MachineId, string Status);
 
@@ -679,7 +886,8 @@ public sealed class OnboardingController : ControllerBase
         string? Password,
         string? PrivateKeyPem,
         string? PrivateKeyPassphrase,
-        string? SudoPassword) : ISshAuthRequest;
+        string? SudoPassword,
+        bool UseSavedCredentials = false) : ISshAuthRequest;
 
     public sealed record StartUninstallPreviewRequest(
         string ServerBaseUrl,
@@ -687,7 +895,8 @@ public sealed class OnboardingController : ControllerBase
         string? Password,
         string? PrivateKeyPem,
         string? PrivateKeyPassphrase,
-        string? SudoPassword) : ISshAuthRequest;
+        string? SudoPassword,
+        bool UseSavedCredentials = false) : ISshAuthRequest;
 
     public sealed record InventorySectionDto(string Label, IReadOnlyList<string> Items);
 
@@ -711,4 +920,18 @@ public sealed class OnboardingController : ControllerBase
         if (osHint.StartsWith("Windows", StringComparison.OrdinalIgnoreCase)) return "windows";
         return null;
     }
+
+    // DTOs for saving credentials and configuration
+
+    public sealed record SaveCredentialsRequest(
+        string? Password,
+        string? PrivateKeyPem,
+        string? PrivateKeyPassphrase,
+        string? SudoPassword);
+
+    public sealed record UpdateConfigurationRequest(
+        bool? TrustHostKey,
+        bool? ForceInstall,
+        bool? RunAsRoot,
+        string? ServerBaseUrlOverride);
 }

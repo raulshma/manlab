@@ -27,6 +27,8 @@ import type {
   StartInstallResponse,
   StartUninstallResponse,
   UninstallPreviewResponse,
+  SaveCredentialsRequest,
+  UpdateConfigurationRequest,
   SshAuthMode,
   LocalAgentStatus,
   LocalAgentInstallResponse,
@@ -719,6 +721,10 @@ export async function createOnboardingMachine(input: {
   port: number;
   username: string;
   authMode: SshAuthMode;
+  trustHostKey?: boolean;
+  forceInstall?: boolean;
+  runAsRoot?: boolean;
+  serverBaseUrlOverride?: string | null;
 }): Promise<OnboardingMachine> {
   const response = await fetch(`${API_BASE}/onboarding/machines`, {
     method: "POST",
@@ -754,6 +760,7 @@ export async function testSshConnection(
     privateKeyPassphrase?: string;
     sudoPassword?: string;
     trustHostKey: boolean;
+    useSavedCredentials?: boolean;
   }
 ): Promise<SshTestResponse> {
   const response = await fetch(
@@ -781,6 +788,7 @@ export async function installAgent(
     privateKeyPem?: string;
     privateKeyPassphrase?: string;
     sudoPassword?: string;
+    useSavedCredentials?: boolean;
   }
 ): Promise<StartInstallResponse> {
   const response = await fetch(
@@ -806,6 +814,7 @@ export async function uninstallAgent(
     privateKeyPem?: string;
     privateKeyPassphrase?: string;
     sudoPassword?: string;
+    useSavedCredentials?: boolean;
   }
 ): Promise<StartUninstallResponse> {
   const response = await fetch(
@@ -822,6 +831,64 @@ export async function uninstallAgent(
   return response.json();
 }
 
+/**
+ * Onboarding: Save encrypted credentials for a machine.
+ * If rememberCredentials is false, clears saved credentials.
+ */
+export async function saveMachineCredentials(
+  machineId: string,
+  input: SaveCredentialsRequest
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/onboarding/machines/${machineId}/credentials`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to save credentials: ${await response.text()}`);
+  }
+}
+
+/**
+ * Onboarding: Clear saved credentials for a machine.
+ */
+export async function clearMachineCredentials(
+  machineId: string
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/onboarding/machines/${machineId}/credentials`,
+    {
+      method: "DELETE",
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to clear credentials: ${await response.text()}`);
+  }
+}
+
+/**
+ * Onboarding: Update configuration preferences for a machine.
+ */
+export async function updateMachineConfiguration(
+  machineId: string,
+  input: UpdateConfigurationRequest
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/onboarding/machines/${machineId}/configuration`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to update configuration: ${await response.text()}`);
+  }
+}
+
 export async function fetchUninstallPreview(
   machineId: string,
   input: {
@@ -831,6 +898,7 @@ export async function fetchUninstallPreview(
     privateKeyPem?: string;
     privateKeyPassphrase?: string;
     sudoPassword?: string;
+    useSavedCredentials?: boolean;
   }
 ): Promise<UninstallPreviewResponse> {
   const response = await fetch(

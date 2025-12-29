@@ -144,6 +144,13 @@ export interface OnboardingMachine {
   linkedNodeId: string | null;
   createdAt: string;
   updatedAt: string;
+  // New fields for saved credentials and configuration
+  hasSavedCredentials?: boolean;
+  hasSavedSudoPassword?: boolean;
+  trustHostKey?: boolean;
+  forceInstall?: boolean;
+  runAsRoot?: boolean;
+  serverBaseUrlOverride?: string | null;
 }
 
 export interface SshTestResponse {
@@ -154,6 +161,7 @@ export interface SshTestResponse {
   osHint: string | null;
   hasExistingInstallation: boolean;
   error: string | null;
+  useSavedCredentials?: boolean;
 }
 
 export interface StartInstallResponse {
@@ -178,6 +186,22 @@ export interface UninstallPreviewResponse {
   osHint: string | null;
   sections: InventorySection[];
   error: string | null;
+}
+
+// New types for managing saved credentials and configuration
+export interface SaveCredentialsRequest {
+  password?: string;
+  privateKeyPem?: string;
+  privateKeyPassphrase?: string;
+  sudoPassword?: string;
+  rememberCredentials?: boolean;
+}
+
+export interface UpdateConfigurationRequest {
+  trustHostKey?: boolean;
+  forceInstall?: boolean;
+  runAsRoot?: boolean;
+  serverBaseUrlOverride?: string | null;
 }
 
 export interface OnboardingLogEvent {
