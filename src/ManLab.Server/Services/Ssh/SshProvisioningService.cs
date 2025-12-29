@@ -136,6 +136,7 @@ public sealed class SshProvisioningService
         Uri serverBaseUrl,
         string enrollmentToken,
         bool force,
+        bool runAsRoot,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -161,7 +162,7 @@ public sealed class SshProvisioningService
         if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(target.OsFamily, "unix", StringComparison.OrdinalIgnoreCase))
         {
-            var logs = await InstallLinuxAsync(client, serverBaseUrl, enrollmentToken, force, options.SudoPassword, progress, cancellationToken);
+            var logs = await InstallLinuxAsync(client, serverBaseUrl, enrollmentToken, force, runAsRoot, options.SudoPassword, progress, cancellationToken);
             client.Disconnect();
             return (true, hostKey.Fingerprint, false, logs);
         }
@@ -410,6 +411,7 @@ public sealed class SshProvisioningService
         Uri serverBaseUrl,
         string enrollmentToken,
         bool force,
+        bool runAsRoot,
         string? sudoPassword,
         IProgress<string> progress,
         CancellationToken cancellationToken)
@@ -481,7 +483,10 @@ public sealed class SshProvisioningService
             progress.Report("GitHub Releases download is not enabled (or missing base URL/version); installer may fall back to server-staged binaries.");
         }
 
-        var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, githubArgs);
+        // Add --run-as-root flag if requested
+        var runAsRootArg = runAsRoot ? " --run-as-root" : string.Empty;
+
+        var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, githubArgs + runAsRootArg);
 
         string output;
         if (useInteractiveSudo)

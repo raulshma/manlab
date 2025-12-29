@@ -98,6 +98,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     string | null
   >(null);
   const [forceInstall, setForceInstall] = useState(true);
+  const [runAsRoot, setRunAsRoot] = useState(false);
   const [sudoPassword, setSudoPassword] = useState("");
 
   const [logs, setLogs] = useState<Array<{ ts: string; msg: string }>>([]);
@@ -450,6 +451,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       return installAgent(selected.id, {
         serverBaseUrl: effectiveServerBaseUrl,
         force: forceInstall,
+        runAsRoot,
         trustHostKey,
         password: password || undefined,
         privateKeyPem: privateKeyPem || undefined,
@@ -949,6 +951,26 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                               <span className="text-sm font-medium leading-none">
                                 Force Re-install
                               </span>
+                            </label>
+
+                            <label className="flex items-start gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer transition-colors border border-transparent hover:border-border">
+                              <input
+                                type="checkbox"
+                                className="mt-1"
+                                checked={runAsRoot}
+                                onChange={(e) =>
+                                  setRunAsRoot(e.target.checked)
+                                }
+                              />
+                              <div className="space-y-0.5">
+                                <span className="text-sm font-medium leading-none">
+                                  Run agent as root
+                                </span>
+                                <p className="text-xs text-muted-foreground">
+                                  Required for system updates without passwordless sudo. 
+                                  Less secure but enables full management capabilities (package updates, service control).
+                                </p>
+                              </div>
                             </label>
                           </div>
 

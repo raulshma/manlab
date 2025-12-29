@@ -775,6 +775,7 @@ export async function installAgent(
   input: {
     serverBaseUrl: string;
     force: boolean;
+    runAsRoot?: boolean;
     trustHostKey: boolean;
     password?: string;
     privateKeyPem?: string;

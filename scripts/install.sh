@@ -22,7 +22,7 @@ ManLab Agent installer (Linux/macOS)
 
 Usage:
   install.sh --server <http(s)://host:port> [--token <token>] [--install-dir <dir>] [--rid <rid>] [--force]
-            [--prefer-github --github-release-base-url <url> --github-version <tag>]
+            [--prefer-github --github-release-base-url <url> --github-version <tag>] [--run-as-root]
   install.sh --uninstall [--install-dir <dir>]
   install.sh --preview-uninstall [--install-dir <dir>]
 
@@ -35,6 +35,7 @@ Options:
   --prefer-github Prefer downloading the agent binary from GitHub Releases
   --github-release-base-url  Base URL like https://github.com/owner/repo/releases/download
   --github-version           Version tag like v0.0.1-alpha
+  --run-as-root   Run the agent as root (required for system updates without passwordless sudo)
   --uninstall     Stop/disable the agent and remove installed files
   --preview-uninstall  Print JSON describing what would be removed (no changes)
   -h, --help      Show help
@@ -46,6 +47,8 @@ Notes:
       MANLAB_PREFER_GITHUB_DOWNLOAD=1
       MANLAB_GITHUB_RELEASE_BASE_URL=...
       MANLAB_GITHUB_VERSION=...
+  - By default, the agent runs as a dedicated 'manlab-agent' user for security.
+    Use --run-as-root to run as root (enables system updates, service management, etc.).
 EOF
 }
 
@@ -364,6 +367,7 @@ PREVIEW_UNINSTALL=0
 PREFER_GITHUB=""
 GITHUB_RELEASE_BASE_URL=""
 GITHUB_VERSION=""
+RUN_AS_ROOT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -383,6 +387,8 @@ while [[ $# -gt 0 ]]; do
       GITHUB_RELEASE_BASE_URL="${2:-}"; shift 2 ;;
     --github-version)
       GITHUB_VERSION="${2:-}"; shift 2 ;;
+    --run-as-root)
+      RUN_AS_ROOT=1; shift 1 ;;
     --uninstall)
       UNINSTALL=1; shift 1 ;;
     --preview-uninstall)
@@ -689,10 +695,15 @@ echo "  Server:      $SERVER"
 echo "  Hub URL:     $HUB_URL"
 echo "  RID:         $RID"
 echo "  Install dir: $INSTALL_DIR"
+if [[ $RUN_AS_ROOT -eq 1 ]]; then
+  echo "  Run as:      root (system updates enabled)"
+else
+  echo "  Run as:      manlab-agent (dedicated user)"
+fi
 
-# Create a dedicated user if possible.
+# Create a dedicated user if possible (unless running as root).
 AGENT_USER="manlab-agent"
-if [[ "$OS_KIND" == "linux" ]] && ! id "$AGENT_USER" >/dev/null 2>&1; then
+if [[ $RUN_AS_ROOT -eq 0 ]] && [[ "$OS_KIND" == "linux" ]] && ! id "$AGENT_USER" >/dev/null 2>&1; then
   if command -v useradd >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin "$AGENT_USER" || true
   elif command -v adduser >/dev/null 2>&1; then
@@ -786,10 +797,12 @@ if [[ "$OS_KIND" == "linux" ]]; then
   chmod 0600 "$ENV_FILE"
 
   # Write systemd unit.
-  # Use the dedicated user if it exists; otherwise it will run as root.
+  # Use the dedicated user unless --run-as-root was specified.
   UNIT_USER_DIRECTIVE=""
-  if id "$AGENT_USER" >/dev/null 2>&1; then
+  if [[ $RUN_AS_ROOT -eq 0 ]] && id "$AGENT_USER" >/dev/null 2>&1; then
     UNIT_USER_DIRECTIVE="User=$AGENT_USER"
+  elif [[ $RUN_AS_ROOT -eq 1 ]]; then
+    echo "Note: Agent will run as root (--run-as-root specified)."
   fi
 
   cat > "$UNIT_FILE" <<EOF

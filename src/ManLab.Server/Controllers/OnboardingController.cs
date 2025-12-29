@@ -384,6 +384,7 @@ public sealed class OnboardingController : ControllerBase
             Force: request.Force,
             Auth: auth,
             SudoPassword: request.SudoPassword,
+            RunAsRoot: request.RunAsRoot,
             TrustOnFirstUse: request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
             ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
             Actor: User?.Identity?.Name,
@@ -663,6 +664,7 @@ public sealed class OnboardingController : ControllerBase
     public sealed record StartInstallRequest(
         string ServerBaseUrl,
         bool Force,
+        bool RunAsRoot,
         bool TrustHostKey,
         string? Password,
         string? PrivateKeyPem,

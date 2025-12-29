@@ -55,6 +55,7 @@ public sealed class OnboardingJobRunner
         bool Force,
         SshProvisioningService.AuthOptions Auth,
         string? SudoPassword,
+        bool RunAsRoot,
         bool TrustOnFirstUse,
         string? ExpectedHostKeyFingerprint,
         string? Actor,
@@ -186,6 +187,7 @@ public sealed class OnboardingJobRunner
                 serverUri,
                 plainToken,
                 request.Force,
+                request.RunAsRoot,
                 progress,
                 CancellationToken.None);
 
