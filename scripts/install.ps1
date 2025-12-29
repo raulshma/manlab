@@ -84,6 +84,21 @@ param(
   [Parameter(Mandatory = $false)]
   [int]$MaxReconnectDelaySeconds = 120,
 
+  # Remote tools (default-deny; security-sensitive). Use these to explicitly enable tools
+  # during automated installs (e.g., dashboard SSH provisioning). Values are strings so
+  # they can be omitted (tri-state) without implicitly forcing false.
+  [Parameter(Mandatory = $false)]
+  [string]$EnableLogViewer,
+
+  [Parameter(Mandatory = $false)]
+  [string]$EnableScripts,
+
+  [Parameter(Mandatory = $false)]
+  [string]$EnableTerminal,
+
+  [Parameter(Mandatory = $false)]
+  [string]$EnableFileBrowser,
+
   # Optional: force the installer to download the agent from GitHub Releases.
   # This bypasses the server's /api/binaries staging when you want the official release assets.
   # Example base URL: https://github.com/owner/repo/releases/download
@@ -489,7 +504,11 @@ function Update-AgentAppSettings(
   [string]$ServerUrl,
   [string]$AuthToken,
   [int]$HeartbeatIntervalSeconds,
-  [int]$MaxReconnectDelaySeconds
+  [int]$MaxReconnectDelaySeconds,
+  [string]$EnableLogViewer,
+  [string]$EnableScripts,
+  [string]$EnableTerminal,
+  [string]$EnableFileBrowser
 ) {
   $obj = $null
 
@@ -522,6 +541,26 @@ function Update-AgentAppSettings(
   if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
     $obj.Agent.AuthToken = $AuthToken
   }
+
+  # Remote tools: default-deny. Only set when explicitly provided (tri-state).
+  function Try-ApplyBool([string]$name, [string]$value) {
+    if ([string]::IsNullOrWhiteSpace($value)) { return }
+    $b = $null
+    if ([bool]::TryParse($value.Trim(), [ref]$b)) {
+      $obj.Agent.$name = $b
+    }
+  }
+
+  # Prefer explicit installer parameters; fall back to env vars for non-interactive flows.
+  if ([string]::IsNullOrWhiteSpace($EnableLogViewer) -and -not [string]::IsNullOrWhiteSpace($env:MANLAB_ENABLE_LOG_VIEWER)) { $EnableLogViewer = $env:MANLAB_ENABLE_LOG_VIEWER }
+  if ([string]::IsNullOrWhiteSpace($EnableScripts) -and -not [string]::IsNullOrWhiteSpace($env:MANLAB_ENABLE_SCRIPTS)) { $EnableScripts = $env:MANLAB_ENABLE_SCRIPTS }
+  if ([string]::IsNullOrWhiteSpace($EnableTerminal) -and -not [string]::IsNullOrWhiteSpace($env:MANLAB_ENABLE_TERMINAL)) { $EnableTerminal = $env:MANLAB_ENABLE_TERMINAL }
+  if ([string]::IsNullOrWhiteSpace($EnableFileBrowser) -and -not [string]::IsNullOrWhiteSpace($env:MANLAB_ENABLE_FILE_BROWSER)) { $EnableFileBrowser = $env:MANLAB_ENABLE_FILE_BROWSER }
+
+  Try-ApplyBool 'EnableLogViewer' $EnableLogViewer
+  Try-ApplyBool 'EnableScripts' $EnableScripts
+  Try-ApplyBool 'EnableTerminal' $EnableTerminal
+  Try-ApplyBool 'EnableFileBrowser' $EnableFileBrowser
 
   $json = $obj | ConvertTo-Json -Depth 20
   $json | Set-Content -Path $Path -Encoding UTF8
@@ -925,7 +964,7 @@ try {
 # Persist settings into installed appsettings.json so the agent can authorize on restart
 # even if it's launched without the runner/env vars.
 try {
-  Update-AgentAppSettings -Path $appSettingsPath -ServerUrl $hubUrl -AuthToken $AuthToken -HeartbeatIntervalSeconds $HeartbeatIntervalSeconds -MaxReconnectDelaySeconds $MaxReconnectDelaySeconds
+  Update-AgentAppSettings -Path $appSettingsPath -ServerUrl $hubUrl -AuthToken $AuthToken -HeartbeatIntervalSeconds $HeartbeatIntervalSeconds -MaxReconnectDelaySeconds $MaxReconnectDelaySeconds -EnableLogViewer $EnableLogViewer -EnableScripts $EnableScripts -EnableTerminal $EnableTerminal -EnableFileBrowser $EnableFileBrowser
   if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
     Write-Host "Saved auth token to appsettings.json."
   }
@@ -940,6 +979,12 @@ $config = [ordered]@{
   LogPath = $logPath
   HeartbeatIntervalSeconds = $HeartbeatIntervalSeconds
   MaxReconnectDelaySeconds = $MaxReconnectDelaySeconds
+
+  # Remote tool toggles (optional)
+  EnableLogViewer = $EnableLogViewer
+  EnableScripts = $EnableScripts
+  EnableTerminal = $EnableTerminal
+  EnableFileBrowser = $EnableFileBrowser
 }
 $config | ConvertTo-Json -Depth 5 | Set-Content -Path $configPath -Encoding UTF8
 
@@ -971,6 +1016,20 @@ if ($null -ne $config.HeartbeatIntervalSeconds) {
 
 if ($null -ne $config.MaxReconnectDelaySeconds) {
   $env:MANLAB_MAX_RECONNECT_DELAY_SECONDS = [string]$config.MaxReconnectDelaySeconds
+}
+
+# Remote tools (default-deny): only set when present in config.
+if ($null -ne $config.EnableLogViewer -and -not [string]::IsNullOrWhiteSpace([string]$config.EnableLogViewer)) {
+  $env:MANLAB_ENABLE_LOG_VIEWER = [string]$config.EnableLogViewer
+}
+if ($null -ne $config.EnableScripts -and -not [string]::IsNullOrWhiteSpace([string]$config.EnableScripts)) {
+  $env:MANLAB_ENABLE_SCRIPTS = [string]$config.EnableScripts
+}
+if ($null -ne $config.EnableTerminal -and -not [string]::IsNullOrWhiteSpace([string]$config.EnableTerminal)) {
+  $env:MANLAB_ENABLE_TERMINAL = [string]$config.EnableTerminal
+}
+if ($null -ne $config.EnableFileBrowser -and -not [string]::IsNullOrWhiteSpace([string]$config.EnableFileBrowser)) {
+  $env:MANLAB_ENABLE_FILE_BROWSER = [string]$config.EnableFileBrowser
 }
 
 $exe = Join-Path $PSScriptRoot 'manlab-agent.exe'

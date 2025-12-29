@@ -159,16 +159,24 @@ public sealed class SshProvisioningService
         var target = DetectTarget(client);
         progress.Report($"Detected target: {target.Raw}");
 
+        // Security-sensitive defaults: remote tools are default-deny on agents.
+        // For installs initiated by the dashboard (SSH provisioning), we apply the system
+        // Agent Defaults so the installed node matches what the admin configured.
+        var enableLogViewer = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableLogViewer, false);
+        var enableScripts = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableScripts, false);
+        var enableTerminal = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableTerminal, false);
+        var enableFileBrowser = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableFileBrowser, false);
+
         if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(target.OsFamily, "unix", StringComparison.OrdinalIgnoreCase))
         {
-            var logs = await InstallLinuxAsync(client, serverBaseUrl, enrollmentToken, force, runAsRoot, options.SudoPassword, progress, cancellationToken);
+            var logs = await InstallLinuxAsync(client, serverBaseUrl, enrollmentToken, force, runAsRoot, options.SudoPassword, enableLogViewer, enableScripts, enableTerminal, enableFileBrowser, progress, cancellationToken);
             client.Disconnect();
             return (true, hostKey.Fingerprint, false, logs);
         }
         else
         {
-            var logs = await InstallWindowsAsync(client, serverBaseUrl, enrollmentToken, force, progress, cancellationToken);
+            var logs = await InstallWindowsAsync(client, serverBaseUrl, enrollmentToken, force, enableLogViewer, enableScripts, enableTerminal, enableFileBrowser, progress, cancellationToken);
             client.Disconnect();
             return (true, hostKey.Fingerprint, false, logs);
         }
@@ -413,6 +421,10 @@ public sealed class SshProvisioningService
         bool force,
         bool runAsRoot,
         string? sudoPassword,
+        bool enableLogViewer,
+        bool enableScripts,
+        bool enableTerminal,
+        bool enableFileBrowser,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -486,6 +498,8 @@ public sealed class SshProvisioningService
         // Add --run-as-root flag if requested
         var runAsRootArg = runAsRoot ? " --run-as-root" : string.Empty;
 
+        // Linux installer currently persists configuration via its own env file/appsettings.
+        // Keep installer arguments focused on supported flags.
         var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, githubArgs + runAsRootArg);
 
         string output;
@@ -545,6 +559,10 @@ public sealed class SshProvisioningService
         Uri serverBaseUrl,
         string enrollmentToken,
         bool force,
+        bool enableLogViewer,
+        bool enableScripts,
+        bool enableTerminal,
+        bool enableFileBrowser,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -570,12 +588,19 @@ public sealed class SshProvisioningService
 
         var forceArg = force ? " -Force" : string.Empty;
 
+        // Remote tool flags (default-deny). Only pass explicit enables.
+        var toolArgs = string.Empty;
+        if (enableLogViewer) toolArgs += " -EnableLogViewer true";
+        if (enableScripts) toolArgs += " -EnableScripts true";
+        if (enableTerminal) toolArgs += " -EnableTerminal true";
+        if (enableFileBrowser) toolArgs += " -EnableFileBrowser true";
+
         // Download to %TEMP% then execute with parameters.
         // Note: escaping is delicate. Use single quotes around literals where possible.
         var ps = "$ErrorActionPreference='Stop'; " +
                  "$p = Join-Path $env:TEMP 'manlab-install.ps1'; " +
                  $"Invoke-WebRequest -UseBasicParsing -Uri '{EscapeSingleQuotes(url)}' -OutFile $p; " +
-                 $"& $p -Server '{EscapeSingleQuotes(server)}' -AuthToken '{EscapeSingleQuotes(enrollmentToken)}'{forceArg};";
+                 $"& $p -Server '{EscapeSingleQuotes(server)}' -AuthToken '{EscapeSingleQuotes(enrollmentToken)}'{forceArg}{toolArgs};";
 
         var cmd = $"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{EscapeDoubleQuotes(ps)}\"";
 
