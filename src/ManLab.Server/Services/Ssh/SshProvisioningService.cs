@@ -883,30 +883,43 @@ public sealed class SshProvisioningService
         // Best-effort:
         // - Linux: uname + /etc/os-release
         // - Windows: PowerShell probes
+        //
+        // IMPORTANT: Windows may have uname available via WSL, Git Bash, Cygwin, etc.
+        // We must verify it's actually a Unix-like system before assuming Linux.
+        // Check for /etc/os-release or /bin/sh to confirm we're on a real Unix system.
 
-        var unameS = Execute(client, "uname -s 2>/dev/null || true", maxChars: 256)?.Trim();
-        var unameM = Execute(client, "uname -m 2>/dev/null || true", maxChars: 256)?.Trim();
+        var unameS = Execute(client, "uname -s 2>/dev/null || echo ''", maxChars: 256)?.Trim();
+        var unameM = Execute(client, "uname -m 2>/dev/null || echo ''", maxChars: 256)?.Trim();
 
+        // Only treat as Linux/Unix if uname returns a value AND we can verify it's a real Unix system.
+        // Windows with Git Bash/WSL may have uname, but won't have a native /bin/sh or /etc/os-release.
         if (!string.IsNullOrWhiteSpace(unameS))
         {
-            var osRelease = Execute(client, "sh -c 'cat /etc/os-release 2>/dev/null || true'", maxChars: 16_384);
-            var (id, versionId, name) = ParseOsRelease(osRelease);
-            var distro = id ?? name;
-
-            var raw = string.Join(' ', new[]
+            // Verify this is a real Unix-like system by checking for /bin/sh or /etc/os-release
+            var isRealUnix = Execute(client, "sh -c 'test -f /etc/os-release && echo YES || (test -x /bin/sh && echo YES || echo NO)'", maxChars: 64)?.Trim();
+            
+            if (string.Equals(isRealUnix, "YES", StringComparison.OrdinalIgnoreCase))
             {
-                "Linux",
-                distro,
-                versionId,
-                string.IsNullOrWhiteSpace(unameM) ? null : unameM
-            }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                var osRelease = Execute(client, "sh -c 'cat /etc/os-release 2>/dev/null || true'", maxChars: 16_384);
+                var (id, versionId, name) = ParseOsRelease(osRelease);
+                var distro = id ?? name;
 
-            return new TargetInfo(
-                OsFamily: "linux",
-                OsDistro: distro,
-                OsVersion: versionId,
-                CpuArch: unameM,
-                Raw: raw);
+                var raw = string.Join(' ', new[]
+                {
+                    "Linux",
+                    distro,
+                    versionId,
+                    string.IsNullOrWhiteSpace(unameM) ? null : unameM
+                }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+                return new TargetInfo(
+                    OsFamily: "linux",
+                    OsDistro: distro,
+                    OsVersion: versionId,
+                    CpuArch: unameM,
+                    Raw: raw);
+            }
+            // If uname works but Unix verification fails, fall through to Windows detection
         }
 
         // Windows target over OpenSSH: try PowerShell.
