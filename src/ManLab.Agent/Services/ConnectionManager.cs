@@ -28,7 +28,13 @@ public sealed class ConnectionManager : IAsyncDisposable
     private Guid _nodeId;
     private int _reconnectAttempt;
     private bool _isConnected;
+    private bool _isRegistered;
     private NodeMetadata? _cachedMetadata;
+
+    // Prevent concurrent (re)registration attempts during reconnects.
+    private readonly SemaphoreSlim _registerGate = new(1, 1);
+    private CancellationTokenSource? _registrationLoopCts;
+    private Task? _registrationLoopTask;
 
     /// <summary>
     /// Event raised when a command is received from the server.
@@ -43,7 +49,12 @@ public sealed class ConnectionManager : IAsyncDisposable
     /// <summary>
     /// Gets whether the connection is currently established.
     /// </summary>
-    public bool IsConnected => _isConnected;
+    public bool IsConnected => _isConnected && _isRegistered;
+
+    /// <summary>
+    /// Gets whether the SignalR transport is currently connected (may not be registered yet).
+    /// </summary>
+    public bool IsTransportConnected => _isConnected;
 
     /// <summary>
     /// Gets the node ID assigned by the server after registration.
@@ -129,6 +140,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             {
                 await _connection.StartAsync(cancellationToken).ConfigureAwait(false);
                 _isConnected = true;
+                _isRegistered = false;
                 _reconnectAttempt = 0;
                 Log.ConnectionEstablished(_logger);
 
@@ -137,11 +149,13 @@ public sealed class ConnectionManager : IAsyncDisposable
                 try
                 {
                     await RegisterAsync().ConfigureAwait(false);
+                    _isRegistered = true;
                     return;
                 }
                 catch (Exception regEx)
                 {
                     _isConnected = false;
+                    _isRegistered = false;
                     try
                     {
                         await _connection.StopAsync(cancellationToken).ConfigureAwait(false);
@@ -187,6 +201,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             catch (Exception ex)
             {
                 _isConnected = false;
+                _isRegistered = false;
 
                 // Check if this is a non-transient error (e.g., 401 during connection)
                 if (TryExtractNonTransientError(ex, out var errorCode, out var errorMessage))
@@ -277,6 +292,114 @@ public sealed class ConnectionManager : IAsyncDisposable
         }
     }
 
+    private void StartRegistrationLoopIfNeeded()
+    {
+        // If already registered, nothing to do.
+        if (_isRegistered)
+        {
+            return;
+        }
+
+        // If a loop is already running, keep it.
+        if (_registrationLoopTask is { IsCompleted: false })
+        {
+            return;
+        }
+
+        _registrationLoopCts?.Cancel();
+        _registrationLoopCts?.Dispose();
+        _registrationLoopCts = new CancellationTokenSource();
+
+        _registrationLoopTask = Task.Run(
+            () => RegistrationLoopAsync(_registrationLoopCts.Token),
+            CancellationToken.None);
+    }
+
+    private async Task RegistrationLoopAsync(CancellationToken cancellationToken)
+    {
+        // Best-effort: attempt to (re)register until success or we detect a non-transient error.
+        // This avoids a race where the transport reconnects but the hub context isn't rebound yet.
+
+        var attempt = 0;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            if (!_isConnected)
+            {
+                return;
+            }
+
+            if (_heartbeatRetryManager.IsFatallyErrored)
+            {
+                return;
+            }
+
+            if (_isRegistered)
+            {
+                return;
+            }
+
+            attempt++;
+
+            try
+            {
+                await _registerGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    // Another attempt may have completed while we were waiting.
+                    if (_isRegistered)
+                    {
+                        return;
+                    }
+
+                    await RegisterAsync().ConfigureAwait(false);
+                    _isRegistered = true;
+                    _heartbeatRetryManager.RecordSuccess();
+                    _logger.LogInformation("Registration complete after reconnect (attempt {Attempt})", attempt);
+                    return;
+                }
+                finally
+                {
+                    _registerGate.Release();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                // If this looks like an auth/non-transient issue, stop retrying and enter fatal state.
+                if (TryExtractNonTransientError(ex, out var errorCode, out var errorMessage))
+                {
+                    var shouldStop = _heartbeatRetryManager.RecordNonTransientFailure(errorCode, errorMessage);
+                    if (shouldStop)
+                    {
+                        _logger.LogError(ex, "Registration failed with non-transient error; entering fatal state");
+                        return;
+                    }
+                }
+
+                // Transient failure: retry with bounded exponential backoff.
+                var backoffSeconds = Math.Min(Math.Pow(2, Math.Min(attempt, 10) - 1), _config.MaxReconnectDelaySeconds);
+                var jitter = Random.Shared.NextDouble() * 0.2 - 0.1;
+                backoffSeconds *= (1 + jitter);
+                var delay = TimeSpan.FromSeconds(Math.Max(1, backoffSeconds));
+
+                _logger.LogWarning(ex, "Registration retry scheduled in {DelaySeconds:F1}s (attempt {Attempt})", delay.TotalSeconds, attempt);
+
+                try
+                {
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Sends a heartbeat with telemetry data to the server.
     /// Respects exponential backoff if previous heartbeats have failed.
@@ -285,7 +408,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     /// <param name="bypassBackoff">If true, ignores backoff timing (used for admin-triggered pings).</param>
     public async Task SendHeartbeatAsync(TelemetryData data, bool bypassBackoff = false)
     {
-        if (!_isConnected || _nodeId == Guid.Empty)
+        if (!_isConnected || !_isRegistered || _nodeId == Guid.Empty)
         {
             _logger.LogWarning("Cannot send heartbeat: not connected or not registered");
             return;
@@ -347,7 +470,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     /// </summary>
     public async Task UpdateCommandStatusAsync(Guid commandId, string status, string? logs = null)
     {
-        if (!_isConnected)
+        if (!_isConnected || !_isRegistered)
         {
             _logger.LogWarning("Cannot update command status: not connected");
             return;
@@ -382,7 +505,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     /// </summary>
     public async Task SendServiceStatusSnapshotsAsync(IReadOnlyList<ServiceStatusSnapshotIngest> snapshots)
     {
-        if (!_isConnected || _nodeId == Guid.Empty)
+        if (!_isConnected || !_isRegistered || _nodeId == Guid.Empty)
         {
             _logger.LogWarning("Cannot send service status snapshots: not connected or not registered");
             return;
@@ -409,7 +532,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     /// </summary>
     public async Task SendSmartDriveSnapshotsAsync(IReadOnlyList<SmartDriveSnapshotIngest> snapshots)
     {
-        if (!_isConnected || _nodeId == Guid.Empty)
+        if (!_isConnected || !_isRegistered || _nodeId == Guid.Empty)
         {
             _logger.LogWarning("Cannot send SMART drive snapshots: not connected or not registered");
             return;
@@ -439,7 +562,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     /// <param name="isClosed">True if the session has ended.</param>
     public async Task SendTerminalOutputAsync(Guid sessionId, string output, bool isClosed)
     {
-        if (!_isConnected)
+        if (!_isConnected || !_isRegistered)
         {
             _logger.LogWarning("Cannot send terminal output: not connected");
             return;
@@ -504,7 +627,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     {
         _logger.LogInformation("Admin ping request received");
 
-        if (!_isConnected || _nodeId == Guid.Empty)
+        if (!_isConnected || !_isRegistered || _nodeId == Guid.Empty)
         {
             _logger.LogWarning("Cannot respond to ping: not connected or not registered");
             return;
@@ -548,6 +671,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     private Task OnConnectionClosed(Exception? exception)
     {
         _isConnected = false;
+        _isRegistered = false;
 
         if (exception != null)
         {
@@ -564,6 +688,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     private Task OnReconnecting(Exception? exception)
     {
         _isConnected = false;
+        _isRegistered = false;
         _logger.LogWarning("Connection lost. Attempting to reconnect...");
         return Task.CompletedTask;
     }
@@ -571,11 +696,27 @@ public sealed class ConnectionManager : IAsyncDisposable
     private async Task OnReconnected(string? connectionId)
     {
         _isConnected = true;
+        _isRegistered = false;
         _reconnectAttempt = 0;
         _logger.LogInformation("Reconnected to server. Connection ID: {ConnectionId}", connectionId);
 
-        // Re-register after reconnection
-        await RegisterAsync().ConfigureAwait(false);
+        // Re-register after reconnection (in a loop to handle transient failures).
+        StartRegistrationLoopIfNeeded();
+
+        // Await the current loop once so that callers can observe readiness shortly after reconnect.
+        // If the loop fails, we remain unregistered and telemetry will be gated.
+        var loop = _registrationLoopTask;
+        if (loop is not null)
+        {
+            try
+            {
+                await loop.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Swallow: registration loop logs failures and may intentionally stop on fatal auth errors.
+            }
+        }
     }
 
     private TimeSpan CalculateBackoffDelay()
@@ -644,13 +785,15 @@ public sealed class ConnectionManager : IAsyncDisposable
 
             // Check message for HTTP status patterns
             var message = current.Message ?? string.Empty;
-            if (message.Contains("401") || message.Contains("Unauthorized"))
+            if (message.Contains("401", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase))
             {
                 errorCode = 401;
                 errorMessage = message;
                 return true;
             }
-            if (message.Contains("403") || message.Contains("Forbidden"))
+            if (message.Contains("403", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("Forbidden", StringComparison.OrdinalIgnoreCase))
             {
                 errorCode = 403;
                 errorMessage = message;
@@ -661,6 +804,44 @@ public sealed class ConnectionManager : IAsyncDisposable
         }
 
         return false;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            _registrationLoopCts?.Cancel();
+        }
+        catch
+        {
+            // ignore
+        }
+
+        try
+        {
+            if (_registrationLoopTask is not null)
+            {
+                await _registrationLoopTask.ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        _registrationLoopCts?.Dispose();
+        _registerGate.Dispose();
+
+        try
+        {
+            await _connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // ignore
+        }
+
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>
@@ -933,11 +1114,6 @@ public sealed class ConnectionManager : IAsyncDisposable
         return false;
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        await _connection.DisposeAsync().ConfigureAwait(false);
-        GC.SuppressFinalize(this);
-    }
 }
 
 /// <summary>

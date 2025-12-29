@@ -1054,6 +1054,20 @@ public class AgentHub : Hub
     /// <param name="nextRetryTimeUtc">When the next heartbeat will be attempted.</param>
     public async Task ReportBackoffStatus(Guid nodeId, int consecutiveFailures, DateTime nextRetryTimeUtc)
     {
+        // Verify agent context
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before reporting backoff status.");
+        }
+
+        if (registeredNodeId != nodeId)
+        {
+            _logger.LogWarning(
+                "Rejected backoff status for node {NodeId}: connection bound to node {RegisteredNodeId}",
+                nodeId, registeredNodeId);
+            throw new HubException("Unauthorized: nodeId does not match registered connection.");
+        }
+
         _logger.LogInformation(
             "Node {NodeId} backoff status: {Failures} failures, next retry at {NextRetry:O}",
             nodeId, consecutiveFailures, nextRetryTimeUtc);
@@ -1070,6 +1084,20 @@ public class AgentHub : Hub
     /// <param name="nextRetryTimeUtc">Next retry time if ping failed (null if successful).</param>
     public async Task PingResponse(Guid nodeId, bool success, DateTime? nextRetryTimeUtc)
     {
+        // Verify agent context
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before responding to ping.");
+        }
+
+        if (registeredNodeId != nodeId)
+        {
+            _logger.LogWarning(
+                "Rejected ping response for node {NodeId}: connection bound to node {RegisteredNodeId}",
+                nodeId, registeredNodeId);
+            throw new HubException("Unauthorized: nodeId does not match registered connection.");
+        }
+
         _logger.LogInformation(
             "Ping response from node {NodeId}: success={Success}, nextRetry={NextRetry}",
             nodeId, success, nextRetryTimeUtc?.ToString("O") ?? "N/A");
