@@ -20,6 +20,7 @@ public static class SettingKeys
         public const string EnableLogViewer = "Agent.EnableLogViewer";
         public const string EnableScripts = "Agent.EnableScripts";
         public const string EnableTerminal = "Agent.EnableTerminal";
+        public const string EnableFileBrowser = "Agent.EnableFileBrowser";
 
         // Ping settings
         public const string PingTarget = "Agent.PingTarget";
@@ -34,6 +35,7 @@ public static class SettingKeys
         public const string ScriptMinSecondsBetweenRuns = "Agent.ScriptMinSecondsBetweenRuns";
         public const string TerminalMaxOutputBytes = "Agent.TerminalMaxOutputBytes";
         public const string TerminalMaxDurationSeconds = "Agent.TerminalMaxDurationSeconds";
+        public const string FileBrowserMaxBytes = "Agent.FileBrowserMaxBytes";
 
         // Agent self-logging settings
         public const string AgentLogFilePath = "Agent.AgentLogFilePath";

@@ -14,6 +14,7 @@ export const SettingKeys = {
     EnableLogViewer: "Agent.EnableLogViewer",
     EnableScripts: "Agent.EnableScripts",
     EnableTerminal: "Agent.EnableTerminal",
+    EnableFileBrowser: "Agent.EnableFileBrowser",
     // Ping settings
     PingTarget: "Agent.PingTarget",
     PingTimeoutMs: "Agent.PingTimeoutMs",
@@ -26,6 +27,7 @@ export const SettingKeys = {
     ScriptMinSecondsBetweenRuns: "Agent.ScriptMinSecondsBetweenRuns",
     TerminalMaxOutputBytes: "Agent.TerminalMaxOutputBytes",
     TerminalMaxDurationSeconds: "Agent.TerminalMaxDurationSeconds",
+    FileBrowserMaxBytes: "Agent.FileBrowserMaxBytes",
     // Agent self-logging settings
     AgentLogFilePath: "Agent.AgentLogFilePath",
     AgentLogFileMaxBytes: "Agent.AgentLogFileMaxBytes",

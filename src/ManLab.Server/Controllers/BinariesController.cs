@@ -242,6 +242,7 @@ public sealed partial class BinariesController : ControllerBase
         agent["EnableLogViewer"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableLogViewer, GetBool(agent, "EnableLogViewer", false));
         agent["EnableScripts"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableScripts, GetBool(agent, "EnableScripts", false));
         agent["EnableTerminal"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableTerminal, GetBool(agent, "EnableTerminal", false));
+        agent["EnableFileBrowser"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableFileBrowser, GetBool(agent, "EnableFileBrowser", false));
 
         // Ping
         agent["PingTarget"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.PingTarget, GetString(agent, "PingTarget", string.Empty) ?? string.Empty);
@@ -256,6 +257,7 @@ public sealed partial class BinariesController : ControllerBase
         agent["ScriptMinSecondsBetweenRuns"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.ScriptMinSecondsBetweenRuns, GetInt(agent, "ScriptMinSecondsBetweenRuns", 1));
         agent["TerminalMaxOutputBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TerminalMaxOutputBytes, GetInt(agent, "TerminalMaxOutputBytes", 64 * 1024));
         agent["TerminalMaxDurationSeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TerminalMaxDurationSeconds, GetInt(agent, "TerminalMaxDurationSeconds", 10 * 60));
+        agent["FileBrowserMaxBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.FileBrowserMaxBytes, GetInt(agent, "FileBrowserMaxBytes", 2 * 1024 * 1024));
     }
 
     private string GetDistributionRoot()

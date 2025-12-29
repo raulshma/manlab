@@ -35,6 +35,7 @@ const DEFAULTS = {
   enableLogViewer: "false",
   enableScripts: "false",
   enableTerminal: "false",
+  enableFileBrowser: "false",
   logMaxBytes: "65536",
   logMinSecondsBetweenRequests: "1",
   scriptMaxOutputBytes: "65536",
@@ -42,6 +43,7 @@ const DEFAULTS = {
   scriptMinSecondsBetweenRuns: "1",
   terminalMaxOutputBytes: "65536",
   terminalMaxDurationSeconds: "600",
+  fileBrowserMaxBytes: String(2 * 1024 * 1024),
   // Agent self-logging
   agentLogFilePath: "",
   agentLogFileMaxBytes: "5242880",
@@ -88,6 +90,7 @@ export function AgentDefaultsSettings() {
       enableLogViewer: get(SettingKeys.Agent.EnableLogViewer, DEFAULTS.enableLogViewer),
       enableScripts: get(SettingKeys.Agent.EnableScripts, DEFAULTS.enableScripts),
       enableTerminal: get(SettingKeys.Agent.EnableTerminal, DEFAULTS.enableTerminal),
+      enableFileBrowser: get(SettingKeys.Agent.EnableFileBrowser, DEFAULTS.enableFileBrowser),
       logMaxBytes: get(SettingKeys.Agent.LogMaxBytes, DEFAULTS.logMaxBytes),
       logMinSecondsBetweenRequests: get(SettingKeys.Agent.LogMinSecondsBetweenRequests, DEFAULTS.logMinSecondsBetweenRequests),
       scriptMaxOutputBytes: get(SettingKeys.Agent.ScriptMaxOutputBytes, DEFAULTS.scriptMaxOutputBytes),
@@ -95,6 +98,7 @@ export function AgentDefaultsSettings() {
       scriptMinSecondsBetweenRuns: get(SettingKeys.Agent.ScriptMinSecondsBetweenRuns, DEFAULTS.scriptMinSecondsBetweenRuns),
       terminalMaxOutputBytes: get(SettingKeys.Agent.TerminalMaxOutputBytes, DEFAULTS.terminalMaxOutputBytes),
       terminalMaxDurationSeconds: get(SettingKeys.Agent.TerminalMaxDurationSeconds, DEFAULTS.terminalMaxDurationSeconds),
+      fileBrowserMaxBytes: get(SettingKeys.Agent.FileBrowserMaxBytes, DEFAULTS.fileBrowserMaxBytes),
       agentLogFilePath: get(SettingKeys.Agent.AgentLogFilePath, DEFAULTS.agentLogFilePath),
       agentLogFileMaxBytes: get(SettingKeys.Agent.AgentLogFileMaxBytes, DEFAULTS.agentLogFileMaxBytes),
       agentLogFileRetainedFiles: get(SettingKeys.Agent.AgentLogFileRetainedFiles, DEFAULTS.agentLogFileRetainedFiles),
@@ -138,6 +142,7 @@ export function AgentDefaultsSettings() {
       { key: SettingKeys.Agent.EnableLogViewer, value: values.enableLogViewer, category: "Agent", description: "Enable remote log viewer" },
       { key: SettingKeys.Agent.EnableScripts, value: values.enableScripts, category: "Agent", description: "Enable remote script execution" },
       { key: SettingKeys.Agent.EnableTerminal, value: values.enableTerminal, category: "Agent", description: "Enable remote terminal access" },
+      { key: SettingKeys.Agent.EnableFileBrowser, value: values.enableFileBrowser, category: "Agent", description: "Enable remote file browser" },
       { key: SettingKeys.Agent.LogMaxBytes, value: values.logMaxBytes, category: "Agent", description: "Maximum bytes for log reads" },
       { key: SettingKeys.Agent.LogMinSecondsBetweenRequests, value: values.logMinSecondsBetweenRequests, category: "Agent", description: "Minimum seconds between log requests" },
       { key: SettingKeys.Agent.ScriptMaxOutputBytes, value: values.scriptMaxOutputBytes, category: "Agent", description: "Maximum bytes for script output" },
@@ -145,13 +150,14 @@ export function AgentDefaultsSettings() {
       { key: SettingKeys.Agent.ScriptMinSecondsBetweenRuns, value: values.scriptMinSecondsBetweenRuns, category: "Agent", description: "Minimum seconds between script runs" },
       { key: SettingKeys.Agent.TerminalMaxOutputBytes, value: values.terminalMaxOutputBytes, category: "Agent", description: "Maximum bytes for terminal output" },
       { key: SettingKeys.Agent.TerminalMaxDurationSeconds, value: values.terminalMaxDurationSeconds, category: "Agent", description: "Maximum terminal session duration" },
+      { key: SettingKeys.Agent.FileBrowserMaxBytes, value: values.fileBrowserMaxBytes, category: "Agent", description: "Maximum bytes for file reads" },
       { key: SettingKeys.Agent.AgentLogFilePath, value: values.agentLogFilePath || null, category: "Agent", description: "Path to agent self-log file" },
       { key: SettingKeys.Agent.AgentLogFileMaxBytes, value: values.agentLogFileMaxBytes, category: "Agent", description: "Max agent log file size before rotation" },
       { key: SettingKeys.Agent.AgentLogFileRetainedFiles, value: values.agentLogFileRetainedFiles, category: "Agent", description: "Number of rotated agent log files to keep" },
     ]);
   };
 
-  const hasRemoteToolsEnabled = values.enableLogViewer === "true" || values.enableScripts === "true" || values.enableTerminal === "true";
+  const hasRemoteToolsEnabled = values.enableLogViewer === "true" || values.enableScripts === "true" || values.enableTerminal === "true" || values.enableFileBrowser === "true";
 
   return (
     <Card>
@@ -302,7 +308,7 @@ export function AgentDefaultsSettings() {
               </AlertDescription>
             </Alert>
           )}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="flex items-center justify-between p-3 border rounded-lg">
               <div>
                 <Label htmlFor="enableLogViewer">Log Viewer</Label>
@@ -323,6 +329,13 @@ export function AgentDefaultsSettings() {
                 <p className="text-xs text-muted-foreground">Shell access</p>
               </div>
               <Switch id="enableTerminal" checked={values.enableTerminal === "true"} onCheckedChange={(c) => updateField("enableTerminal", String(c))} />
+            </div>
+            <div className="flex items-center justify-between p-3 border rounded-lg">
+              <div>
+                <Label htmlFor="enableFileBrowser">File Browser</Label>
+                <p className="text-xs text-muted-foreground">Browse and read files</p>
+              </div>
+              <Switch id="enableFileBrowser" checked={values.enableFileBrowser === "true"} onCheckedChange={(c) => updateField("enableFileBrowser", String(c))} />
             </div>
           </div>
         </div>
@@ -352,6 +365,10 @@ export function AgentDefaultsSettings() {
             <div className="grid gap-2">
               <Label htmlFor="terminalMaxDuration">Terminal Max Duration (s)</Label>
               <Input id="terminalMaxDuration" type="number" value={values.terminalMaxDurationSeconds} onChange={(e) => updateField("terminalMaxDurationSeconds", e.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="fileBrowserMaxBytes">File Browser Max Bytes</Label>
+              <Input id="fileBrowserMaxBytes" type="number" min={1} value={values.fileBrowserMaxBytes} onChange={(e) => updateField("fileBrowserMaxBytes", e.target.value)} />
             </div>
           </div>
         </div>
