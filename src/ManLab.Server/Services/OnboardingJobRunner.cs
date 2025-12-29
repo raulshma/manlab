@@ -54,6 +54,7 @@ public sealed class OnboardingJobRunner
         string ServerBaseUrl,
         bool Force,
         SshProvisioningService.AuthOptions Auth,
+        string? SudoPassword,
         bool TrustOnFirstUse,
         string? ExpectedHostKeyFingerprint,
         string? Actor,
@@ -63,6 +64,7 @@ public sealed class OnboardingJobRunner
     public sealed record UninstallRequest(
         string ServerBaseUrl,
         SshProvisioningService.AuthOptions Auth,
+        string? SudoPassword,
         bool TrustOnFirstUse,
         string? ExpectedHostKeyFingerprint,
         string? Actor,
@@ -174,7 +176,8 @@ public sealed class OnboardingJobRunner
                 Username: machine.Username,
                 Auth: request.Auth,
                 ExpectedHostKeyFingerprint: expectedFingerprint,
-                TrustOnFirstUse: request.TrustOnFirstUse);
+                TrustOnFirstUse: request.TrustOnFirstUse,
+                SudoPassword: request.SudoPassword);
 
             var progress = new Progress<string>(msg => _ = PublishLogAsync(machineId, msg));
 
@@ -414,7 +417,8 @@ public sealed class OnboardingJobRunner
                 Username: machine.Username,
                 Auth: request.Auth,
                 ExpectedHostKeyFingerprint: expectedFingerprint,
-                TrustOnFirstUse: request.TrustOnFirstUse);
+                TrustOnFirstUse: request.TrustOnFirstUse,
+                SudoPassword: request.SudoPassword);
 
             var progress = new Progress<string>(msg => _ = PublishLogAsync(machineId, msg));
 

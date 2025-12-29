@@ -98,6 +98,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     string | null
   >(null);
   const [forceInstall, setForceInstall] = useState(true);
+  const [sudoPassword, setSudoPassword] = useState("");
 
   const [logs, setLogs] = useState<Array<{ ts: string; msg: string }>>([]);
 
@@ -114,6 +115,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         password: password || undefined,
         privateKeyPem: privateKeyPem || undefined,
         privateKeyPassphrase: privateKeyPassphrase || undefined,
+        sudoPassword: sudoPassword || undefined,
       });
     },
     onSuccess: (data) => {
@@ -385,6 +387,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     setLastTest(null);
     setTrustHostKey(false);
     setCredErrors({});
+    setSudoPassword("");
   };
 
   // Auto-scroll logs
@@ -419,6 +422,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         password: password || undefined,
         privateKeyPem: privateKeyPem || undefined,
         privateKeyPassphrase: privateKeyPassphrase || undefined,
+        sudoPassword: sudoPassword || undefined,
         trustHostKey,
       });
     },
@@ -450,6 +454,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         password: password || undefined,
         privateKeyPem: privateKeyPem || undefined,
         privateKeyPassphrase: privateKeyPassphrase || undefined,
+        sudoPassword: sudoPassword || undefined,
       });
     },
     onSuccess: async () => {
@@ -474,6 +479,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         password: password || undefined,
         privateKeyPem: privateKeyPem || undefined,
         privateKeyPassphrase: privateKeyPassphrase || undefined,
+        sudoPassword: sudoPassword || undefined,
       });
     },
     onSuccess: async () => {
@@ -944,6 +950,22 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                                 Force Re-install
                               </span>
                             </label>
+                          </div>
+
+                          <div>
+                            <Label className="text-xs mb-1.5 block">
+                              Sudo Password (Optional)
+                            </Label>
+                            <Input
+                              type="password"
+                              value={sudoPassword}
+                              onChange={(e) => setSudoPassword(e.target.value)}
+                              placeholder="••••••••"
+                              className="bg-background"
+                            />
+                            <p className="text-[10px] text-muted-foreground mt-1.5">
+                              Only needed for Linux if the SSH user requires a password for sudo. Leave empty if running as root or if passwordless sudo is configured.
+                            </p>
                           </div>
                         </CardContent>
                       </Card>

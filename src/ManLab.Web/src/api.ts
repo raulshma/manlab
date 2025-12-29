@@ -733,6 +733,7 @@ export async function testSshConnection(
     password?: string;
     privateKeyPem?: string;
     privateKeyPassphrase?: string;
+    sudoPassword?: string;
     trustHostKey: boolean;
   }
 ): Promise<SshTestResponse> {
@@ -759,6 +760,7 @@ export async function installAgent(
     password?: string;
     privateKeyPem?: string;
     privateKeyPassphrase?: string;
+    sudoPassword?: string;
   }
 ): Promise<StartInstallResponse> {
   const response = await fetch(
@@ -783,6 +785,7 @@ export async function uninstallAgent(
     password?: string;
     privateKeyPem?: string;
     privateKeyPassphrase?: string;
+    sudoPassword?: string;
   }
 ): Promise<StartUninstallResponse> {
   const response = await fetch(
@@ -807,6 +810,7 @@ export async function fetchUninstallPreview(
     password?: string;
     privateKeyPem?: string;
     privateKeyPassphrase?: string;
+    sudoPassword?: string;
   }
 ): Promise<UninstallPreviewResponse> {
   const response = await fetch(

@@ -28,7 +28,8 @@ public sealed class SshProvisioningService
         string Username,
         AuthOptions Auth,
         string? ExpectedHostKeyFingerprint,
-        bool TrustOnFirstUse);
+        bool TrustOnFirstUse,
+        string? SudoPassword = null);
 
     public abstract record AuthOptions;
 
@@ -133,7 +134,7 @@ public sealed class SshProvisioningService
         if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(target.OsFamily, "unix", StringComparison.OrdinalIgnoreCase))
         {
-            var logs = await InstallLinuxAsync(client, serverBaseUrl, enrollmentToken, force, progress, cancellationToken);
+            var logs = await InstallLinuxAsync(client, serverBaseUrl, enrollmentToken, force, options.SudoPassword, progress, cancellationToken);
             client.Disconnect();
             return (true, hostKey.Fingerprint, false, logs);
         }
@@ -173,7 +174,7 @@ public sealed class SshProvisioningService
         if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(target.OsFamily, "unix", StringComparison.OrdinalIgnoreCase))
         {
-            var logs = await UninstallLinuxAsync(client, serverBaseUrl, progress, cancellationToken);
+            var logs = await UninstallLinuxAsync(client, serverBaseUrl, options.SudoPassword, progress, cancellationToken);
             client.Disconnect();
             return (true, hostKey.Fingerprint, false, logs);
         }
@@ -382,6 +383,7 @@ public sealed class SshProvisioningService
         Uri serverBaseUrl,
         string enrollmentToken,
         bool force,
+        string? sudoPassword,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -401,13 +403,31 @@ public sealed class SshProvisioningService
         var server = serverBaseUrl.ToString().TrimEnd('/');
         var url = server + "/install.sh";
 
-        progress.Report("Running Linux installer (requires root or passwordless sudo)...");
-
         var idu = Execute(client, "id -u", maxChars: 64)?.Trim();
         var isRoot = string.Equals(idu, "0", StringComparison.Ordinal);
 
-        // Non-interactive: sudo -n will fail if it needs a password.
-        var sudoPrefix = isRoot ? string.Empty : "sudo -n ";
+        // Determine sudo mode based on whether password is provided
+        string sudoPrefix;
+        var useInteractiveSudo = false;
+
+        if (isRoot)
+        {
+            sudoPrefix = string.Empty;
+            progress.Report("Running Linux installer as root...");
+        }
+        else if (!string.IsNullOrWhiteSpace(sudoPassword))
+        {
+            // Use interactive sudo with password
+            sudoPrefix = "sudo ";
+            useInteractiveSudo = true;
+            progress.Report("Running Linux installer with sudo (interactive password)...");
+        }
+        else
+        {
+            // Non-interactive: sudo -n will fail if it needs a password.
+            sudoPrefix = "sudo -n ";
+            progress.Report("Running Linux installer (requires root or passwordless sudo)...");
+        }
 
         var forceArg = force ? " --force" : string.Empty;
 
@@ -436,7 +456,17 @@ public sealed class SshProvisioningService
 
         var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, githubArgs);
 
-        var output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
+        string output;
+        if (useInteractiveSudo)
+        {
+            // Use PTY-based execution for interactive sudo
+            output = ExecuteWithSudo(client, cmd, sudoPassword!, maxChars: 200_000, timeout: TimeSpan.FromMinutes(5));
+        }
+        else
+        {
+            output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
+        }
+
         progress.Report("Linux installer finished.");
         return RedactToken(output, enrollmentToken);
     }
@@ -525,6 +555,7 @@ public sealed class SshProvisioningService
     private static Task<string> UninstallLinuxAsync(
         SshClient client,
         Uri serverBaseUrl,
+        string? sudoPassword,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -533,15 +564,45 @@ public sealed class SshProvisioningService
         var server = serverBaseUrl.ToString().TrimEnd('/');
         var url = server + "/install.sh";
 
-        progress.Report("Running Linux uninstaller (requires root or passwordless sudo)...");
-
         var idu = Execute(client, "id -u", maxChars: 64)?.Trim();
         var isRoot = string.Equals(idu, "0", StringComparison.Ordinal);
-        var sudoPrefix = isRoot ? string.Empty : "sudo -n ";
 
-          var cmd = BuildLinuxUninstallCommand(url, sudoPrefix);
+        // Determine sudo mode based on whether password is provided
+        string sudoPrefix;
+        var useInteractiveSudo = false;
 
-        var output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
+        if (isRoot)
+        {
+            sudoPrefix = string.Empty;
+            progress.Report("Running Linux uninstaller as root...");
+        }
+        else if (!string.IsNullOrWhiteSpace(sudoPassword))
+        {
+            // Use interactive sudo with password
+            sudoPrefix = "sudo ";
+            useInteractiveSudo = true;
+            progress.Report("Running Linux uninstaller with sudo (interactive password)...");
+        }
+        else
+        {
+            // Non-interactive: sudo -n will fail if it needs a password.
+            sudoPrefix = "sudo -n ";
+            progress.Report("Running Linux uninstaller (requires root or passwordless sudo)...");
+        }
+
+        var cmd = BuildLinuxUninstallCommand(url, sudoPrefix);
+
+        string output;
+        if (useInteractiveSudo)
+        {
+            // Use PTY-based execution for interactive sudo
+            output = ExecuteWithSudo(client, cmd, sudoPassword!, maxChars: 200_000, timeout: TimeSpan.FromMinutes(5));
+        }
+        else
+        {
+            output = ExecuteWithExitCheck(client, cmd, maxChars: 200_000);
+        }
+
         progress.Report("Linux uninstaller finished.");
         return Task.FromResult(output);
     }
@@ -944,6 +1005,124 @@ public sealed class SshProvisioningService
         }
 
         return combined;
+    }
+
+    /// <summary>
+    /// Executes a command using ShellStream (PTY) to handle interactive sudo password prompts.
+    /// This is used when the user provides a sudo password for non-root installations.
+    /// </summary>
+    private static string ExecuteWithSudo(SshClient client, string commandText, string sudoPassword, int maxChars, TimeSpan timeout)
+    {
+        using var stream = client.CreateShellStream("xterm", 200, 50, 800, 600, 16384);
+
+        var output = new StringBuilder();
+        var startTime = DateTime.UtcNow;
+
+        // Wait for initial shell prompt
+        Thread.Sleep(500);
+        output.Append(ReadAvailable(stream));
+
+        // Send the command
+        stream.WriteLine(commandText);
+
+        // Look for sudo password prompt and respond
+        var sudoPromptDetected = false;
+        var commandFinished = false;
+        var exitMarker = $"__EXIT_CODE_{Guid.NewGuid():N}__";
+
+        while (!commandFinished && (DateTime.UtcNow - startTime) < timeout)
+        {
+            Thread.Sleep(200);
+            var chunk = ReadAvailable(stream);
+            output.Append(chunk);
+
+            var currentOutput = output.ToString();
+
+            // Detect sudo password prompt (various formats)
+            if (!sudoPromptDetected &&
+                (currentOutput.Contains("[sudo] password", StringComparison.OrdinalIgnoreCase) ||
+                 currentOutput.Contains("Password:", StringComparison.OrdinalIgnoreCase) ||
+                 currentOutput.Contains("password for", StringComparison.OrdinalIgnoreCase)))
+            {
+                sudoPromptDetected = true;
+                stream.WriteLine(sudoPassword);
+                Thread.Sleep(500);
+            }
+
+            // Simple heuristic: check if we've received a shell prompt indicating command completion
+            // Look for common prompt patterns at the end of output
+            if (currentOutput.TrimEnd().EndsWith("$") ||
+                currentOutput.TrimEnd().EndsWith("#") ||
+                currentOutput.TrimEnd().EndsWith(">"))
+            {
+                // Wait a bit more to ensure command is truly done
+                Thread.Sleep(1000);
+                var moreOutput = ReadAvailable(stream);
+                if (string.IsNullOrWhiteSpace(moreOutput))
+                {
+                    // Get exit code
+                    stream.WriteLine($"echo {exitMarker}$?{exitMarker}");
+                    Thread.Sleep(500);
+                    var exitOutput = ReadAvailable(stream);
+                    output.Append(exitOutput);
+
+                    // Try to extract exit code
+                    var exitMatch = System.Text.RegularExpressions.Regex.Match(
+                        exitOutput,
+                        $@"{exitMarker}(\d+){exitMarker}");
+
+                    if (exitMatch.Success && int.TryParse(exitMatch.Groups[1].Value, out var exitCode) && exitCode != 0)
+                    {
+                        var result = output.ToString();
+                        if (result.Length > maxChars) result = result[..maxChars];
+
+                        // Check for sudo-specific failures
+                        if (result.Contains("sudo: a password is required", StringComparison.OrdinalIgnoreCase) ||
+                            result.Contains("sudo: no password was provided", StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new InvalidOperationException($"Remote command failed (exit={exitCode}): sudo requires a password but none was accepted. Check that the password is correct.");
+                        }
+                        if (result.Contains("Sorry, try again", StringComparison.OrdinalIgnoreCase) ||
+                            result.Contains("incorrect password", StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new InvalidOperationException($"Remote command failed (exit={exitCode}): incorrect sudo password.");
+                        }
+
+                        throw new InvalidOperationException($"Remote command failed (exit={exitCode}): {result}");
+                    }
+
+                    commandFinished = true;
+                }
+                else
+                {
+                    output.Append(moreOutput);
+                }
+            }
+        }
+
+        if (!commandFinished)
+        {
+            throw new TimeoutException($"Command did not complete within {timeout.TotalSeconds} seconds.");
+        }
+
+        var finalOutput = output.ToString();
+        if (finalOutput.Length > maxChars)
+        {
+            finalOutput = finalOutput[..maxChars];
+        }
+
+        return finalOutput;
+    }
+
+    private static string ReadAvailable(ShellStream stream)
+    {
+        var sb = new StringBuilder();
+        while (stream.DataAvailable)
+        {
+            var line = stream.Read();
+            sb.Append(line);
+        }
+        return sb.ToString();
     }
 
     private static string ComputeHostKeyFingerprint(byte[] hostKey)

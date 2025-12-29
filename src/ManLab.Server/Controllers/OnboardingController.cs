@@ -372,6 +372,7 @@ public sealed class OnboardingController : ControllerBase
             ServerBaseUrl: request.ServerBaseUrl,
             Force: request.Force,
             Auth: auth,
+            SudoPassword: request.SudoPassword,
             TrustOnFirstUse: request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
             ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
             Actor: User?.Identity?.Name,
@@ -450,6 +451,7 @@ public sealed class OnboardingController : ControllerBase
         var started = _jobRunner.TryStartUninstall(id, new OnboardingJobRunner.UninstallRequest(
             ServerBaseUrl: request.ServerBaseUrl,
             Auth: auth,
+            SudoPassword: request.SudoPassword,
             TrustOnFirstUse: request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
             ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
             Actor: User?.Identity?.Name,
@@ -628,12 +630,14 @@ public sealed class OnboardingController : ControllerBase
         string? Password { get; }
         string? PrivateKeyPem { get; }
         string? PrivateKeyPassphrase { get; }
+        string? SudoPassword { get; }
     }
 
     public sealed record SshTestRequest(
         string? Password,
         string? PrivateKeyPem,
         string? PrivateKeyPassphrase,
+        string? SudoPassword,
         bool TrustHostKey) : ISshAuthRequest;
 
     public sealed record SshTestResponse(
@@ -650,7 +654,8 @@ public sealed class OnboardingController : ControllerBase
         bool TrustHostKey,
         string? Password,
         string? PrivateKeyPem,
-        string? PrivateKeyPassphrase) : ISshAuthRequest;
+        string? PrivateKeyPassphrase,
+        string? SudoPassword) : ISshAuthRequest;
 
     public sealed record StartInstallResponse(Guid MachineId, string Status);
 
@@ -659,14 +664,16 @@ public sealed class OnboardingController : ControllerBase
         bool TrustHostKey,
         string? Password,
         string? PrivateKeyPem,
-        string? PrivateKeyPassphrase) : ISshAuthRequest;
+        string? PrivateKeyPassphrase,
+        string? SudoPassword) : ISshAuthRequest;
 
     public sealed record StartUninstallPreviewRequest(
         string ServerBaseUrl,
         bool TrustHostKey,
         string? Password,
         string? PrivateKeyPem,
-        string? PrivateKeyPassphrase) : ISshAuthRequest;
+        string? PrivateKeyPassphrase,
+        string? SudoPassword) : ISshAuthRequest;
 
     public sealed record InventorySectionDto(string Label, IReadOnlyList<string> Items);
 
