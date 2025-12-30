@@ -3,7 +3,7 @@
  * Provides install/uninstall buttons and shows real-time logs.
  */
 
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -23,6 +23,7 @@ import {
   installLocalAgent,
   uninstallLocalAgent,
   clearLocalAgentFiles,
+  deleteNode,
 } from "../api";
 import { useSignalR } from "../SignalRContext";
 import type { LocalAgentStatus, AgentConfiguration, FileDirectoryInfo, TaskInfo } from "../types";
@@ -33,6 +34,17 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 
 const LOCAL_MACHINE_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -132,6 +144,64 @@ export function LocalAgentCard() {
       queryClient.invalidateQueries({ queryKey: ["localAgentStatus"] });
     },
   });
+
+  const pendingUninstallRef = useRef(false);
+  const pendingUninstallLinkedNodeIdRef = useRef<string | null>(null);
+  const prevInstalledRef = useRef<boolean | null>(null);
+
+  const [removeNodePrompt, setRemoveNodePrompt] = useState<{ open: boolean; nodeId: string | null }>({ open: false, nodeId: null });
+
+  const closeRemoveNodePrompt = useCallback(() => {
+    setRemoveNodePrompt({ open: false, nodeId: null });
+  }, []);
+
+  const deleteLinkedNodeMutation = useMutation({
+    mutationFn: async (nodeId: string) => {
+      await deleteNode(nodeId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["nodes"] });
+      await queryClient.invalidateQueries({ queryKey: ["localAgentStatus"] });
+      toast.success("Node removed");
+      closeRemoveNodePrompt();
+    },
+    onError: (err) => {
+      toast.error("Failed to delete node", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    },
+  });
+
+  // When a local uninstall we started completes successfully, prompt to delete the linked node.
+  // We defer the state update via queueMicrotask to avoid synchronous setState in effect body.
+  useEffect(() => {
+    if (!status) return;
+
+    if (prevInstalledRef.current === null) {
+      prevInstalledRef.current = status.isInstalled;
+      return;
+    }
+
+    const wasInstalled = prevInstalledRef.current;
+    const isInstalled = status.isInstalled;
+
+    // Consider "uninstall finished" when the server reports not installed and no operation is running.
+    const uninstallFinished = wasInstalled === true && isInstalled === false && status.currentOperation == null;
+
+    if (pendingUninstallRef.current && uninstallFinished) {
+      pendingUninstallRef.current = false;
+      const nodeId = pendingUninstallLinkedNodeIdRef.current ?? status.linkedNodeId;
+      pendingUninstallLinkedNodeIdRef.current = null;
+
+      if (nodeId) {
+        queueMicrotask(() => {
+          setRemoveNodePrompt({ open: true, nodeId });
+        });
+      }
+    }
+
+    prevInstalledRef.current = status.isInstalled;
+  }, [status]);
 
   if (isLoading) {
     return (
@@ -559,7 +629,11 @@ export function LocalAgentCard() {
                 confirmText="Uninstall"
                 isDestructive={true}
                 isLoading={uninstallMutation.isPending}
-                onConfirm={() => uninstallMutation.mutate()}
+                onConfirm={() => {
+                  pendingUninstallRef.current = true;
+                  pendingUninstallLinkedNodeIdRef.current = status.linkedNodeId;
+                  uninstallMutation.mutate();
+                }}
                 trigger={
                   <Button
                     variant="destructive"
@@ -655,6 +729,37 @@ export function LocalAgentCard() {
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
+
+      <AlertDialog open={removeNodePrompt.open} onOpenChange={(open) => !open && closeRemoveNodePrompt()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove the node too?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The local agent uninstall completed successfully.
+              {removeNodePrompt.nodeId ? (
+                <>
+                  <br />
+                  Do you also want to remove the associated node for this server?
+                  This deletes telemetry, settings, and command history.
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLinkedNodeMutation.isPending}>Keep Node</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!removeNodePrompt.nodeId) return;
+                deleteLinkedNodeMutation.mutate(removeNodePrompt.nodeId);
+              }}
+              disabled={!removeNodePrompt.nodeId || deleteLinkedNodeMutation.isPending}
+              variant="destructive"
+            >
+              {deleteLinkedNodeMutation.isPending ? "Removing…" : "Remove Node"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

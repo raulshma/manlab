@@ -10,7 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Activity, 
   Database, 
-  Globe, 
   AlertCircle,
   CheckCircle,
   Clock,

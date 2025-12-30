@@ -10,6 +10,12 @@ export const SettingKeys = {
     EnablePingTelemetry: "Agent.EnablePingTelemetry",
     EnableGpuTelemetry: "Agent.EnableGpuTelemetry",
     EnableUpsTelemetry: "Agent.EnableUpsTelemetry",
+    // Enhanced telemetry settings
+    EnableEnhancedNetworkTelemetry: "Agent.EnableEnhancedNetworkTelemetry",
+    EnableEnhancedGpuTelemetry: "Agent.EnableEnhancedGpuTelemetry",
+    EnableApmTelemetry: "Agent.EnableApmTelemetry",
+    ApmHealthCheckEndpoints: "Agent.ApmHealthCheckEndpoints",
+    ApmDatabaseEndpoints: "Agent.ApmDatabaseEndpoints",
     // Remote tools (security-sensitive)
     EnableLogViewer: "Agent.EnableLogViewer",
     EnableScripts: "Agent.EnableScripts",

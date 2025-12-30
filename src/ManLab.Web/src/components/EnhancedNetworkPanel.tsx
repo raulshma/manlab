@@ -10,12 +10,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Network, 
   Activity, 
-  Wifi, 
   Globe, 
   ArrowDownToLine, 
   ArrowUpFromLine,
-  Router,
-  AlertTriangle
+  Router
 } from 'lucide-react';
 import type { NetworkTelemetry, NetworkInterfaceTelemetry, LatencyMeasurement, ConnectionsSummary, DiscoveredDevice } from '../types';
 

@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { api } from "@/api";
 import { SettingKeys } from "@/constants/settingKeys";
 import { toast } from "sonner";
-import { AlertTriangle, Shield, Activity, Settings, FileText } from "lucide-react";
+import { AlertTriangle, Shield, Activity, Settings, FileText, Cpu, Network, Gauge, Plus, X } from "lucide-react";
 
 interface SystemSetting {
   key: string;
@@ -29,6 +30,13 @@ const DEFAULTS = {
   enablePingTelemetry: "true",
   enableGpuTelemetry: "true",
   enableUpsTelemetry: "true",
+  // Enhanced telemetry
+  enableEnhancedNetworkTelemetry: "true",
+  enableEnhancedGpuTelemetry: "true",
+  enableApmTelemetry: "false",
+  apmHealthCheckEndpoints: "[]",
+  apmDatabaseEndpoints: "[]",
+  // Ping settings
   pingTarget: "",
   pingTimeoutMs: "800",
   pingWindowSize: "10",
@@ -51,6 +59,184 @@ const DEFAULTS = {
 };
 
 type FormValues = typeof DEFAULTS;
+
+// Helper to parse JSON arrays safely
+function parseJsonArray<T>(value: string): T[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Component for managing APM health check endpoints
+function ApmEndpointList({ 
+  endpoints, 
+  onChange, 
+  placeholder 
+}: { 
+  endpoints: string[]; 
+  onChange: (endpoints: string[]) => void;
+  placeholder: string;
+}) {
+  const [newEndpoint, setNewEndpoint] = useState("");
+
+  const addEndpoint = () => {
+    const trimmed = newEndpoint.trim();
+    if (trimmed && !endpoints.includes(trimmed)) {
+      onChange([...endpoints, trimmed]);
+      setNewEndpoint("");
+    }
+  };
+
+  const removeEndpoint = (index: number) => {
+    onChange(endpoints.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <Input
+          value={newEndpoint}
+          onChange={(e) => setNewEndpoint(e.target.value)}
+          placeholder={placeholder}
+          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addEndpoint())}
+        />
+        <Button type="button" variant="outline" size="icon" onClick={addEndpoint}>
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+      {endpoints.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {endpoints.map((endpoint, index) => (
+            <Badge key={index} variant="secondary" className="flex items-center gap-1">
+              <span className="font-mono text-xs">{endpoint}</span>
+              <button
+                type="button"
+                onClick={() => removeEndpoint(index)}
+                className="ml-1 hover:text-destructive"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Database endpoint type
+interface DatabaseEndpoint {
+  name: string;
+  databaseType: string;
+  host: string;
+  port: number;
+}
+
+// Component for managing APM database endpoints
+function ApmDatabaseEndpointList({ 
+  endpoints, 
+  onChange 
+}: { 
+  endpoints: DatabaseEndpoint[]; 
+  onChange: (endpoints: DatabaseEndpoint[]) => void;
+}) {
+  const [newEndpoint, setNewEndpoint] = useState<DatabaseEndpoint>({
+    name: "",
+    databaseType: "PostgreSQL",
+    host: "localhost",
+    port: 5432
+  });
+
+  const addEndpoint = () => {
+    if (newEndpoint.name.trim() && newEndpoint.host.trim()) {
+      onChange([...endpoints, { ...newEndpoint, name: newEndpoint.name.trim(), host: newEndpoint.host.trim() }]);
+      setNewEndpoint({ name: "", databaseType: "PostgreSQL", host: "localhost", port: 5432 });
+    }
+  };
+
+  const removeEndpoint = (index: number) => {
+    onChange(endpoints.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-4 gap-2">
+        <Input
+          value={newEndpoint.name}
+          onChange={(e) => setNewEndpoint({ ...newEndpoint, name: e.target.value })}
+          placeholder="Name"
+        />
+        <select
+          value={newEndpoint.databaseType}
+          onChange={(e) => setNewEndpoint({ ...newEndpoint, databaseType: e.target.value })}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+        >
+          <option value="PostgreSQL">PostgreSQL</option>
+          <option value="MySQL">MySQL</option>
+          <option value="SQLServer">SQL Server</option>
+          <option value="MongoDB">MongoDB</option>
+          <option value="Redis">Redis</option>
+        </select>
+        <Input
+          value={newEndpoint.host}
+          onChange={(e) => setNewEndpoint({ ...newEndpoint, host: e.target.value })}
+          placeholder="Host"
+        />
+        <div className="flex gap-2">
+          <Input
+            type="number"
+            value={newEndpoint.port}
+            onChange={(e) => setNewEndpoint({ ...newEndpoint, port: parseInt(e.target.value) || 0 })}
+            placeholder="Port"
+            className="w-20"
+          />
+          <Button type="button" variant="outline" size="icon" onClick={addEndpoint}>
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+      {endpoints.length > 0 && (
+        <div className="rounded-lg border overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="px-3 py-2 text-left">Name</th>
+                <th className="px-3 py-2 text-left">Type</th>
+                <th className="px-3 py-2 text-left">Host</th>
+                <th className="px-3 py-2 text-left">Port</th>
+                <th className="px-3 py-2 w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {endpoints.map((ep, index) => (
+                <tr key={index} className="border-t">
+                  <td className="px-3 py-2">{ep.name}</td>
+                  <td className="px-3 py-2">
+                    <Badge variant="outline" className="text-[10px]">{ep.databaseType}</Badge>
+                  </td>
+                  <td className="px-3 py-2 font-mono">{ep.host}</td>
+                  <td className="px-3 py-2 font-mono">{ep.port}</td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => removeEndpoint(index)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function AgentDefaultsSettings() {
   const queryClient = useQueryClient();
@@ -84,6 +270,13 @@ export function AgentDefaultsSettings() {
       enablePingTelemetry: get(SettingKeys.Agent.EnablePingTelemetry, DEFAULTS.enablePingTelemetry),
       enableGpuTelemetry: get(SettingKeys.Agent.EnableGpuTelemetry, DEFAULTS.enableGpuTelemetry),
       enableUpsTelemetry: get(SettingKeys.Agent.EnableUpsTelemetry, DEFAULTS.enableUpsTelemetry),
+      // Enhanced telemetry
+      enableEnhancedNetworkTelemetry: get(SettingKeys.Agent.EnableEnhancedNetworkTelemetry, DEFAULTS.enableEnhancedNetworkTelemetry),
+      enableEnhancedGpuTelemetry: get(SettingKeys.Agent.EnableEnhancedGpuTelemetry, DEFAULTS.enableEnhancedGpuTelemetry),
+      enableApmTelemetry: get(SettingKeys.Agent.EnableApmTelemetry, DEFAULTS.enableApmTelemetry),
+      apmHealthCheckEndpoints: get(SettingKeys.Agent.ApmHealthCheckEndpoints, DEFAULTS.apmHealthCheckEndpoints),
+      apmDatabaseEndpoints: get(SettingKeys.Agent.ApmDatabaseEndpoints, DEFAULTS.apmDatabaseEndpoints),
+      // Ping settings
       pingTarget: get(SettingKeys.Agent.PingTarget, DEFAULTS.pingTarget),
       pingTimeoutMs: get(SettingKeys.Agent.PingTimeoutMs, DEFAULTS.pingTimeoutMs),
       pingWindowSize: get(SettingKeys.Agent.PingWindowSize, DEFAULTS.pingWindowSize),
@@ -136,6 +329,13 @@ export function AgentDefaultsSettings() {
       { key: SettingKeys.Agent.EnablePingTelemetry, value: values.enablePingTelemetry, category: "Agent", description: "Enable ping latency monitoring" },
       { key: SettingKeys.Agent.EnableGpuTelemetry, value: values.enableGpuTelemetry, category: "Agent", description: "Enable GPU monitoring" },
       { key: SettingKeys.Agent.EnableUpsTelemetry, value: values.enableUpsTelemetry, category: "Agent", description: "Enable UPS monitoring" },
+      // Enhanced telemetry
+      { key: SettingKeys.Agent.EnableEnhancedNetworkTelemetry, value: values.enableEnhancedNetworkTelemetry, category: "Agent", description: "Enable enhanced network telemetry with per-interface stats" },
+      { key: SettingKeys.Agent.EnableEnhancedGpuTelemetry, value: values.enableEnhancedGpuTelemetry, category: "Agent", description: "Enable enhanced GPU telemetry with power and clocks" },
+      { key: SettingKeys.Agent.EnableApmTelemetry, value: values.enableApmTelemetry, category: "Agent", description: "Enable Application Performance Monitoring" },
+      { key: SettingKeys.Agent.ApmHealthCheckEndpoints, value: values.apmHealthCheckEndpoints, category: "Agent", description: "Health check endpoint URLs for APM" },
+      { key: SettingKeys.Agent.ApmDatabaseEndpoints, value: values.apmDatabaseEndpoints, category: "Agent", description: "Database endpoints for APM monitoring" },
+      // Ping settings
       { key: SettingKeys.Agent.PingTarget, value: values.pingTarget || null, category: "Agent", description: "Custom ping target hostname/IP" },
       { key: SettingKeys.Agent.PingTimeoutMs, value: values.pingTimeoutMs, category: "Agent", description: "Ping timeout in milliseconds" },
       { key: SettingKeys.Agent.PingWindowSize, value: values.pingWindowSize, category: "Agent", description: "Rolling window size for ping samples" },
@@ -249,6 +449,95 @@ export function AgentDefaultsSettings() {
               <Switch id="enableUps" checked={values.enableUpsTelemetry === "true"} onCheckedChange={(c) => updateField("enableUpsTelemetry", String(c))} />
             </div>
           </div>
+        </div>
+
+        <Separator />
+
+        {/* Enhanced Telemetry Settings */}
+        <div>
+          <h4 className="text-sm font-medium flex items-center gap-2 mb-3">
+            <Gauge className="h-4 w-4" />
+            Enhanced Telemetry
+          </h4>
+          <p className="text-xs text-muted-foreground mb-4">
+            Enhanced telemetry provides detailed metrics including per-interface network stats, GPU power/clocks, and application performance monitoring.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div className="flex items-center justify-between p-3 border rounded-lg">
+              <div className="flex items-center gap-2">
+                <Network className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <Label htmlFor="enableEnhancedNetwork">Enhanced Network</Label>
+                  <p className="text-xs text-muted-foreground">Per-interface stats, connections</p>
+                </div>
+              </div>
+              <Switch 
+                id="enableEnhancedNetwork" 
+                checked={values.enableEnhancedNetworkTelemetry === "true"} 
+                onCheckedChange={(c) => updateField("enableEnhancedNetworkTelemetry", String(c))} 
+              />
+            </div>
+            <div className="flex items-center justify-between p-3 border rounded-lg">
+              <div className="flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <Label htmlFor="enableEnhancedGpu">Enhanced GPU</Label>
+                  <p className="text-xs text-muted-foreground">Power, clocks, processes</p>
+                </div>
+              </div>
+              <Switch 
+                id="enableEnhancedGpu" 
+                checked={values.enableEnhancedGpuTelemetry === "true"} 
+                onCheckedChange={(c) => updateField("enableEnhancedGpuTelemetry", String(c))} 
+              />
+            </div>
+            <div className="flex items-center justify-between p-3 border rounded-lg">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <Label htmlFor="enableApm">APM Telemetry</Label>
+                  <p className="text-xs text-muted-foreground">App & database metrics</p>
+                </div>
+              </div>
+              <Switch 
+                id="enableApm" 
+                checked={values.enableApmTelemetry === "true"} 
+                onCheckedChange={(c) => updateField("enableApmTelemetry", String(c))} 
+              />
+            </div>
+          </div>
+
+          {/* APM Configuration (shown when APM is enabled) */}
+          {values.enableApmTelemetry === "true" && (
+            <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+              <h5 className="text-sm font-medium">APM Configuration</h5>
+              
+              {/* Health Check Endpoints */}
+              <div className="space-y-2">
+                <Label>Health Check Endpoints</Label>
+                <p className="text-xs text-muted-foreground">
+                  URLs to monitor for application health (e.g., http://localhost:8080/health)
+                </p>
+                <ApmEndpointList
+                  endpoints={parseJsonArray(values.apmHealthCheckEndpoints)}
+                  onChange={(endpoints) => updateField("apmHealthCheckEndpoints", JSON.stringify(endpoints))}
+                  placeholder="http://localhost:8080/health"
+                />
+              </div>
+
+              {/* Database Endpoints */}
+              <div className="space-y-2">
+                <Label>Database Endpoints</Label>
+                <p className="text-xs text-muted-foreground">
+                  Database connections to monitor for performance metrics
+                </p>
+                <ApmDatabaseEndpointList
+                  endpoints={parseJsonArray(values.apmDatabaseEndpoints)}
+                  onChange={(endpoints) => updateField("apmDatabaseEndpoints", JSON.stringify(endpoints))}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <Separator />

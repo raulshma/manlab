@@ -3,9 +3,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createOnboardingMachine,
   fetchOnboardingMachines,
+  fetchNodes,
   fetchSuggestedServerBaseUrl,
   fetchUninstallPreview,
   installAgent,
+  shutdownAgent,
   testSshConnection,
   uninstallAgent,
   deleteOnboardingMachine,
@@ -15,6 +17,7 @@ import {
   deleteNode,
 } from "../api";
 import type {
+  Node,
   OnboardingMachine,
   OnboardingStatus,
   SshAuthMode,
@@ -86,6 +89,8 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const queryClient = useQueryClient();
   const { connection } = useSignalR();
 
+  const [open, setOpen] = useState(false);
+
   const machinesQuery = useQuery({
     queryKey: ["onboardingMachines"],
     queryFn: fetchOnboardingMachines,
@@ -150,12 +155,45 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const [remoteUninstallPreview, setRemoteUninstallPreview] = useState<UninstallPreviewResponse | null>(null);
   // Track whether the user started an uninstall from this modal so we can prompt on completion.
   const pendingUninstallMachineIdRef = useRef<string | null>(null);
+  const pendingUninstallLinkedNodeIdRef = useRef<string | null>(null);
+  const pendingUninstallHostRef = useRef<string | null>(null);
   const [removeNodePromptOpen, setRemoveNodePromptOpen] = useState(false);
   const [removeNodePrompt, setRemoveNodePrompt] = useState<{
     machineId: string;
     host: string;
     nodeId: string;
   } | null>(null);
+
+  const [stopExistingAgentFirst, setStopExistingAgentFirst] = useState(true);
+
+  const nodesQuery = useQuery<Node[]>({
+    queryKey: ["nodes"],
+    queryFn: fetchNodes,
+    staleTime: 15_000,
+    enabled: open,
+  });
+
+  const existingNode = useMemo(() => {
+    if (!selected) return null;
+    const nodes = nodesQuery.data;
+    if (!nodes || nodes.length === 0) return null;
+
+    const host = (selected.host ?? "").trim().toLowerCase();
+    if (!host) return null;
+
+    return (
+      nodes.find((n) => (n.hostname ?? "").trim().toLowerCase() === host) ??
+      nodes.find((n) => (n.ipAddress ?? "").trim().toLowerCase() === host) ??
+      null
+    );
+  }, [nodesQuery.data, selected]);
+
+  const existingNodeId = useMemo(() => {
+    if (!selected) return null;
+    return selected.linkedNodeId ?? existingNode?.id ?? null;
+  }, [existingNode?.id, selected]);
+
+  const hasExistingAgent = Boolean(existingNodeId) || Boolean(lastTest?.hasExistingInstallation);
 
   const previewUninstallMutation = useMutation({
     mutationFn: async () => {
@@ -616,9 +654,11 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         (!sudoPassword || sudoPassword === "•••••");
 
       const useSavedCredentials = useSavedAuth || useSavedSudo;
+
+      const effectiveForce = hasExistingAgent ? true : forceInstall;
       return installAgent(selected.id, {
         serverBaseUrl: effectiveServerBaseUrl,
-        force: forceInstall,
+        force: effectiveForce,
         runAsRoot,
         trustHostKey,
         password: useSavedAuth ? undefined : (password || undefined),
@@ -636,6 +676,17 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     },
     onError: (err) => {
       toast.error("Failed to start installation", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    },
+  });
+
+  const stopExistingAgentMutation = useMutation({
+    mutationFn: async (nodeId: string) => {
+      await shutdownAgent(nodeId);
+    },
+    onError: (err) => {
+      toast.warning("Could not request existing agent shutdown", {
         description: err instanceof Error ? err.message : "Unknown error",
       });
     },
@@ -719,9 +770,15 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
 
     pendingUninstallMachineIdRef.current = null;
 
+    const linkedNodeId = pendingUninstallLinkedNodeIdRef.current ?? m.linkedNodeId;
+    const host = pendingUninstallHostRef.current ?? m.host;
+
+    pendingUninstallLinkedNodeIdRef.current = null;
+    pendingUninstallHostRef.current = null;
+
     // Only prompt if there is an associated node.
-    if (m.linkedNodeId) {
-      setRemoveNodePrompt({ machineId: m.id, host: m.host, nodeId: m.linkedNodeId });
+    if (linkedNodeId) {
+      setRemoveNodePrompt({ machineId: m.id, host, nodeId: linkedNodeId });
       setRemoveNodePromptOpen(true);
     }
   }, [machines]);
@@ -889,7 +946,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const [addFormOpen, setAddFormOpen] = useState(machines.length === 0);
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent
         className="w-[95vw] sm:max-w-[80vw] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col md:flex-row"
@@ -1304,13 +1361,52 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                           Install
                         </Button>
                       }
-                      title="Install ManLab Agent"
-                      message={`Install agent on ${selected.host}?`}
-                      confirmText="Install"
+                      title={hasExistingAgent ? "Overwrite Existing Agent" : "Install ManLab Agent"}
+                      message={(() => {
+                        if (!hasExistingAgent) return `Install agent on ${selected.host}?`;
+
+                        const parts: string[] = [];
+                        parts.push(`An existing agent/node was detected for ${selected.host}.`);
+                        if (existingNodeId) {
+                          parts.push(`Node ID: ${existingNodeId}.`);
+                        }
+                        if (lastTest?.hasExistingInstallation) {
+                          parts.push("A ManLab agent installation appears to already exist on the target machine.");
+                        }
+                        parts.push("Continuing will stop/overwrite the existing installation and may replace the existing node identity.");
+                        return parts.join(" ");
+                      })()}
+                      confirmText={hasExistingAgent ? "Overwrite & Install" : "Install"}
                       isLoading={installMutation.isPending}
+                      details={
+                        hasExistingAgent ? (
+                          <div className="space-y-3">
+                            <label className="flex items-center gap-2 text-xs cursor-pointer">
+                              <Checkbox
+                                checked={stopExistingAgentFirst}
+                                onCheckedChange={(c) => setStopExistingAgentFirst(c === true)}
+                                disabled={!existingNodeId}
+                              />
+                              <span>
+                                Stop the existing agent first (best-effort)
+                                {!existingNodeId ? " — no matching node id" : ""}
+                              </span>
+                            </label>
+                            <div className="text-xs text-muted-foreground">
+                              Tip: leave “Force Re-install” enabled when overwriting.
+                            </div>
+                          </div>
+                        ) : null
+                      }
                       onConfirm={async () => {
                         if (!validateCredentials()) return;
                         setLogs([]);
+
+                        if (hasExistingAgent && stopExistingAgentFirst && existingNodeId) {
+                          // Best-effort: request the old agent to terminate before we overwrite.
+                          await stopExistingAgentMutation.mutateAsync(existingNodeId);
+                        }
+
                         await installMutation.mutateAsync();
                       }}
                     />
@@ -1339,6 +1435,8 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       onConfirm={async () => {
                         setLogs([]);
                         pendingUninstallMachineIdRef.current = selected?.id ?? null;
+                        pendingUninstallLinkedNodeIdRef.current = selected?.linkedNodeId ?? null;
+                        pendingUninstallHostRef.current = selected?.host ?? null;
                         await uninstallMutation.mutateAsync();
                       }}
                     />
