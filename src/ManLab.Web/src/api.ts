@@ -74,7 +74,12 @@ export const api = {
  * This is especially important in dev where the UI runs on a different origin (Vite dev server)
  * and `window.location.origin` would point to the UI, not the backend server.
  */
-export async function fetchSuggestedServerBaseUrl(): Promise<string> {
+export interface SuggestedServerUrlsResponse {
+  serverBaseUrl: string;
+  allServerUrls: string[];
+}
+
+export async function fetchSuggestedServerBaseUrl(): Promise<SuggestedServerUrlsResponse> {
   const response = await fetch(
     `${API_BASE}/onboarding/suggested-server-base-url`
   );
@@ -86,8 +91,13 @@ export async function fetchSuggestedServerBaseUrl(): Promise<string> {
   const data = (await response.json()) as {
     serverBaseUrl?: string;
     ServerBaseUrl?: string;
+    allServerUrls?: string[];
+    AllServerUrls?: string[];
   };
-  return (data.serverBaseUrl ?? data.ServerBaseUrl ?? "").toString();
+  return {
+    serverBaseUrl: (data.serverBaseUrl ?? data.ServerBaseUrl ?? "").toString(),
+    allServerUrls: data.allServerUrls ?? data.AllServerUrls ?? [],
+  };
 }
 
 /**
@@ -531,6 +541,28 @@ export async function createFileBrowserSession(
   return response.json();
 }
 
+async function tryExtractErrorDetails(response: Response): Promise<string> {
+  let details = "";
+  try {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      const json = await response.json();
+      if (typeof json === "string") {
+        details = json;
+      } else if (json && typeof json === "object") {
+        const obj = json as Record<string, unknown>;
+        const msg = obj.message;
+        details = typeof msg === "string" ? msg : JSON.stringify(json);
+      }
+    } else {
+      details = await response.text();
+    }
+  } catch {
+    // ignore
+  }
+  return details?.trim() ?? "";
+}
+
 /**
  * Enhancements: File browser - Create a full-system browsing session (no policy allowlist)
  */
@@ -547,7 +579,10 @@ export async function createSystemFileBrowserSession(
 
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
-    throw new Error(`Failed to create file browser session: ${await response.text()}`);
+
+    const details = await tryExtractErrorDetails(response);
+    const suffix = details ? `: ${details}` : "";
+    throw new Error(`Failed to create file browser session (${response.status} ${response.statusText})${suffix}`);
   }
 
   return response.json();

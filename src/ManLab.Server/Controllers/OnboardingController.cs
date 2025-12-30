@@ -43,33 +43,50 @@ public sealed class OnboardingController : ControllerBase
     }
 
     /// <summary>
-    /// Returns the server base URL as observed by this API request (scheme + host + port).
-    /// This is used by the web UI to auto-fill the "Server base URL (reachable from target)" field.
-    ///
-    /// In development, when the UI runs on a different origin (e.g. Vite dev server), requests are
-    /// proxied to the backend and the backend can still report its own origin.
+    /// Returns all available server base URLs from all network interfaces.
+    /// This is used by the web UI to populate the server URL dropdown.
     /// </summary>
     [HttpGet("suggested-server-base-url")]
     public ActionResult<SuggestedServerBaseUrlResponse> GetSuggestedServerBaseUrl()
     {
-        // Example: http://192.168.1.10:5247
-        // If the backend is accessed as "localhost" (common in dev), that value is *not* reachable
-        // from an SSH target machine. In that case, try to suggest a LAN IP instead.
-
         var scheme = Request.Scheme;
-        var host = Request.Host.Host;
+        var requestHost = Request.Host.Host;
         var port = Request.Host.Port;
 
-        if (IsLoopbackHost(host) && TryGetLanIPv4(out var lanIp))
+        var urls = new List<string>();
+
+        // Add all LAN IP addresses
+        var lanIps = GetAllLanIPv4Addresses();
+        foreach (var ip in lanIps)
         {
-            host = lanIp;
+            var url = port is null
+                ? $"{scheme}://{ip}"
+                : $"{scheme}://{ip}:{port.Value}";
+            if (!urls.Contains(url))
+                urls.Add(url);
         }
 
-        var serverBaseUrl = port is null
-            ? $"{scheme}://{host}"
-            : $"{scheme}://{host}:{port.Value}";
+        // Add the request host if it's not a loopback (might be a DNS name or external IP)
+        if (!IsLoopbackHost(requestHost))
+        {
+            var hostUrl = port is null
+                ? $"{scheme}://{requestHost}"
+                : $"{scheme}://{requestHost}:{port.Value}";
+            if (!urls.Contains(hostUrl))
+                urls.Insert(0, hostUrl); // Put the request host first
+        }
 
-        return Ok(new SuggestedServerBaseUrlResponse(serverBaseUrl));
+        // Always include at least the request origin as fallback
+        if (urls.Count == 0)
+        {
+            var fallback = port is null
+                ? $"{scheme}://{requestHost}"
+                : $"{scheme}://{requestHost}:{port.Value}";
+            urls.Add(fallback);
+        }
+
+        // Return the first URL as the primary suggestion (for backward compat) and all URLs
+        return Ok(new SuggestedServerBaseUrlResponse(urls.FirstOrDefault() ?? "", urls));
     }
 
     private static bool IsLoopbackHost(string? host)
@@ -81,9 +98,9 @@ public sealed class OnboardingController : ControllerBase
         return false;
     }
 
-    private static bool TryGetLanIPv4(out string ip)
+    private static List<string> GetAllLanIPv4Addresses()
     {
-        ip = string.Empty;
+        var ips = new List<string>();
 
         try
         {
@@ -112,8 +129,9 @@ public sealed class OnboardingController : ControllerBase
 
                     if (!isPrivate) continue;
 
-                    ip = unicast.Address.ToString();
-                    return true;
+                    var ip = unicast.Address.ToString();
+                    if (!ips.Contains(ip))
+                        ips.Add(ip);
                 }
             }
         }
@@ -122,7 +140,7 @@ public sealed class OnboardingController : ControllerBase
             // Best effort only.
         }
 
-        return false;
+        return ips;
     }
 
     [HttpGet("machines")]
@@ -155,7 +173,7 @@ public sealed class OnboardingController : ControllerBase
         return Ok(machines);
     }
 
-    public sealed record SuggestedServerBaseUrlResponse(string ServerBaseUrl);
+    public sealed record SuggestedServerBaseUrlResponse(string ServerBaseUrl, IReadOnlyList<string> AllServerUrls);
 
     [HttpPost("machines")]
     public async Task<ActionResult<OnboardingMachineDto>> CreateMachine([FromBody] CreateMachineRequest request)
@@ -449,6 +467,7 @@ public sealed class OnboardingController : ControllerBase
             result.WhoAmI,
             result.OsHint,
             result.HasExistingInstallation,
+            result.DetectedServerUrls,
             result.Error));
     }
 
@@ -865,6 +884,7 @@ public sealed class OnboardingController : ControllerBase
         string? WhoAmI,
         string? OsHint,
         bool HasExistingInstallation,
+        IReadOnlyList<string> DetectedServerUrls,
         string? Error);
 
     public sealed record StartInstallRequest(

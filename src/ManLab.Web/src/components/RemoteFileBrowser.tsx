@@ -5,7 +5,7 @@
  * Session is created server-side (no policy allowlist) and is short-lived.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FileManager } from "@cubone/react-file-manager";
@@ -134,6 +134,9 @@ export function RemoteFileBrowser({
 
   const [session, setSession] = useState<SystemFileBrowserSession | null>(null);
   const [expiryCountdown, setExpiryCountdown] = useState<string>("");
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [autoOpenBlocked, setAutoOpenBlocked] = useState<boolean>(false);
+  const autoOpenAttemptedForNodeIdRef = useRef<string | null>(null);
 
   // Navigation/path in the remote virtual FS.
   const [currentPath, setCurrentPath] = useState<string>("/");
@@ -148,6 +151,9 @@ export function RemoteFileBrowser({
   useEffect(() => {
     setSession(null);
     setCurrentPath("/");
+    setOpenError(null);
+    setAutoOpenBlocked(false);
+    autoOpenAttemptedForNodeIdRef.current = null;
   }, [nodeId]);
 
   // Expiry countdown timer
@@ -175,9 +181,22 @@ export function RemoteFileBrowser({
     onSuccess: (newSession) => {
       setSession(newSession);
       setCurrentPath(newSession.rootPath || "/");
+      setOpenError(null);
+      setAutoOpenBlocked(false);
     },
     onError: (err) => {
-      toast.error(err instanceof Error ? err.message : "Failed to open file browser");
+      const msg = err instanceof Error ? err.message : "Failed to open file browser";
+      setOpenError(msg);
+
+      // If the server is denying access because the agent hasn't enabled the feature,
+      // stop auto-open attempts until the user explicitly retries.
+      if (
+        /file browser feature is disabled|feature is not available|agent has not reported its capabilities/i.test(msg)
+      ) {
+        setAutoOpenBlocked(true);
+      }
+
+      toast.error(msg);
     },
   });
 
@@ -187,10 +206,15 @@ export function RemoteFileBrowser({
     if (!isOnline) return;
     if (session) return;
     if (createSessionMutation.isPending) return;
+    if (autoOpenBlocked) return;
+
+    // Avoid duplicate calls in React StrictMode/dev double-invocation.
+    if (autoOpenAttemptedForNodeIdRef.current === nodeId) return;
+    autoOpenAttemptedForNodeIdRef.current = nodeId;
 
     createSessionMutation.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoOpen, isOnline, nodeId]);
+  }, [autoOpen, isOnline, nodeId, autoOpenBlocked]);
 
   const effectivePath = useMemo(() => {
     // react-file-manager uses "" as root; we map that to "/".
@@ -318,8 +342,24 @@ export function RemoteFileBrowser({
 
       <div className="p-4">
         {!session ? (
-          <div className="text-sm text-muted-foreground">
-            {createSessionMutation.isError ? "Failed to open session." : "Open a session to start browsing."}
+          <div className="space-y-3">
+            {createSessionMutation.isError && openError ? (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  <div className="text-sm">{openError}</div>
+                  {autoOpenBlocked && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      This node is online, but the agent is not allowing the file browser.
+                      Enable it in the agent configuration (e.g. set <span className="font-mono">MANLAB_ENABLE_FILE_BROWSER=true</span>)
+                      and restart the agent.
+                    </div>
+                  )}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <div className="text-sm text-muted-foreground">Open a session to start browsing.</div>
+            )}
           </div>
         ) : (
           <div className="space-y-3">

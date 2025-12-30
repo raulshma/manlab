@@ -409,7 +409,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     if (import.meta.env.VITE_SERVER_BASE_URL) {
       return import.meta.env.VITE_SERVER_BASE_URL as string;
     }
-    const suggested = suggestedServerBaseUrlQuery.data?.trim();
+    const suggested = suggestedServerBaseUrlQuery.data?.serverBaseUrl?.trim();
     if (suggested) {
       return suggested;
     }
@@ -421,6 +421,47 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     [serverBaseUrl]
   );
 
+  // Collect all available server URLs from different sources for the dropdown
+  const availableServerUrls = useMemo(() => {
+    const urlSet = new Set<string>();
+
+    // Add URLs detected from existing installation (from last test connection)
+    if (lastTest?.detectedServerUrls) {
+      for (const url of lastTest.detectedServerUrls) {
+        const normalized = normalizeAgentServerBaseUrl(url);
+        if (normalized) urlSet.add(normalized);
+      }
+    }
+
+    // Add all suggested URLs from backend
+    if (suggestedServerBaseUrlQuery.data?.allServerUrls) {
+      for (const url of suggestedServerBaseUrlQuery.data.allServerUrls) {
+        const normalized = normalizeAgentServerBaseUrl(url);
+        if (normalized) urlSet.add(normalized);
+      }
+    }
+
+    // Add environment variable URL
+    if (import.meta.env.VITE_SERVER_BASE_URL) {
+      const normalized = normalizeAgentServerBaseUrl(import.meta.env.VITE_SERVER_BASE_URL as string);
+      if (normalized) urlSet.add(normalized);
+    }
+
+    // Add window origin as fallback
+    const originNormalized = normalizeAgentServerBaseUrl(window.location.origin);
+    if (originNormalized) urlSet.add(originNormalized);
+
+    // Add the current value if it's a user override
+    if (serverBaseUrlOverride) {
+      const normalized = normalizeAgentServerBaseUrl(serverBaseUrlOverride);
+      if (normalized) urlSet.add(normalized);
+    }
+
+    return Array.from(urlSet);
+  }, [lastTest?.detectedServerUrls, suggestedServerBaseUrlQuery.data, serverBaseUrlOverride]);
+
+  // Track if user wants to use custom URL not in the list
+  const [useCustomUrl, setUseCustomUrl] = useState(false);
   // Handler to update server base URL when user edits
   const handleServerBaseUrlChange = (value: string) => {
     serverBaseUrlDirtyRef.current = true;
@@ -460,6 +501,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       setServerBaseUrlOverride(null);
       serverBaseUrlDirtyRef.current = false;
     }
+    setUseCustomUrl(false);
   };
 
   // Hydrate the form for the implicitly selected first machine.
@@ -1088,12 +1130,58 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       <div className="p-3 rounded-md border bg-muted/5 space-y-3">
                         <div>
                           <Label className="text-[10px] mb-1 block text-muted-foreground">Server URL</Label>
-                          <Input
-                            value={serverBaseUrl}
-                            onChange={(e) => handleServerBaseUrlChange(e.target.value)}
-                            className="font-mono text-xs h-8"
-                            placeholder="http://..."
-                          />
+                          {availableServerUrls.length > 1 && !useCustomUrl ? (
+                            <div className="flex gap-2">
+                              <Select
+                                value={effectiveServerBaseUrl || ""}
+                                onValueChange={(val) => {
+                                  if (val === null) return;
+                                  if (val === "__custom__") {
+                                    setUseCustomUrl(true);
+                                    setServerBaseUrlOverride("");
+                                  } else {
+                                    handleServerBaseUrlChange(val);
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="font-mono text-xs h-8 flex-1">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {availableServerUrls.map((url) => (
+                                    <SelectItem key={url} value={url} className="font-mono text-xs">
+                                      {url}
+                                    </SelectItem>
+                                  ))}
+                                  <SelectItem value="__custom__" className="text-xs">
+                                    Custom...
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : (
+                            <div className="flex gap-2">
+                              <Input
+                                value={serverBaseUrl}
+                                onChange={(e) => handleServerBaseUrlChange(e.target.value)}
+                                className="font-mono text-xs h-8 flex-1"
+                                placeholder="http://..."
+                              />
+                              {useCustomUrl && availableServerUrls.length > 1 && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 px-2 text-xs"
+                                  onClick={() => {
+                                    setUseCustomUrl(false);
+                                    setServerBaseUrlOverride(null);
+                                  }}
+                                >
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-4">
                           <label className="flex items-center gap-2 text-xs cursor-pointer">

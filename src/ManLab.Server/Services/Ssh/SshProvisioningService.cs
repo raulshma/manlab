@@ -44,6 +44,7 @@ public sealed class SshProvisioningService
         string? WhoAmI,
         string? OsHint,
         bool HasExistingInstallation,
+        IReadOnlyList<string> DetectedServerUrls,
         string? Error);
 
     public sealed record InventorySection(string Label, IReadOnlyList<string> Items);
@@ -69,8 +70,9 @@ public sealed class SshProvisioningService
             var target = DetectTarget(client);
             var osHint = target.Raw;
 
-            // Probe for existing installation
+            // Probe for existing installation and extract server URLs
             var hasExistingInstallation = false;
+            var detectedServerUrls = new List<string>();
             try
             {
                 if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
@@ -79,6 +81,21 @@ public sealed class SshProvisioningService
                     // Check for Linux agent installation
                     var probeResult = Execute(client, "sh -c 'test -x /opt/manlab-agent/manlab-agent && echo INSTALLED || true'", maxChars: 64);
                     hasExistingInstallation = probeResult?.Trim().Equals("INSTALLED", StringComparison.OrdinalIgnoreCase) == true;
+
+                    // Try to read ServerUrl from appsettings.json
+                    if (hasExistingInstallation)
+                    {
+                        try
+                        {
+                            var configJson = Execute(client, "sh -c 'cat /opt/manlab-agent/appsettings.json 2>/dev/null || true'", maxChars: 16384);
+                            var urls = ExtractServerUrlsFromConfig(configJson);
+                            detectedServerUrls.AddRange(urls);
+                        }
+                        catch
+                        {
+                            // Best-effort
+                        }
+                    }
                 }
                 else
                 {
@@ -87,6 +104,23 @@ public sealed class SshProvisioningService
                         "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"if (Test-Path 'C:\\\\ProgramData\\\\ManLab\\\\Agent\\\\manlab-agent.exe') { 'INSTALLED' }\"",
                         maxChars: 128);
                     hasExistingInstallation = probeResult?.Trim().Equals("INSTALLED", StringComparison.OrdinalIgnoreCase) == true;
+
+                    // Try to read ServerUrl from appsettings.json
+                    if (hasExistingInstallation)
+                    {
+                        try
+                        {
+                            var configJson = Execute(client,
+                                "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"if (Test-Path 'C:\\\\ProgramData\\\\ManLab\\\\Agent\\\\appsettings.json') { Get-Content 'C:\\\\ProgramData\\\\ManLab\\\\Agent\\\\appsettings.json' -Raw }\"",
+                                maxChars: 16384);
+                            var urls = ExtractServerUrlsFromConfig(configJson);
+                            detectedServerUrls.AddRange(urls);
+                        }
+                        catch
+                        {
+                            // Best-effort
+                        }
+                    }
                 }
             }
             catch
@@ -103,11 +137,12 @@ public sealed class SshProvisioningService
                 WhoAmI: whoami?.Trim(),
                 OsHint: osHint?.Trim(),
                 HasExistingInstallation: hasExistingInstallation,
+                DetectedServerUrls: detectedServerUrls.AsReadOnly(),
                 Error: null);
         }
         catch (SshAuthenticationException ex)
         {
-            return new ConnectionTestResult(false, hostKey.Fingerprint, false, null, null, false, "SSH authentication failed: " + ex.Message);
+            return new ConnectionTestResult(false, hostKey.Fingerprint, false, null, null, false, Array.Empty<string>(), "SSH authentication failed: " + ex.Message);
         }
         catch (SshConnectionException ex)
         {
@@ -120,14 +155,71 @@ public sealed class SshProvisioningService
                     WhoAmI: null,
                     OsHint: null,
                     HasExistingInstallation: false,
+                    DetectedServerUrls: Array.Empty<string>(),
                     Error: "SSH host key not trusted. Confirm fingerprint to proceed.");
             }
 
-            return new ConnectionTestResult(false, hostKey.Fingerprint, false, null, null, false, "SSH connection failed: " + ex.Message);
+            return new ConnectionTestResult(false, hostKey.Fingerprint, false, null, null, false, Array.Empty<string>(), "SSH connection failed: " + ex.Message);
         }
         catch (Exception ex)
         {
-            return new ConnectionTestResult(false, hostKey.Fingerprint, hostKey.TrustRequired, null, null, false, ex.Message);
+            return new ConnectionTestResult(false, hostKey.Fingerprint, hostKey.TrustRequired, null, null, false, Array.Empty<string>(), ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Extracts server URLs from agent configuration JSON.
+    /// Looks for Agent.ServerUrl and normalizes the hub URL to a base server URL.
+    /// </summary>
+    private static List<string> ExtractServerUrlsFromConfig(string? json)
+    {
+        var urls = new List<string>();
+        if (string.IsNullOrWhiteSpace(json)) return urls;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+
+            // Look for Agent.ServerUrl
+            if (doc.RootElement.TryGetProperty("Agent", out var agentElement) &&
+                agentElement.TryGetProperty("ServerUrl", out var serverUrlElement))
+            {
+                var serverUrl = serverUrlElement.GetString();
+                if (!string.IsNullOrWhiteSpace(serverUrl))
+                {
+                    // The ServerUrl typically ends with /hubs/agent - strip it to get the base URL
+                    var baseUrl = NormalizeToServerBaseUrl(serverUrl);
+                    if (!string.IsNullOrWhiteSpace(baseUrl) && !urls.Contains(baseUrl))
+                    {
+                        urls.Add(baseUrl);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // JSON parsing failed, ignore
+        }
+
+        return urls;
+    }
+
+    /// <summary>
+    /// Converts a hub URL (e.g., http://server:5247/hubs/agent) to a base server URL (e.g., http://server:5247).
+    /// </summary>
+    private static string? NormalizeToServerBaseUrl(string? hubUrl)
+    {
+        if (string.IsNullOrWhiteSpace(hubUrl)) return null;
+
+        try
+        {
+            var uri = new Uri(hubUrl);
+            // Return scheme://host:port
+            return uri.GetLeftPart(UriPartial.Authority);
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -498,9 +590,17 @@ public sealed class SshProvisioningService
         // Add --run-as-root flag if requested
         var runAsRootArg = runAsRoot ? " --run-as-root" : string.Empty;
 
-        // Linux installer currently persists configuration via its own env file/appsettings.
-        // Keep installer arguments focused on supported flags.
-        var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, githubArgs + runAsRootArg);
+        // Build remote tool flags to pass to Linux installer (now supported)
+        var toolArgs = string.Empty;
+        if (enableLogViewer) toolArgs += " --enable-log-viewer";
+        if (enableScripts) toolArgs += " --enable-scripts";
+        if (enableTerminal) toolArgs += " --enable-terminal";
+        if (enableFileBrowser) toolArgs += " --enable-file-browser";
+
+        // Combine all extra installer arguments
+        var extraArgs = githubArgs + runAsRootArg + toolArgs;
+
+        var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, extraArgs);
 
         string output;
         if (useInteractiveSudo)

@@ -160,6 +160,7 @@ export interface SshTestResponse {
   whoAmI: string | null;
   osHint: string | null;
   hasExistingInstallation: boolean;
+  detectedServerUrls: string[];
   error: string | null;
   useSavedCredentials?: boolean;
 }

@@ -17,7 +17,10 @@ namespace ManLab.Server.Services.Commands;
 public sealed class CommandDispatchService : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan IdleMaxInterval = TimeSpan.FromSeconds(30);
+    // This service is on the hot path for interactive features (terminal/log viewer/file browser).
+    // If we back off too far while idle, synchronous endpoints that poll for completion can time out
+    // before the dispatcher wakes up. Keep the worst-case wake-up latency low.
+    private static readonly TimeSpan IdleMaxInterval = TimeSpan.FromSeconds(5);
     private const int BatchSize = 25;
 
     private const int MaxDispatchAttempts = 5;
@@ -391,7 +394,8 @@ public sealed class CommandDispatchService : BackgroundService
     {
         // For log viewer commands, OutputLog is used to carry the file content/chunks.
         // Avoid polluting it with server operational notes.
-        return type is not (CommandType.LogRead or CommandType.LogTail);
+        // For file browser commands, OutputLog carries JSON that must remain parseable.
+        return type is not (CommandType.LogRead or CommandType.LogTail or CommandType.FileList or CommandType.FileRead);
     }
 
     private static (string agentType, string payload, bool supported) MapToAgentCommand(CommandType type, string? payload)
@@ -418,6 +422,10 @@ public sealed class CommandDispatchService : BackgroundService
             CommandType.TerminalClose => (CommandTypes.TerminalClose, payload ?? string.Empty, true),
             CommandType.TerminalInput => (CommandTypes.TerminalInput, payload ?? string.Empty, true),
             CommandType.CommandCancel => (CommandTypes.CommandCancel, payload ?? string.Empty, true),
+            CommandType.ConfigUpdate => (CommandTypes.ConfigUpdate, payload ?? string.Empty, true),
+
+            CommandType.FileList => (CommandTypes.FileList, payload ?? string.Empty, true),
+            CommandType.FileRead => (CommandTypes.FileRead, payload ?? string.Empty, true),
             _ => (type.ToString(), payload ?? string.Empty, false)
         };
     }

@@ -22,7 +22,8 @@ ManLab Agent installer (Linux/macOS)
 
 Usage:
   install.sh --server <http(s)://host:port> [--token <token>] [--install-dir <dir>] [--rid <rid>] [--force]
-            [--prefer-github --github-release-base-url <url> --github-version <tag>] [--run-as-root]
+             [--prefer-github --github-release-base-url <url> --github-version <tag>] [--run-as-root]
+             [--enable-log-viewer] [--enable-scripts] [--enable-terminal] [--enable-file-browser]
   install.sh --uninstall [--install-dir <dir>]
   install.sh --preview-uninstall [--install-dir <dir>]
 
@@ -38,6 +39,19 @@ Options:
   --run-as-root   Run the agent as root (required for system updates without passwordless sudo)
   --uninstall     Stop/disable the agent and remove installed files
   --preview-uninstall  Print JSON describing what would be removed (no changes)
+  
+  Remote Tools (security-sensitive, default-deny):
+  --enable-log-viewer    Enable remote log viewer commands
+  --enable-scripts       Enable remote script execution
+  --enable-terminal      Enable remote terminal access
+  --enable-file-browser  Enable remote file browser
+  
+  Telemetry Settings (default: enabled):
+  --enable-network-telemetry   Enable/disable network throughput telemetry (true/false)
+  --enable-ping-telemetry      Enable/disable ping-based connectivity telemetry (true/false)
+  --enable-gpu-telemetry       Enable/disable GPU telemetry (true/false)
+  --enable-ups-telemetry       Enable/disable UPS telemetry (true/false)
+
   -h, --help      Show help
 
 Notes:
@@ -265,18 +279,233 @@ write_minimal_appsettings() {
   local path="$1"
   local hub_url="$2"
   local token="$3"
+  # Additional settings passed as env vars: ENABLE_LOG_VIEWER, ENABLE_SCRIPTS, etc.
+
+  # Build the Agent section with all settings
+  local agent_section=""
+  agent_section+="\"ServerUrl\": \"${hub_url}\","
+  agent_section+="\"AuthToken\": \"${token}\","
+  agent_section+="\"HeartbeatIntervalSeconds\": 10,"
+  agent_section+="\"MaxReconnectDelaySeconds\": 120"
+
+  # Add remote tool settings if explicitly enabled
+  if [[ $ENABLE_LOG_VIEWER -eq 1 ]]; then agent_section+=",\"EnableLogViewer\": true"; fi
+  if [[ $ENABLE_SCRIPTS -eq 1 ]]; then agent_section+=",\"EnableScripts\": true"; fi
+  if [[ $ENABLE_TERMINAL -eq 1 ]]; then agent_section+=",\"EnableTerminal\": true"; fi
+  if [[ $ENABLE_FILE_BROWSER -eq 1 ]]; then agent_section+=",\"EnableFileBrowser\": true"; fi
+
+  # Add telemetry settings only if explicitly set
+  if [[ -n "$ENABLE_NETWORK_TELEMETRY" ]]; then
+    if [[ "$ENABLE_NETWORK_TELEMETRY" == "true" ]]; then
+      agent_section+=",\"EnableNetworkTelemetry\": true"
+    else
+      agent_section+=",\"EnableNetworkTelemetry\": false"
+    fi
+  fi
+  if [[ -n "$ENABLE_PING_TELEMETRY" ]]; then
+    if [[ "$ENABLE_PING_TELEMETRY" == "true" ]]; then
+      agent_section+=",\"EnablePingTelemetry\": true"
+    else
+      agent_section+=",\"EnablePingTelemetry\": false"
+    fi
+  fi
+  if [[ -n "$ENABLE_GPU_TELEMETRY" ]]; then
+    if [[ "$ENABLE_GPU_TELEMETRY" == "true" ]]; then
+      agent_section+=",\"EnableGpuTelemetry\": true"
+    else
+      agent_section+=",\"EnableGpuTelemetry\": false"
+    fi
+  fi
+  if [[ -n "$ENABLE_UPS_TELEMETRY" ]]; then
+    if [[ "$ENABLE_UPS_TELEMETRY" == "true" ]]; then
+      agent_section+=",\"EnableUpsTelemetry\": true"
+    else
+      agent_section+=",\"EnableUpsTelemetry\": false"
+    fi
+  fi
 
   cat > "$path" <<EOF
 {
   "Agent": {
-    "ServerUrl": "${hub_url}",
-    "AuthToken": "${token}",
-    "HeartbeatIntervalSeconds": 10,
-    "MaxReconnectDelaySeconds": 120
+    ${agent_section}
   }
 }
 EOF
 }
+
+# Apply additional agent settings to an existing appsettings.json
+# This handles remote tools and telemetry settings passed via CLI flags.
+apply_agent_settings() {
+  local path="$1"
+  local enable_log_viewer="$2"
+  local enable_scripts="$3"
+  local enable_terminal="$4"
+  local enable_file_browser="$5"
+  local enable_network_telemetry="$6"
+  local enable_ping_telemetry="$7"
+  local enable_gpu_telemetry="$8"
+  local enable_ups_telemetry="$9"
+
+  # Skip if no settings to apply
+  if [[ "$enable_log_viewer" != "1" && "$enable_scripts" != "1" && \
+        "$enable_terminal" != "1" && "$enable_file_browser" != "1" && \
+        -z "$enable_network_telemetry" && -z "$enable_ping_telemetry" && \
+        -z "$enable_gpu_telemetry" && -z "$enable_ups_telemetry" ]]; then
+    return 0
+  fi
+
+  # Use python3 for robust JSON editing
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$path" "$enable_log_viewer" "$enable_scripts" "$enable_terminal" "$enable_file_browser" \
+              "$enable_network_telemetry" "$enable_ping_telemetry" "$enable_gpu_telemetry" "$enable_ups_telemetry" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+enable_log_viewer = sys.argv[2] == "1"
+enable_scripts = sys.argv[3] == "1"
+enable_terminal = sys.argv[4] == "1"
+enable_file_browser = sys.argv[5] == "1"
+enable_network_telemetry = sys.argv[6] if len(sys.argv) > 6 else ""
+enable_ping_telemetry = sys.argv[7] if len(sys.argv) > 7 else ""
+enable_gpu_telemetry = sys.argv[8] if len(sys.argv) > 8 else ""
+enable_ups_telemetry = sys.argv[9] if len(sys.argv) > 9 else ""
+
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            raw = f.read().strip()
+            if raw:
+                data = json.loads(raw)
+    except Exception:
+        data = {}
+
+if not isinstance(data, dict):
+    data = {}
+
+agent = data.get('Agent')
+if not isinstance(agent, dict):
+    agent = {}
+
+# Remote tools (only set if explicitly enabled)
+if enable_log_viewer:
+    agent['EnableLogViewer'] = True
+if enable_scripts:
+    agent['EnableScripts'] = True
+if enable_terminal:
+    agent['EnableTerminal'] = True
+if enable_file_browser:
+    agent['EnableFileBrowser'] = True
+
+# Telemetry settings (only override if explicitly set)
+def parse_bool(s):
+    if s.lower() in ('true', '1', 'yes'):
+        return True
+    elif s.lower() in ('false', '0', 'no'):
+        return False
+    return None
+
+if enable_network_telemetry:
+    val = parse_bool(enable_network_telemetry)
+    if val is not None:
+        agent['EnableNetworkTelemetry'] = val
+
+if enable_ping_telemetry:
+    val = parse_bool(enable_ping_telemetry)
+    if val is not None:
+        agent['EnablePingTelemetry'] = val
+
+if enable_gpu_telemetry:
+    val = parse_bool(enable_gpu_telemetry)
+    if val is not None:
+        agent['EnableGpuTelemetry'] = val
+
+if enable_ups_telemetry:
+    val = parse_bool(enable_ups_telemetry)
+    if val is not None:
+        agent['EnableUpsTelemetry'] = val
+
+data['Agent'] = agent
+
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+    return $?
+  fi
+
+  # Fallback to node.js
+  if command -v node >/dev/null 2>&1; then
+    node - <<'JS' "$path" "$enable_log_viewer" "$enable_scripts" "$enable_terminal" "$enable_file_browser" \
+              "$enable_network_telemetry" "$enable_ping_telemetry" "$enable_gpu_telemetry" "$enable_ups_telemetry"
+const fs = require('fs');
+const path = process.argv[2];
+const enableLogViewer = process.argv[3] === "1";
+const enableScripts = process.argv[4] === "1";
+const enableTerminal = process.argv[5] === "1";
+const enableFileBrowser = process.argv[6] === "1";
+const enableNetworkTelemetry = process.argv[7] || "";
+const enablePingTelemetry = process.argv[8] || "";
+const enableGpuTelemetry = process.argv[9] || "";
+const enableUpsTelemetry = process.argv[10] || "";
+
+let data = {};
+try {
+  if (fs.existsSync(path)) {
+    const raw = fs.readFileSync(path, 'utf8').trim();
+    if (raw) data = JSON.parse(raw);
+  }
+} catch {
+  data = {};
+}
+
+if (typeof data !== 'object' || data === null || Array.isArray(data)) data = {};
+let agent = data.Agent;
+if (typeof agent !== 'object' || agent === null || Array.isArray(agent)) agent = {};
+
+// Remote tools
+if (enableLogViewer) agent.EnableLogViewer = true;
+if (enableScripts) agent.EnableScripts = true;
+if (enableTerminal) agent.EnableTerminal = true;
+if (enableFileBrowser) agent.EnableFileBrowser = true;
+
+// Telemetry
+const parseBool = (s) => {
+  if (['true', '1', 'yes'].includes(s.toLowerCase())) return true;
+  if (['false', '0', 'no'].includes(s.toLowerCase())) return false;
+  return null;
+};
+
+if (enableNetworkTelemetry) {
+  const val = parseBool(enableNetworkTelemetry);
+  if (val !== null) agent.EnableNetworkTelemetry = val;
+}
+if (enablePingTelemetry) {
+  const val = parseBool(enablePingTelemetry);
+  if (val !== null) agent.EnablePingTelemetry = val;
+}
+if (enableGpuTelemetry) {
+  const val = parseBool(enableGpuTelemetry);
+  if (val !== null) agent.EnableGpuTelemetry = val;
+}
+if (enableUpsTelemetry) {
+  const val = parseBool(enableUpsTelemetry);
+  if (val !== null) agent.EnableUpsTelemetry = val;
+}
+
+data.Agent = agent;
+fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n", 'utf8');
+JS
+    return $?
+  fi
+
+  # No JSON editor available; settings not applied (file already has server defaults)
+  echo "Warning: Could not apply CLI settings to appsettings.json (missing python3/node). Server defaults will be used." >&2
+  return 0
+}
+
 
 update_appsettings_json() {
   local path="$1"
@@ -369,6 +598,18 @@ GITHUB_RELEASE_BASE_URL=""
 GITHUB_VERSION=""
 RUN_AS_ROOT=0
 
+# Remote tools (security-sensitive, default-deny)
+ENABLE_LOG_VIEWER=0
+ENABLE_SCRIPTS=0
+ENABLE_TERMINAL=0
+ENABLE_FILE_BROWSER=0
+
+# Telemetry settings (default: enabled, empty means use default)
+ENABLE_NETWORK_TELEMETRY=""
+ENABLE_PING_TELEMETRY=""
+ENABLE_GPU_TELEMETRY=""
+ENABLE_UPS_TELEMETRY=""
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server)
@@ -389,6 +630,22 @@ while [[ $# -gt 0 ]]; do
       GITHUB_VERSION="${2:-}"; shift 2 ;;
     --run-as-root)
       RUN_AS_ROOT=1; shift 1 ;;
+    --enable-log-viewer)
+      ENABLE_LOG_VIEWER=1; shift 1 ;;
+    --enable-scripts)
+      ENABLE_SCRIPTS=1; shift 1 ;;
+    --enable-terminal)
+      ENABLE_TERMINAL=1; shift 1 ;;
+    --enable-file-browser)
+      ENABLE_FILE_BROWSER=1; shift 1 ;;
+    --enable-network-telemetry)
+      ENABLE_NETWORK_TELEMETRY="${2:-true}"; shift 2 ;;
+    --enable-ping-telemetry)
+      ENABLE_PING_TELEMETRY="${2:-true}"; shift 2 ;;
+    --enable-gpu-telemetry)
+      ENABLE_GPU_TELEMETRY="${2:-true}"; shift 2 ;;
+    --enable-ups-telemetry)
+      ENABLE_UPS_TELEMETRY="${2:-true}"; shift 2 ;;
     --uninstall)
       UNINSTALL=1; shift 1 ;;
     --preview-uninstall)
@@ -769,6 +1026,12 @@ else
   fi
 fi
 
+# Apply CLI-specified agent settings (remote tools, telemetry) to appsettings.json.
+# These override server defaults when passed via command line.
+apply_agent_settings "$APPSETTINGS_PATH" \
+  "$ENABLE_LOG_VIEWER" "$ENABLE_SCRIPTS" "$ENABLE_TERMINAL" "$ENABLE_FILE_BROWSER" \
+  "$ENABLE_NETWORK_TELEMETRY" "$ENABLE_PING_TELEMETRY" "$ENABLE_GPU_TELEMETRY" "$ENABLE_UPS_TELEMETRY"
+
 # If we created a dedicated user, lock down appsettings.json to that user.
 if [[ "$OS_KIND" == "linux" ]] && id "$AGENT_USER" >/dev/null 2>&1; then
   chown "$AGENT_USER:$AGENT_USER" "$APPSETTINGS_PATH" || true
@@ -840,6 +1103,44 @@ else
   PLIST_NAME="com.manlab.agent"
   PLIST_FILE="/Library/LaunchDaemons/${PLIST_NAME}.plist"
 
+  # On macOS, LaunchDaemons run as root by default. If --run-as-root is not specified,
+  # we'll add a UserName key to run as a dedicated user (if we can create one).
+  PLIST_USERNAME=""
+  if [[ $RUN_AS_ROOT -eq 0 ]]; then
+    # Try to create a dedicated user on macOS (requires admin/root)
+    # Note: macOS user creation is more complex than Linux; we use dscl if available.
+    if ! id "$AGENT_USER" >/dev/null 2>&1; then
+      if command -v dscl >/dev/null 2>&1; then
+        # Find an available UID (500+ is typically for regular users, we use 400-499 for system accounts)
+        NEXT_UID=400
+        while dscl . -list /Users UniqueID | awk '{print $2}' | grep -q "^${NEXT_UID}$"; do
+          NEXT_UID=$((NEXT_UID + 1))
+          if [[ $NEXT_UID -ge 500 ]]; then break; fi
+        done
+
+        if [[ $NEXT_UID -lt 500 ]]; then
+          echo "Creating dedicated user '$AGENT_USER' on macOS (UID=$NEXT_UID)..."
+          dscl . -create "/Users/$AGENT_USER" 2>/dev/null || true
+          dscl . -create "/Users/$AGENT_USER" UserShell /usr/bin/false 2>/dev/null || true
+          dscl . -create "/Users/$AGENT_USER" UniqueID "$NEXT_UID" 2>/dev/null || true
+          dscl . -create "/Users/$AGENT_USER" PrimaryGroupID 20 2>/dev/null || true  # staff group
+          dscl . -create "/Users/$AGENT_USER" RealName "ManLab Agent" 2>/dev/null || true
+          dscl . -create "/Users/$AGENT_USER" IsHidden 1 2>/dev/null || true
+        fi
+      fi
+    fi
+
+    if id "$AGENT_USER" >/dev/null 2>&1; then
+      PLIST_USERNAME="$AGENT_USER"
+      chown -R "$AGENT_USER" "$INSTALL_DIR" 2>/dev/null || true
+      echo "Note: Agent will run as user '$AGENT_USER' on macOS."
+    else
+      echo "Note: Could not create dedicated user on macOS. Agent will run as root."
+    fi
+  else
+    echo "Note: Agent will run as root on macOS (--run-as-root specified)."
+  fi
+
   # launchd does not support an EnvironmentFile directive like systemd.
   # Store the variables directly in the plist.
   # Note: This is comparable to /etc/manlab-agent.env on Linux in terms of sensitivity.
@@ -877,6 +1178,18 @@ EOF
   cat >> "$PLIST_FILE" <<'EOF'
   </dict>
 
+EOF
+
+  # Add UserName key if running as dedicated user (not root)
+  if [[ -n "$PLIST_USERNAME" ]]; then
+    cat >> "$PLIST_FILE" <<EOF
+  <key>UserName</key>
+  <string>${PLIST_USERNAME}</string>
+
+EOF
+  fi
+
+  cat >> "$PLIST_FILE" <<'EOF'
   <key>RunAtLoad</key>
   <true/>
 
