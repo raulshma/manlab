@@ -17,6 +17,9 @@ public sealed class LinuxTelemetryCollector : ITelemetryCollector
 
     private readonly GpuTelemetryCollector _gpuCollector;
     private readonly UpsTelemetryCollector _upsCollector;
+    private readonly EnhancedNetworkTelemetryCollector _enhancedNetworkCollector;
+    private readonly EnhancedGpuTelemetryCollector _enhancedGpuCollector;
+    private readonly ApplicationPerformanceCollector _apmCollector;
     
     // Previous CPU times for calculating usage
     private long _prevTotal;
@@ -45,6 +48,9 @@ public sealed class LinuxTelemetryCollector : ITelemetryCollector
 
         _gpuCollector = new GpuTelemetryCollector(_logger, _config);
         _upsCollector = new UpsTelemetryCollector(_logger, _config);
+        _enhancedNetworkCollector = new EnhancedNetworkTelemetryCollector(_logger, _config);
+        _enhancedGpuCollector = new EnhancedGpuTelemetryCollector(_logger, _config);
+        _apmCollector = new ApplicationPerformanceCollector(_logger, _config);
     }
 
     public TelemetryData Collect()
@@ -65,6 +71,11 @@ public sealed class LinuxTelemetryCollector : ITelemetryCollector
             // Optional: advanced hardware stats.
             data.Gpus = _gpuCollector.Collect();
             data.Ups = _upsCollector.Collect();
+
+            // Enhanced telemetry collectors
+            data.Network = _enhancedNetworkCollector.Collect();
+            data.EnhancedGpus = _enhancedGpuCollector.Collect();
+            data.Apm = _apmCollector.Collect();
         }
         catch (Exception ex)
         {

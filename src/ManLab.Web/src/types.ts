@@ -364,6 +364,8 @@ export interface FileReadResult {
   contentBase64: string;
   truncated: boolean;
   bytesRead: number;
+  offset?: number;
+  totalBytes?: number;
 }
 
 export interface FileBrowserListResponse {
@@ -371,6 +373,7 @@ export interface FileBrowserListResponse {
   nodeId: string;
   path: string;
   entries: FileBrowserEntry[];
+  truncated: boolean;
   commandId: string;
   status: string;
   error?: string | null;
@@ -576,4 +579,311 @@ export interface TerminalSessionResponse {
 export interface CancelScriptRunResponse {
   commandId?: string;
   message: string;
+}
+
+
+// ============================================================================
+// Enhanced Telemetry Types
+// ============================================================================
+
+/**
+ * Enhanced GPU telemetry with detailed metrics.
+ */
+export interface EnhancedGpuTelemetry {
+  vendor: string;
+  index: number;
+  name: string | null;
+  driverVersion: string | null;
+  uuid: string | null;
+  pciBusId: string | null;
+
+  // Utilization
+  utilizationPercent: number | null;
+  memoryUtilizationPercent: number | null;
+  encoderUtilizationPercent: number | null;
+  decoderUtilizationPercent: number | null;
+
+  // Memory
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  memoryFreeBytes: number | null;
+
+  // Temperature
+  temperatureC: number | null;
+  memoryTemperatureC: number | null;
+  hotspotTemperatureC: number | null;
+  throttleTemperatureC: number | null;
+
+  // Power
+  powerDrawWatts: number | null;
+  powerLimitWatts: number | null;
+  defaultPowerLimitWatts: number | null;
+  maxPowerLimitWatts: number | null;
+
+  // Clocks
+  graphicsClockMhz: number | null;
+  memoryClockMhz: number | null;
+  maxGraphicsClockMhz: number | null;
+  maxMemoryClockMhz: number | null;
+
+  // Fan & Performance
+  fanSpeedPercent: number | null;
+  performanceState: string | null;
+  isThrottling: boolean | null;
+  throttleReasons: string[] | null;
+
+  // Process-level usage
+  processes: GpuProcessInfo[] | null;
+}
+
+/**
+ * Information about a process using GPU resources.
+ */
+export interface GpuProcessInfo {
+  processId: number;
+  processName: string | null;
+  memoryUsedBytes: number | null;
+  utilizationPercent: number | null;
+  usageType: string | null;
+}
+
+/**
+ * Enhanced network telemetry data.
+ */
+export interface NetworkTelemetry {
+  interfaces: NetworkInterfaceTelemetry[];
+  latencyMeasurements: LatencyMeasurement[];
+  connections: ConnectionsSummary | null;
+  discoveredDevices: DiscoveredDevice[];
+  lastDiscoveryScanUtc: string | null;
+}
+
+/**
+ * Per-interface network statistics.
+ */
+export interface NetworkInterfaceTelemetry {
+  name: string;
+  description: string | null;
+  interfaceType: string | null;
+  status: string;
+  speedBps: number | null;
+  macAddress: string | null;
+  iPv4Addresses: string[];
+  iPv6Addresses: string[];
+  rxBytesPerSec: number | null;
+  txBytesPerSec: number | null;
+  totalRxBytes: number | null;
+  totalTxBytes: number | null;
+  rxPacketsPerSec: number | null;
+  txPacketsPerSec: number | null;
+  rxErrors: number | null;
+  txErrors: number | null;
+  rxDropped: number | null;
+  txDropped: number | null;
+  utilizationPercent: number | null;
+}
+
+/**
+ * Network latency measurement to a specific target.
+ */
+export interface LatencyMeasurement {
+  target: string;
+  rttMs: number | null;
+  minRttMs: number | null;
+  maxRttMs: number | null;
+  avgRttMs: number | null;
+  packetLossPercent: number | null;
+  jitterMs: number | null;
+  hopCount: number | null;
+}
+
+/**
+ * Summary of active network connections.
+ */
+export interface ConnectionsSummary {
+  tcpEstablished: number;
+  tcpTimeWait: number;
+  tcpCloseWait: number;
+  tcpListening: number;
+  udpEndpoints: number;
+  topConnections: ConnectionInfo[];
+}
+
+/**
+ * Information about a network connection.
+ */
+export interface ConnectionInfo {
+  localEndpoint: string;
+  remoteEndpoint: string;
+  state: string;
+  processId: number | null;
+  processName: string | null;
+}
+
+/**
+ * A discovered network device.
+ */
+export interface DiscoveredDevice {
+  ipAddress: string;
+  macAddress: string | null;
+  hostname: string | null;
+  vendor: string | null;
+  isReachable: boolean;
+  responseTimeMs: number | null;
+  firstSeenUtc: string;
+  lastSeenUtc: string;
+}
+
+/**
+ * Application Performance Monitoring (APM) telemetry data.
+ */
+export interface ApplicationPerformanceTelemetry {
+  applications: ApplicationMetrics[];
+  databases: DatabaseMetrics[];
+  endpoints: EndpointMetrics[];
+  systemThroughput: ThroughputMetrics | null;
+}
+
+/**
+ * Metrics for a monitored application or service.
+ */
+export interface ApplicationMetrics {
+  name: string;
+  processId: number | null;
+  applicationType: string | null;
+  version: string | null;
+  isHealthy: boolean;
+  healthCheckUrl: string | null;
+  healthCheckResponseTimeMs: number | null;
+
+  // Response Time
+  avgResponseTimeMs: number | null;
+  p50ResponseTimeMs: number | null;
+  p95ResponseTimeMs: number | null;
+  p99ResponseTimeMs: number | null;
+  maxResponseTimeMs: number | null;
+
+  // Error Rates
+  totalRequests: number;
+  successfulRequests: number;
+  clientErrors: number;
+  serverErrors: number;
+  errorRatePercent: number | null;
+
+  // Throughput
+  requestsPerSecond: number | null;
+  bytesReceivedPerSec: number | null;
+  bytesSentPerSec: number | null;
+
+  // Resource Usage
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  activeConnections: number | null;
+  connectionPoolSize: number | null;
+  connectionPoolAvailable: number | null;
+  uptimeSeconds: number | null;
+  lastRestartUtc: string | null;
+}
+
+/**
+ * Database performance metrics.
+ */
+export interface DatabaseMetrics {
+  name: string;
+  databaseType: string | null;
+  host: string | null;
+  port: number | null;
+  isReachable: boolean;
+  connectionLatencyMs: number | null;
+
+  // Query Performance
+  totalQueries: number;
+  avgQueryTimeMs: number | null;
+  p95QueryTimeMs: number | null;
+  maxQueryTimeMs: number | null;
+  queriesPerSecond: number | null;
+  failedQueries: number;
+
+  // Connection Pool
+  activeConnections: number | null;
+  idleConnections: number | null;
+  maxConnections: number | null;
+  connectionWaitTimeMs: number | null;
+
+  // Slow Queries
+  slowQueries: SlowQueryInfo[] | null;
+}
+
+/**
+ * Information about a slow database query.
+ */
+export interface SlowQueryInfo {
+  query: string;
+  executionTimeMs: number;
+  executedAtUtc: string;
+  rowsAffected: number | null;
+  databaseName: string | null;
+}
+
+/**
+ * HTTP endpoint performance metrics.
+ */
+export interface EndpointMetrics {
+  path: string;
+  method: string;
+  totalRequests: number;
+  avgResponseTimeMs: number | null;
+  p95ResponseTimeMs: number | null;
+  errorRatePercent: number | null;
+  requestsPerSecond: number | null;
+  mostCommonStatusCode: number | null;
+}
+
+/**
+ * System-wide throughput metrics.
+ */
+export interface ThroughputMetrics {
+  totalRequestsPerSecond: number;
+  totalBytesReceivedPerSec: number;
+  totalBytesSentPerSec: number;
+  peakRequestsPerSecond: number;
+  avgLatencyMs: number | null;
+  overallErrorRatePercent: number | null;
+  windowStartUtc: string;
+  windowDurationSeconds: number;
+}
+
+/**
+ * Extended TelemetryUpdate with enhanced telemetry fields.
+ */
+export interface ExtendedTelemetryUpdate extends TelemetryUpdate {
+  // Enhanced GPU telemetry
+  enhancedGpus: EnhancedGpuTelemetry[] | null;
+
+  // Enhanced network telemetry
+  network: NetworkTelemetry | null;
+
+  // Application Performance Monitoring
+  apm: ApplicationPerformanceTelemetry | null;
+}
+
+/**
+ * Database endpoint configuration for APM.
+ */
+export interface DatabaseEndpointConfig {
+  name: string;
+  databaseType: string;
+  host: string;
+  port: number;
+}
+
+/**
+ * Extended AgentConfiguration with enhanced telemetry settings.
+ */
+export interface ExtendedAgentConfiguration extends AgentConfiguration {
+  enableEnhancedNetworkTelemetry: boolean;
+  enableEnhancedGpuTelemetry: boolean;
+  enableApmTelemetry: boolean;
+  apmHealthCheckEndpoints: string[];
+  apmDatabaseEndpoints: DatabaseEndpointConfig[];
 }

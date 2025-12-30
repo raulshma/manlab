@@ -35,5 +35,6 @@ namespace ManLab.Shared.Dtos;
 [JsonSerializable(typeof(FileReadPayload))]
 [JsonSerializable(typeof(FileBrowserEntry))]
 [JsonSerializable(typeof(List<FileBrowserEntry>))]
+[JsonSerializable(typeof(FileListResult))]
 [JsonSerializable(typeof(FileReadResult))]
 public partial class ManLabJsonContext : JsonSerializerContext;

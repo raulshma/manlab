@@ -331,7 +331,18 @@ public class AgentHub : Hub
             AgentCpuPercent = data.AgentCpuPercent,
             AgentMemoryBytes = data.AgentMemoryBytes,
             AgentGcHeapBytes = data.AgentGcHeapBytes,
-            AgentThreadCount = data.AgentThreadCount
+            AgentThreadCount = data.AgentThreadCount,
+
+            // Enhanced telemetry (stored as JSON)
+            EnhancedNetworkJson = data.Network != null 
+                ? System.Text.Json.JsonSerializer.Serialize(data.Network) 
+                : null,
+            EnhancedGpuJson = data.EnhancedGpus is { Count: > 0 } 
+                ? System.Text.Json.JsonSerializer.Serialize(data.EnhancedGpus) 
+                : null,
+            ApmJson = data.Apm != null 
+                ? System.Text.Json.JsonSerializer.Serialize(data.Apm) 
+                : null
         };
 
         // Optional: persist GPU snapshots when provided in heartbeat.
@@ -791,12 +802,24 @@ public class AgentHub : Hub
             logs = logs[..MaxCommandLogChunkChars] + "\n[...log chunk truncated by server...]\n";
         }
 
-        // Append logs (bounded tail).
+        // Append logs (bounded tail) OR overwrite for structured-output commands.
         if (!string.IsNullOrEmpty(logs))
         {
-            command.OutputLog = string.IsNullOrEmpty(command.OutputLog)
-                ? logs
-                : command.OutputLog + "\n" + logs;
+            var isFileBrowserCommand = command.CommandType is CommandType.FileList or CommandType.FileRead;
+            var isTerminalState = parsedStatus is CommandStatus.Success or CommandStatus.Failed;
+
+            if (isFileBrowserCommand && isTerminalState)
+            {
+                // For file browser commands, the "logs" payload is actually structured content (JSON).
+                // Do not append to existing OutputLog (dispatch diagnostics), as that corrupts JSON.
+                command.OutputLog = logs;
+            }
+            else
+            {
+                command.OutputLog = string.IsNullOrEmpty(command.OutputLog)
+                    ? logs
+                    : command.OutputLog + "\n" + logs;
+            }
 
             command.OutputLog = ManLab.Server.Services.Persistence.TextBounds.TruncateTailUtf8(command.OutputLog, MaxCommandOutputLogBytesUtf8);
         }

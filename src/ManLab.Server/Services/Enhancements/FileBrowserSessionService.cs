@@ -14,6 +14,10 @@ public sealed class FileBrowserSessionService
     private static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan MaxTtl = TimeSpan.FromMinutes(60);
 
+    // Transport-safe per-request read size. The server stores agent responses in a bounded OutputLog tail.
+    // Keeping chunks small avoids JSON truncation (and thus "malformed JSON" errors) for file.read.
+    public const int TransportSafeMaxBytesPerRead = 32 * 1024;
+
     private readonly DataContext _db;
     private readonly IMemoryCache _cache;
     private readonly ILogger<FileBrowserSessionService> _logger;
@@ -61,13 +65,15 @@ public sealed class FileBrowserSessionService
 
         var now = DateTime.UtcNow;
         var sessionId = Guid.NewGuid();
+
+        var effectiveMaxBytes = Math.Clamp(policy.MaxBytesPerRead, 1, TransportSafeMaxBytesPerRead);
         var session = new Session(
             SessionId: sessionId,
             NodeId: nodeId,
             PolicyId: policy.Id,
             DisplayName: policy.DisplayName,
             RootPath: policy.RootPath,
-            MaxBytesPerRead: policy.MaxBytesPerRead,
+            MaxBytesPerRead: effectiveMaxBytes,
             CreatedAt: now,
             ExpiresAt: now.Add(effectiveTtl));
 
@@ -98,13 +104,14 @@ public sealed class FileBrowserSessionService
         // Uses Guid.Empty for PolicyId to differentiate from policy-backed sessions.
         var now = DateTime.UtcNow;
         var sessionId = Guid.NewGuid();
+        var effectiveMaxBytes = Math.Clamp(maxBytesPerRead, 1, TransportSafeMaxBytesPerRead);
         var session = new Session(
             SessionId: sessionId,
             NodeId: nodeId,
             PolicyId: Guid.Empty,
             DisplayName: "System",
             RootPath: "/",
-            MaxBytesPerRead: maxBytesPerRead,
+            MaxBytesPerRead: effectiveMaxBytes,
             CreatedAt: now,
             ExpiresAt: now.Add(effectiveTtl));
 

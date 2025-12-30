@@ -172,11 +172,12 @@ export function LegacyFileBrowserPanel({
   const [editingPolicy, setEditingPolicy] = useState<FileBrowserPolicy | null>(null);
   const [newPolicyName, setNewPolicyName] = useState("");
   const [newPolicyRootPath, setNewPolicyRootPath] = useState("");
-  const [newPolicyMaxBytes, setNewPolicyMaxBytes] = useState("262144");
+  const [newPolicyMaxBytes, setNewPolicyMaxBytes] = useState("32768");
 
   // File preview
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState<string>("");
+  const [previewPath, setPreviewPath] = useState<string>("");
   const [previewText, setPreviewText] = useState<string>("");
   const [previewTruncated, setPreviewTruncated] = useState<boolean>(false);
 
@@ -228,7 +229,7 @@ export function LegacyFileBrowserPanel({
     queryKey: ["fileBrowserList", nodeId, session?.sessionId, effectivePath],
     queryFn: () => {
       if (!session) throw new Error("No session");
-      return listFileBrowserEntries(nodeId, session.sessionId, effectivePath);
+      return listFileBrowserEntries(nodeId, session.sessionId, effectivePath, 5000);
     },
     enabled: !!session,
     refetchOnWindowFocus: false,
@@ -247,28 +248,78 @@ export function LegacyFileBrowserPanel({
   const readMutation = useMutation({
     mutationFn: async (file: FileBrowserEntry) => {
       if (!session) throw new Error("No session");
-      return readFileBrowserContent(nodeId, session.sessionId, file.path);
-    },
-    onSuccess: (resp) => {
-      const result = resp.result;
-      if (!result) {
-        throw new Error(resp.error || "Failed to read file");
+
+      const name = filenameFromPath(file.path);
+
+      // Text files: fetch a single chunk for preview.
+      if (isLikelyTextFile(name)) {
+        const resp = await readFileBrowserContent(
+          nodeId,
+          session.sessionId,
+          file.path,
+          session.maxBytesPerRead,
+          0
+        );
+        return { mode: "preview" as const, name, resp };
       }
 
-      const bytes = base64ToUint8Array(result.contentBase64 || "");
-      const name = filenameFromPath(result.path);
+      // Binary files: fetch all chunks and download.
+      const chunkSize = session.maxBytesPerRead || 32 * 1024;
+      const chunks: Uint8Array[] = [];
+      let offset = 0;
 
-      if (isLikelyTextFile(name)) {
+      for (let i = 0; i < 50_000; i++) {
+        const resp = await readFileBrowserContent(
+          nodeId,
+          session.sessionId,
+          file.path,
+          chunkSize,
+          offset
+        );
+        const result = resp.result;
+        if (!result) {
+          throw new Error(resp.error || "Failed to read file");
+        }
+
+        const bytesChunk = base64ToUint8Array(result.contentBase64 || "");
+        chunks.push(bytesChunk);
+        offset += bytesChunk.length;
+
+        if (!result.truncated) break;
+        if (bytesChunk.length === 0) {
+          throw new Error("Agent returned an empty chunk while more data remained.");
+        }
+      }
+
+      const total = chunks.reduce((sum, c) => sum + c.length, 0);
+      const out = new Uint8Array(total);
+      let pos = 0;
+      for (const c of chunks) {
+        out.set(c, pos);
+        pos += c.length;
+      }
+
+      return { mode: "download" as const, name, bytes: out, path: file.path };
+    },
+    onSuccess: (data) => {
+      if (data.mode === "preview") {
+        const result = data.resp.result;
+        if (!result) {
+          throw new Error(data.resp.error || "Failed to read file");
+        }
+
+        const bytes = base64ToUint8Array(result.contentBase64 || "");
         const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-        setPreviewTitle(name);
+        setPreviewTitle(data.name);
+        setPreviewPath(result.path || "");
         setPreviewText(text);
         setPreviewTruncated(Boolean(result.truncated));
         setPreviewOpen(true);
         return;
       }
 
-      downloadBytes(bytes, name, "application/octet-stream");
-      toast.success(`Downloaded ${name}`);
+      downloadBytes(data.bytes, data.name, "application/octet-stream");
+      toast.success(`Downloaded ${data.name}`);
     },
     onError: (err) => {
       toast.error(err instanceof Error ? err.message : "Failed to read file");
@@ -286,7 +337,7 @@ export function LegacyFileBrowserPanel({
       queryClient.invalidateQueries({ queryKey: ["fileBrowserPolicies", nodeId] });
       setNewPolicyName("");
       setNewPolicyRootPath("");
-      setNewPolicyMaxBytes("262144");
+      setNewPolicyMaxBytes("32768");
       setAddPolicyDialogOpen(false);
     },
   });
@@ -450,7 +501,7 @@ export function LegacyFileBrowserPanel({
                   </Alert>
                 )}
 
-                <div className={variant === "page" ? "min-h-[70vh]" : "min-h-[420px]"}>
+                <div className={variant === "page" ? "min-h-[70vh]" : "min-h-105"}>
                   <FileManager
                     files={filesForUi}
                     isLoading={listQuery.isFetching}
@@ -722,9 +773,54 @@ export function LegacyFileBrowserPanel({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    const bytes = new TextEncoder().encode(previewText);
-                    downloadBytes(bytes, previewTitle || "file.txt", "text/plain;charset=utf-8");
+                  onClick={async () => {
+                    if (!session) return;
+                    const path = previewPath || "";
+                    if (!path) {
+                      const bytes = new TextEncoder().encode(previewText);
+                      downloadBytes(bytes, previewTitle || "file.txt", "text/plain;charset=utf-8");
+                      return;
+                    }
+
+                    try {
+                      const chunkSize = session.maxBytesPerRead || 32 * 1024;
+                      const chunks: Uint8Array[] = [];
+                      let offset = 0;
+
+                      for (let i = 0; i < 50_000; i++) {
+                        const resp = await readFileBrowserContent(
+                          nodeId,
+                          session.sessionId,
+                          path,
+                          chunkSize,
+                          offset
+                        );
+                        const result = resp.result;
+                        if (!result) throw new Error(resp.error || "Failed to read file");
+
+                        const bytesChunk = base64ToUint8Array(result.contentBase64 || "");
+                        chunks.push(bytesChunk);
+                        offset += bytesChunk.length;
+
+                        if (!result.truncated) break;
+                        if (bytesChunk.length === 0) {
+                          throw new Error("Agent returned an empty chunk while more data remained.");
+                        }
+                      }
+
+                      const total = chunks.reduce((sum, c) => sum + c.length, 0);
+                      const out = new Uint8Array(total);
+                      let pos = 0;
+                      for (const c of chunks) {
+                        out.set(c, pos);
+                        pos += c.length;
+                      }
+
+                      downloadBytes(out, previewTitle || "file.txt", "application/octet-stream");
+                      toast.success(`Downloaded ${previewTitle || "file"}`);
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Failed to download file");
+                    }
                   }}
                 >
                   <Download className="h-4 w-4 mr-1" />

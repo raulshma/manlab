@@ -45,6 +45,10 @@ import type {
   TerminalSessionResponse,
   CancelScriptRunResponse,
   AuditEvent,
+  // Enhanced telemetry types
+  NetworkTelemetry,
+  EnhancedGpuTelemetry,
+  ApplicationPerformanceTelemetry,
 } from "./types";
 
 const API_BASE = "/api";
@@ -284,6 +288,54 @@ export async function fetchAgentResourceUsage(
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
     throw new Error(`Failed to fetch agent resource usage: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Fetches enhanced network telemetry for a node.
+ */
+export async function fetchEnhancedNetworkTelemetry(
+  nodeId: string
+): Promise<NetworkTelemetry | null> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/telemetry/enhanced-network`
+  );
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    throw new Error(`Failed to fetch enhanced network telemetry: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Fetches enhanced GPU telemetry for a node.
+ */
+export async function fetchEnhancedGpuTelemetry(
+  nodeId: string
+): Promise<EnhancedGpuTelemetry[] | null> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/telemetry/enhanced-gpu`
+  );
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    throw new Error(`Failed to fetch enhanced GPU telemetry: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Fetches APM telemetry for a node.
+ */
+export async function fetchApmTelemetry(
+  nodeId: string
+): Promise<ApplicationPerformanceTelemetry | null> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/telemetry/apm`
+  );
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    throw new Error(`Failed to fetch APM telemetry: ${response.statusText}`);
   }
   return response.json();
 }
@@ -1207,14 +1259,15 @@ export async function tailLogContent(
 export async function listFileBrowserEntries(
   nodeId: string,
   sessionId: string,
-  path?: string
+  path?: string,
+  maxEntries?: number
 ): Promise<FileBrowserListResponse> {
   const response = await fetch(
     `${API_BASE}/devices/${nodeId}/file-browser-sessions/${sessionId}/list`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, maxEntries }),
     }
   );
   if (!response.ok) {
@@ -1232,14 +1285,15 @@ export async function readFileBrowserContent(
   nodeId: string,
   sessionId: string,
   path: string,
-  maxBytes?: number
+  maxBytes?: number,
+  offset?: number
 ): Promise<FileBrowserReadResponse> {
   const response = await fetch(
     `${API_BASE}/devices/${nodeId}/file-browser-sessions/${sessionId}/read`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path, maxBytes }),
+      body: JSON.stringify({ path, maxBytes, offset }),
     }
   );
   if (!response.ok) {

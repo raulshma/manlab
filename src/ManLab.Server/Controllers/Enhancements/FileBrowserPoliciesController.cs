@@ -16,7 +16,9 @@ public sealed class FileBrowserPoliciesController : ControllerBase
 {
     private const int MaxDisplayNameChars = 255;
     private const int MaxPathChars = 1024;
-    private const int MaxBytesPerReadUpperBound = 2 * 1024 * 1024;
+    // Transport-safe upper bound: file.read results are returned via the bounded CommandQueueItem.OutputLog tail.
+    // Keep chunks small enough that the JSON response (including base64) is not truncated.
+    private const int MaxBytesPerReadUpperBound = 32 * 1024;
 
     private readonly DataContext _db;
     private readonly FileBrowserSessionService _sessions;
@@ -306,7 +308,7 @@ public sealed class FileBrowserPoliciesController : ControllerBase
             ttl = TimeSpan.FromSeconds(Math.Min(request.TtlSeconds.Value, (int)TimeSpan.FromMinutes(60).TotalSeconds));
         }
 
-        var maxBytes = request?.MaxBytesPerRead ?? (256 * 1024);
+        var maxBytes = request?.MaxBytesPerRead ?? (32 * 1024);
         if (maxBytes <= 0 || maxBytes > MaxBytesPerReadUpperBound)
         {
             return BadRequest($"maxBytesPerRead must be between 1 and {MaxBytesPerReadUpperBound}");

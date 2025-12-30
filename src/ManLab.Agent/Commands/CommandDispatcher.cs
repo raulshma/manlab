@@ -1952,6 +1952,16 @@ del ""%~f0""
         var path = ExtractVirtualPathStrict(payloadRoot, required: false) ?? "/";
         var virtualPath = NormalizeVirtualPath(path);
 
+        var requestedMaxEntries = ExtractOptionalInt(payloadRoot, "maxEntries", "MaxEntries");
+        // Bound result size to keep command output safely under the server's OutputLog tail limits.
+        // Note: we'll also apply a byte-budget after serialization below.
+        var effectiveMaxEntries = requestedMaxEntries ?? 5_000;
+        effectiveMaxEntries = Math.Clamp(effectiveMaxEntries, 1, 50_000);
+
+        // Keep JSON output comfortably below the server's 64KiB tail truncation.
+        // This is a best-effort budget; we reduce entries until the serialized JSON fits.
+        const int listJsonBudgetBytesUtf8 = 56 * 1024;
+
         // Root listing on Windows maps to drives. On Unix it maps to '/'.
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && virtualPath == "/")
         {
@@ -1972,7 +1982,13 @@ del ""%~f0""
                 })
                 .ToList();
 
-            return JsonSerializer.Serialize(drives, ManLabJsonContext.Default.ListFileBrowserEntry);
+            var result = new FileListResult
+            {
+                Entries = drives,
+                Truncated = false
+            };
+
+            return JsonSerializer.Serialize(result, ManLabJsonContext.Default.FileListResult);
         }
 
         var (actualPath, resolvedVirtualPath) = ResolveActualPathFromVirtual(virtualPath);
@@ -1991,13 +2007,27 @@ del ""%~f0""
         // Enumerate directories first, then files, like typical file managers.
         var entries = new List<FileBrowserEntry>(capacity: 256);
 
+        var truncated = false;
+
         cancellationToken.ThrowIfCancellationRequested();
 
         try
         {
-            foreach (var dir in Directory.EnumerateDirectories(actualPath))
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = false,
+                IgnoreInaccessible = true,
+                ReturnSpecialDirectories = false
+            };
+
+            foreach (var dir in Directory.EnumerateDirectories(actualPath, "*", options))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (entries.Count >= effectiveMaxEntries)
+                {
+                    truncated = true;
+                    break;
+                }
                 try
                 {
                     var di = new DirectoryInfo(dir);
@@ -2016,24 +2046,32 @@ del ""%~f0""
                 }
             }
 
-            foreach (var file in Directory.EnumerateFiles(actualPath))
+            if (entries.Count < effectiveMaxEntries)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
+                foreach (var file in Directory.EnumerateFiles(actualPath, "*", options))
                 {
-                    var fi = new FileInfo(file);
-                    entries.Add(new FileBrowserEntry
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (entries.Count >= effectiveMaxEntries)
                     {
-                        Name = fi.Name,
-                        IsDirectory = false,
-                        Path = JoinVirtualPath(resolvedVirtualPath, fi.Name),
-                        UpdatedAt = fi.LastWriteTimeUtc == DateTime.MinValue ? null : fi.LastWriteTimeUtc.ToString("O"),
-                        Size = fi.Exists ? fi.Length : null
-                    });
-                }
-                catch
-                {
-                    // Skip entries we can't stat.
+                        truncated = true;
+                        break;
+                    }
+                    try
+                    {
+                        var fi = new FileInfo(file);
+                        entries.Add(new FileBrowserEntry
+                        {
+                            Name = fi.Name,
+                            IsDirectory = false,
+                            Path = JoinVirtualPath(resolvedVirtualPath, fi.Name),
+                            UpdatedAt = fi.LastWriteTimeUtc == DateTime.MinValue ? null : fi.LastWriteTimeUtc.ToString("O"),
+                            Size = fi.Exists ? fi.Length : null
+                        });
+                    }
+                    catch
+                    {
+                        // Skip entries we can't stat.
+                    }
                 }
             }
         }
@@ -2042,15 +2080,50 @@ del ""%~f0""
             throw new InvalidOperationException($"Access denied listing '{resolvedVirtualPath}': {ex.Message}");
         }
 
-        // Sort by name for deterministic output.
-        entries.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name));
-        // Ensure directories appear before files regardless of sort.
+        // Ensure directories appear before files and sort by name for deterministic output.
         entries = entries
             .OrderByDescending(e => e.IsDirectory)
             .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return JsonSerializer.Serialize(entries, ManLabJsonContext.Default.ListFileBrowserEntry);
+        // Serialize as an object so the server/UI can tell whether listing was truncated.
+        // Additionally, enforce a JSON byte-budget to avoid server-side tail truncation corrupting JSON.
+        var listResult = new FileListResult
+        {
+            Entries = entries,
+            Truncated = truncated
+        };
+
+        var json = JsonSerializer.Serialize(listResult, ManLabJsonContext.Default.FileListResult);
+        if (System.Text.Encoding.UTF8.GetByteCount(json) <= listJsonBudgetBytesUtf8)
+        {
+            return json;
+        }
+
+        // Too large: drop entries until it fits.
+        truncated = true;
+        while (entries.Count > 0)
+        {
+            entries.RemoveAt(entries.Count - 1);
+            listResult = new FileListResult
+            {
+                Entries = entries,
+                Truncated = true
+            };
+
+            json = JsonSerializer.Serialize(listResult, ManLabJsonContext.Default.FileListResult);
+            if (System.Text.Encoding.UTF8.GetByteCount(json) <= listJsonBudgetBytesUtf8)
+            {
+                return json;
+            }
+        }
+
+        // Worst case: return empty list, marked truncated.
+        return JsonSerializer.Serialize(new FileListResult
+        {
+            Entries = Array.Empty<FileBrowserEntry>(),
+            Truncated = true
+        }, ManLabJsonContext.Default.FileListResult);
     }
 
     private async Task<string> HandleFileReadAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
@@ -2067,6 +2140,13 @@ del ""%~f0""
         var effectiveMax = requestedMax ?? _config.FileBrowserMaxBytes;
         effectiveMax = Math.Clamp(effectiveMax, 1, Math.Max(1, _config.FileBrowserMaxBytes));
 
+        // Optional chunk offset.
+        var requestedOffset = ExtractOptionalLong(payloadRoot, "offset", "Offset") ?? 0;
+        if (requestedOffset < 0)
+        {
+            throw new ArgumentException("offset must be >= 0");
+        }
+
         var (actualPath, resolvedVirtualPath) = ResolveActualPathFromVirtual(virtualPath);
         if (string.IsNullOrWhiteSpace(actualPath))
         {
@@ -2078,12 +2158,22 @@ del ""%~f0""
             throw new FileNotFoundException($"File not found: {resolvedVirtualPath}");
         }
 
-        // Read bounded bytes and return as base64.
+        // Read bounded bytes (optionally from offset) and return as base64.
         byte[] buffer;
         int read;
+        long totalBytes;
         await using (var fs = new FileStream(actualPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
         {
-            var toRead = (int)Math.Min((long)effectiveMax, fs.Length);
+            totalBytes = fs.Length;
+            if (requestedOffset > totalBytes)
+            {
+                requestedOffset = totalBytes;
+            }
+
+            fs.Seek(requestedOffset, SeekOrigin.Begin);
+
+            var remaining = totalBytes - requestedOffset;
+            var toRead = (int)Math.Min((long)effectiveMax, remaining);
             buffer = new byte[toRead];
 
             var offset = 0;
@@ -2103,26 +2193,39 @@ del ""%~f0""
             Array.Resize(ref buffer, read);
         }
 
-        var truncated = false;
-        try
-        {
-            var fullLen = new FileInfo(actualPath).Length;
-            truncated = fullLen > read;
-        }
-        catch
-        {
-            // best-effort
-        }
+        var truncated = (requestedOffset + read) < totalBytes;
 
         var result = new FileReadResult
         {
             Path = resolvedVirtualPath,
             ContentBase64 = Convert.ToBase64String(buffer),
             Truncated = truncated,
-            BytesRead = read
+            BytesRead = read,
+            Offset = requestedOffset,
+            TotalBytes = totalBytes
         };
 
         return JsonSerializer.Serialize(result, ManLabJsonContext.Default.FileReadResult);
+    }
+
+    private static long? ExtractOptionalLong(JsonElement? payloadRoot, string camel, string pascal)
+    {
+        if (payloadRoot is null) return null;
+        var root = payloadRoot.Value;
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        if (root.TryGetProperty(camel, out var el) || root.TryGetProperty(pascal, out el))
+        {
+            if (el.ValueKind == JsonValueKind.Number && el.TryGetInt64(out var v))
+            {
+                return v;
+            }
+
+            if (el.ValueKind == JsonValueKind.String && long.TryParse(el.GetString(), out var sv))
+            {
+                return sv;
+            }
+        }
+        return null;
     }
 
     private static string? ExtractVirtualPathStrict(JsonElement? payloadRoot, bool required)

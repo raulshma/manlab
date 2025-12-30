@@ -376,6 +376,114 @@ public class DevicesController : ControllerBase
     }
 
     /// <summary>
+    /// Gets enhanced network telemetry for a specific node (latest snapshot).
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/enhanced-network")]
+    [ResponseCache(Duration = 5)]
+    public async Task<ActionResult<NetworkTelemetry>> GetEnhancedNetworkTelemetry(Guid id)
+    {
+        var node = await _dbContext.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id);
+        if (node == null)
+        {
+            return NotFound();
+        }
+
+        // Get the latest telemetry snapshot with enhanced network data
+        var latest = await _dbContext.TelemetrySnapshots
+            .AsNoTracking()
+            .Where(t => t.NodeId == id && t.EnhancedNetworkJson != null)
+            .OrderByDescending(t => t.Timestamp)
+            .FirstOrDefaultAsync();
+
+        if (latest?.EnhancedNetworkJson == null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            var network = System.Text.Json.JsonSerializer.Deserialize<NetworkTelemetry>(latest.EnhancedNetworkJson);
+            return Ok(network);
+        }
+        catch
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
+    /// Gets enhanced GPU telemetry for a specific node (latest snapshot).
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/enhanced-gpu")]
+    [ResponseCache(Duration = 5)]
+    public async Task<ActionResult<List<EnhancedGpuTelemetry>>> GetEnhancedGpuTelemetry(Guid id)
+    {
+        var node = await _dbContext.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id);
+        if (node == null)
+        {
+            return NotFound();
+        }
+
+        // Get the latest telemetry snapshot with enhanced GPU data
+        var latest = await _dbContext.TelemetrySnapshots
+            .AsNoTracking()
+            .Where(t => t.NodeId == id && t.EnhancedGpuJson != null)
+            .OrderByDescending(t => t.Timestamp)
+            .FirstOrDefaultAsync();
+
+        if (latest?.EnhancedGpuJson == null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            var gpus = System.Text.Json.JsonSerializer.Deserialize<List<EnhancedGpuTelemetry>>(latest.EnhancedGpuJson);
+            return Ok(gpus ?? []);
+        }
+        catch
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
+    /// Gets APM telemetry for a specific node (latest snapshot).
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/apm")]
+    [ResponseCache(Duration = 5)]
+    public async Task<ActionResult<ApplicationPerformanceTelemetry>> GetApmTelemetry(Guid id)
+    {
+        var node = await _dbContext.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id);
+        if (node == null)
+        {
+            return NotFound();
+        }
+
+        // Get the latest telemetry snapshot with APM data
+        var latest = await _dbContext.TelemetrySnapshots
+            .AsNoTracking()
+            .Where(t => t.NodeId == id && t.ApmJson != null)
+            .OrderByDescending(t => t.Timestamp)
+            .FirstOrDefaultAsync();
+
+        if (latest?.ApmJson == null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            var apm = System.Text.Json.JsonSerializer.Deserialize<ApplicationPerformanceTelemetry>(latest.ApmJson);
+            return Ok(apm);
+        }
+        catch
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
     /// Gets command history for a specific node.
     /// </summary>
     /// <param name="id">The node ID.</param>

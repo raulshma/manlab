@@ -7,6 +7,9 @@ import {
   fetchGpuHistory,
   fetchUpsHistory,
   fetchAgentResourceUsage,
+  fetchEnhancedNetworkTelemetry,
+  fetchEnhancedGpuTelemetry,
+  fetchApmTelemetry,
 } from "../../api";
 import { TelemetryChart } from "../TelemetryChart";
 import { NetworkThroughputChart } from "../NetworkThroughputChart";
@@ -15,6 +18,9 @@ import { SmartDrivePanel } from "../SmartDrivePanel";
 import { GpuStatsPanel } from "../GpuStatsPanel";
 import { UpsStatusPanel } from "../UpsStatusPanel";
 import { AgentResourceUsagePanel } from "../AgentResourceUsagePanel";
+import { EnhancedNetworkPanel } from "../EnhancedNetworkPanel";
+import { EnhancedGpuPanel } from "../EnhancedGpuPanel";
+import { ApmPanel } from "../ApmPanel";
 
 interface NodeHealthTabProps {
   nodeId: string;
@@ -70,6 +76,27 @@ export function NodeHealthTab({ nodeId }: NodeHealthTabProps) {
     refetchInterval: 10000,
   });
 
+  // Fetch enhanced network telemetry
+  const { data: enhancedNetwork } = useQuery({
+    queryKey: ["enhancedNetwork", nodeId],
+    queryFn: () => fetchEnhancedNetworkTelemetry(nodeId),
+    refetchInterval: 10000,
+  });
+
+  // Fetch enhanced GPU telemetry
+  const { data: enhancedGpu } = useQuery({
+    queryKey: ["enhancedGpu", nodeId],
+    queryFn: () => fetchEnhancedGpuTelemetry(nodeId),
+    refetchInterval: 10000,
+  });
+
+  // Fetch APM telemetry
+  const { data: apmData } = useQuery({
+    queryKey: ["apmData", nodeId],
+    queryFn: () => fetchApmTelemetry(nodeId),
+    refetchInterval: 10000,
+  });
+
   return (
     <div className="space-y-8 animate-in fade-in zoom-in-95 duration-200">
       {/* Telemetry Charts */}
@@ -119,6 +146,36 @@ export function NodeHealthTab({ nodeId }: NodeHealthTabProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <AgentResourceUsagePanel data={agentResourceUsage} />
           </div>
+        </section>
+      )}
+
+      {/* Enhanced Network Monitoring */}
+      {enhancedNetwork && (
+        <section>
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            Enhanced Network Monitoring
+          </h2>
+          <EnhancedNetworkPanel data={enhancedNetwork} />
+        </section>
+      )}
+
+      {/* Enhanced GPU Monitoring */}
+      {enhancedGpu && enhancedGpu.length > 0 && (
+        <section>
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            Enhanced GPU Monitoring
+          </h2>
+          <EnhancedGpuPanel data={enhancedGpu} />
+        </section>
+      )}
+
+      {/* Application Performance Monitoring */}
+      {apmData && (
+        <section>
+          <h2 className="text-lg font-semibold text-foreground mb-4">
+            Application Performance
+          </h2>
+          <ApmPanel data={apmData} />
         </section>
       )}
 

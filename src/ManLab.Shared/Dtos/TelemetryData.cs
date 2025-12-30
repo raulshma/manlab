@@ -45,6 +45,15 @@ public class TelemetryData
     /// <summary>Optional UPS telemetry.</summary>
     public UpsTelemetry? Ups { get; set; }
 
+    /// <summary>Enhanced GPU telemetry with detailed metrics (replaces basic Gpus when available).</summary>
+    public List<EnhancedGpuTelemetry>? EnhancedGpus { get; set; }
+
+    /// <summary>Enhanced network telemetry with per-interface stats, connections, and device discovery.</summary>
+    public NetworkTelemetry? Network { get; set; }
+
+    /// <summary>Application Performance Monitoring telemetry.</summary>
+    public ApplicationPerformanceTelemetry? Apm { get; set; }
+
     // --- Agent process resource usage ---
 
     /// <summary>Agent process CPU usage percentage (0-100, null if unavailable).</summary>

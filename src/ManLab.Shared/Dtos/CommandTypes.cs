@@ -110,6 +110,25 @@ public sealed record FileListPayload
 {
     /// <summary>The virtual path to list ("/" for roots).</summary>
     public string Path { get; init; } = "/";
+
+    /// <summary>
+    /// Optional maximum number of entries to return.
+    /// The agent may return fewer entries to keep the response bounded.
+    /// </summary>
+    public int? MaxEntries { get; init; }
+}
+
+/// <summary>
+/// Result returned by file.list.
+/// </summary>
+public sealed record FileListResult
+{
+    public IReadOnlyList<FileBrowserEntry> Entries { get; init; } = Array.Empty<FileBrowserEntry>();
+
+    /// <summary>
+    /// True if the directory contains more entries than returned (bounded for safety/performance).
+    /// </summary>
+    public bool Truncated { get; init; }
 }
 
 /// <summary>
@@ -123,6 +142,12 @@ public sealed record FileReadPayload
 
     /// <summary>Maximum bytes to read from the file (server + agent enforce bounds).</summary>
     public int? MaxBytes { get; init; }
+
+    /// <summary>
+    /// Optional byte offset to start reading from. Defaults to 0.
+    /// Used for chunked downloads.
+    /// </summary>
+    public long? Offset { get; init; }
 }
 
 /// <summary>
@@ -146,6 +171,12 @@ public sealed record FileReadResult
     public string ContentBase64 { get; init; } = string.Empty;
     public bool Truncated { get; init; }
     public long BytesRead { get; init; }
+
+    /// <summary>Byte offset for this chunk.</summary>
+    public long Offset { get; init; }
+
+    /// <summary>Total file length in bytes (best-effort).</summary>
+    public long TotalBytes { get; init; }
 }
 
 /// <summary>

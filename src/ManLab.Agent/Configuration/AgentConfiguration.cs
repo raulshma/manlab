@@ -1,3 +1,5 @@
+using ManLab.Agent.Telemetry;
+
 namespace ManLab.Agent.Configuration;
 
 /// <summary>
@@ -61,6 +63,34 @@ public class AgentConfiguration
     /// Default is true.
     /// </summary>
     public bool EnableUpsTelemetry { get; set; } = true;
+
+    /// <summary>
+    /// Enable enhanced network telemetry with per-interface stats, connections, and device discovery.
+    /// Default is true.
+    /// </summary>
+    public bool EnableEnhancedNetworkTelemetry { get; set; } = true;
+
+    /// <summary>
+    /// Enable enhanced GPU telemetry with power, clocks, and process-level usage.
+    /// Default is true.
+    /// </summary>
+    public bool EnableEnhancedGpuTelemetry { get; set; } = true;
+
+    /// <summary>
+    /// Enable Application Performance Monitoring (APM) telemetry.
+    /// Default is false (opt-in).
+    /// </summary>
+    public bool EnableApmTelemetry { get; set; } = false;
+
+    /// <summary>
+    /// List of health check endpoint URLs for APM monitoring.
+    /// </summary>
+    public List<string> ApmHealthCheckEndpoints { get; set; } = [];
+
+    /// <summary>
+    /// List of database endpoints to monitor for APM.
+    /// </summary>
+    public List<DatabaseEndpointConfig> ApmDatabaseEndpoints { get; set; } = [];
 
     /// <summary>
     /// Optional ping target override (hostname or IP).

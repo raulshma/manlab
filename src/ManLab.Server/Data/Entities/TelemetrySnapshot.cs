@@ -61,6 +61,17 @@ public class TelemetrySnapshot
     /// <summary>Agent process thread count (nullable if unavailable).</summary>
     public int? AgentThreadCount { get; set; }
 
+    // --- Enhanced telemetry JSON storage ---
+
+    /// <summary>Enhanced network telemetry as JSON (nullable if not available).</summary>
+    public string? EnhancedNetworkJson { get; set; }
+
+    /// <summary>Enhanced GPU telemetry as JSON (nullable if not available).</summary>
+    public string? EnhancedGpuJson { get; set; }
+
+    /// <summary>APM telemetry as JSON (nullable if not available).</summary>
+    public string? ApmJson { get; set; }
+
     // Navigation property
     [ForeignKey(nameof(NodeId))]
     public Node Node { get; set; } = null!;

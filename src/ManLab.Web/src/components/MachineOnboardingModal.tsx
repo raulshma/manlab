@@ -12,6 +12,7 @@ import {
   saveMachineCredentials,
   clearMachineCredentials,
   updateMachineConfiguration,
+  deleteNode,
 } from "../api";
 import type {
   OnboardingMachine,
@@ -31,6 +32,16 @@ import {
   DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -137,6 +148,14 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const [logs, setLogs] = useState<Array<{ ts: string; msg: string }>>([]);
 
   const [remoteUninstallPreview, setRemoteUninstallPreview] = useState<UninstallPreviewResponse | null>(null);
+  // Track whether the user started an uninstall from this modal so we can prompt on completion.
+  const pendingUninstallMachineIdRef = useRef<string | null>(null);
+  const [removeNodePromptOpen, setRemoveNodePromptOpen] = useState(false);
+  const [removeNodePrompt, setRemoveNodePrompt] = useState<{
+    machineId: string;
+    host: string;
+    nodeId: string;
+  } | null>(null);
 
   const previewUninstallMutation = useMutation({
     mutationFn: async () => {
@@ -657,6 +676,55 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       });
     },
   });
+
+  const deleteLinkedNodeMutation = useMutation({
+    mutationFn: async (nodeId: string) => {
+      await deleteNode(nodeId);
+    },
+    onSuccess: async () => {
+      // Node deletion also removes linked onboarding machine server-side.
+      await queryClient.invalidateQueries({ queryKey: ["nodes"] });
+      await queryClient.invalidateQueries({ queryKey: ["onboardingMachines"] });
+      toast.success("Node removed");
+
+      // If we just deleted the selected machine's linked node, selection may disappear; reset.
+      if (removeNodePrompt?.machineId && selectedId === removeNodePrompt.machineId) {
+        setSelectedId(null);
+      }
+
+      setRemoveNodePromptOpen(false);
+      setRemoveNodePrompt(null);
+    },
+    onError: (err) => {
+      toast.error("Failed to delete node", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    },
+  });
+
+  // When an uninstall we started completes successfully, prompt to delete the linked node.
+  useEffect(() => {
+    const machineId = pendingUninstallMachineIdRef.current;
+    if (!machineId) return;
+
+    const m = machines.find((x) => x.id === machineId);
+    if (!m) return;
+
+    if (m.status === "Failed") {
+      pendingUninstallMachineIdRef.current = null;
+      return;
+    }
+
+    if (m.status !== "Succeeded") return;
+
+    pendingUninstallMachineIdRef.current = null;
+
+    // Only prompt if there is an associated node.
+    if (m.linkedNodeId) {
+      setRemoveNodePrompt({ machineId: m.id, host: m.host, nodeId: m.linkedNodeId });
+      setRemoveNodePromptOpen(true);
+    }
+  }, [machines]);
 
   // Machine to delete is now managed by the ConfirmationModal's open state per machine.
 
@@ -1270,6 +1338,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       isLoading={uninstallMutation.isPending}
                       onConfirm={async () => {
                         setLogs([]);
+                        pendingUninstallMachineIdRef.current = selected?.id ?? null;
                         await uninstallMutation.mutateAsync();
                       }}
                     />
@@ -1330,6 +1399,37 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
           )}
         </div>
       </DialogContent>
+
+      <AlertDialog open={removeNodePromptOpen} onOpenChange={setRemoveNodePromptOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove the node too?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The agent uninstall completed successfully.
+              {removeNodePrompt ? (
+                <>
+                  <br />
+                  Do you also want to remove the associated node for <span className="font-mono">{removeNodePrompt.host}</span>?
+                  This deletes telemetry, settings, and command history.
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteLinkedNodeMutation.isPending}>Keep Node</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!removeNodePrompt) return;
+                deleteLinkedNodeMutation.mutate(removeNodePrompt.nodeId);
+              }}
+              disabled={!removeNodePrompt || deleteLinkedNodeMutation.isPending}
+              variant="destructive"
+            >
+              {deleteLinkedNodeMutation.isPending ? "Removing…" : "Remove Node"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
