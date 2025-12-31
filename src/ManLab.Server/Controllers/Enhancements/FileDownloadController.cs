@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
@@ -255,9 +256,6 @@ public sealed class FileDownloadController : ControllerBase
             return StatusCode(503, "Agent is not connected.");
         }
 
-        // Update status to downloading
-        _downloadSessions.UpdateStatus(downloadId, DownloadSessionService.DownloadStatus.Downloading);
-
         // Set response headers
         var sanitizedFilename = SanitizeFilename(session.Filename);
         Response.Headers.ContentDisposition = $"attachment; filename=\"{sanitizedFilename}\"";
@@ -273,6 +271,8 @@ public sealed class FileDownloadController : ControllerBase
             // For single file downloads, we need to stream chunks from the agent
             if (!session.AsZip)
             {
+                // Transition to downloading immediately for single-file streams.
+                _downloadSessions.UpdateStatus(downloadId, DownloadSessionService.DownloadStatus.Downloading);
                 await StreamSingleFileAsync(session, connectionId, session.CancellationSource.Token);
             }
             else
@@ -288,12 +288,29 @@ public sealed class FileDownloadController : ControllerBase
         {
             _logger.LogInformation("Download {DownloadId} was cancelled", downloadId);
             _downloadSessions.CompleteSession(downloadId, false, "Download was cancelled.");
+
+            // If we've already started streaming bytes, we can't change the status code anymore.
+            if (Response.HasStarted)
+            {
+                HttpContext.Abort();
+                return new EmptyResult();
+            }
+
             return StatusCode(499, "Download was cancelled.");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error streaming download {DownloadId}", downloadId);
             _downloadSessions.CompleteSession(downloadId, false, ex.Message);
+
+            // If the response has started, the only safe option is to abort the connection.
+            // Returning a StatusCode/ObjectResult would throw "StatusCode cannot be set because the response has already started".
+            if (Response.HasStarted)
+            {
+                HttpContext.Abort();
+                return new EmptyResult();
+            }
+
             return StatusCode(500, $"Error streaming download: {ex.Message}");
         }
     }
@@ -346,7 +363,9 @@ public sealed class FileDownloadController : ControllerBase
         CancellationToken cancellationToken)
     {
         var path = session.Paths[0];
-        const int chunkSize = 64 * 1024; // 64KB chunks
+        // Use transport-safe chunk size that accounts for Base64 encoding overhead.
+        // Keeping chunks small avoids server-side OutputLog truncation which would corrupt JSON.
+        const int chunkSize = FileBrowserSessionService.TransportSafeMaxBytesPerRead;
         long offset = 0;
         long? totalBytes = session.TotalBytes;
 
@@ -392,16 +411,10 @@ public sealed class FileDownloadController : ControllerBase
             }
 
             // Parse response
-            var output = completed.OutputLog ?? "{}";
-            FileReadResult? result;
-            try
-            {
-                result = JsonSerializer.Deserialize(output, ManLabJsonContext.Default.FileReadResult);
-            }
-            catch (JsonException)
-            {
-                throw new InvalidOperationException("Agent returned malformed JSON.");
-            }
+            var result = await DeserializeFileReadResultWithRetryAsync(
+                cmd.Id,
+                completed.OutputLog,
+                cancellationToken).ConfigureAwait(false);
 
             if (result is null)
             {
@@ -483,13 +496,18 @@ public sealed class FileDownloadController : ControllerBase
         string connectionId,
         CancellationToken cancellationToken)
     {
+        // Now that we're actually streaming bytes, transition to downloading.
+        _downloadSessions.UpdateStatus(session.Id, DownloadSessionService.DownloadStatus.Downloading);
+
         // Use the temp file path stored in the session after zip creation
         if (string.IsNullOrEmpty(session.TempFilePath))
         {
             throw new InvalidOperationException("Zip file path not available. The agent may not have reported the temp file path.");
         }
 
-        const int chunkSize = 64 * 1024;
+        // Use transport-safe chunk size that accounts for Base64 encoding overhead.
+        // Keeping chunks small avoids server-side OutputLog truncation which would corrupt JSON.
+        const int chunkSize = FileBrowserSessionService.TransportSafeMaxBytesPerRead;
         long offset = 0;
         var totalBytes = session.TotalBytes ?? 0;
 
@@ -531,16 +549,10 @@ public sealed class FileDownloadController : ControllerBase
                 throw new InvalidOperationException(completed.OutputLog ?? "Agent returned an error.");
             }
 
-            var output = completed.OutputLog ?? "{}";
-            FileReadResult? result;
-            try
-            {
-                result = JsonSerializer.Deserialize(output, ManLabJsonContext.Default.FileReadResult);
-            }
-            catch (JsonException)
-            {
-                throw new InvalidOperationException("Agent returned malformed JSON.");
-            }
+            var result = await DeserializeFileReadResultWithRetryAsync(
+                cmd.Id,
+                completed.OutputLog,
+                cancellationToken).ConfigureAwait(false);
 
             if (result is null || string.IsNullOrEmpty(result.ContentBase64))
             {
@@ -559,6 +571,73 @@ public sealed class FileDownloadController : ControllerBase
                 break;
             }
         }
+    }
+
+    private async Task<FileReadResult> DeserializeFileReadResultWithRetryAsync(
+        Guid commandId,
+        string? initialOutputLog,
+        CancellationToken cancellationToken)
+    {
+        // The agent may chunk structured JSON across multiple UpdateCommandStatus hub invocations.
+        // Because we persist each chunk immediately, the command can become "Success" before the
+        // final chunk arrives. If we deserialize too early, we see partial JSON and fail.
+        //
+        // Retry briefly, polling for OutputLog growth, until deserialization succeeds.
+        const int pollDelayMs = 50;
+        var settleDeadline = DateTime.UtcNow.AddSeconds(2);
+
+        var output = initialOutputLog ?? string.Empty;
+        var lastLen = output.Length;
+        Exception? lastException = null;
+
+        while (true)
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize(output, ManLabJsonContext.Default.FileReadResult);
+                if (parsed is not null)
+                {
+                    return parsed;
+                }
+
+                lastException = new InvalidOperationException("Agent returned null result.");
+            }
+            catch (JsonException ex)
+            {
+                lastException = ex;
+            }
+
+            if (DateTime.UtcNow >= settleDeadline || cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            await Task.Delay(pollDelayMs, cancellationToken).ConfigureAwait(false);
+
+            var current = await _db.CommandQueue
+                .AsNoTracking()
+                .Where(c => c.Id == commandId)
+                .Select(c => new { c.OutputLog })
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            var candidate = current?.OutputLog ?? string.Empty;
+            if (candidate.Length <= lastLen)
+            {
+                // No growth; keep waiting until settleDeadline.
+                continue;
+            }
+
+            output = candidate;
+            lastLen = candidate.Length;
+        }
+
+        // Diagnostics: include length + tail so we can see if the JSON was truncated/chunked.
+        var tail = output.Length <= 512 ? output : output[^512..];
+        var bytesUtf8 = Encoding.UTF8.GetByteCount(output);
+        throw new InvalidOperationException(
+            $"Agent returned malformed JSON (len={output.Length}, utf8Bytes={bytesUtf8}). Tail(512): {tail}",
+            lastException);
     }
 
     private async Task<CommandQueueItem?> WaitForCompletionAsync(

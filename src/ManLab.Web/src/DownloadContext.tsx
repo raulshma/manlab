@@ -27,8 +27,6 @@ import { calculateEta } from "./lib/download-utils";
 
 const API_BASE = "/api";
 const SESSION_STORAGE_KEY = "manlab:download_queue";
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1000;
 
 /**
  * Request to queue a new download.
@@ -178,8 +176,17 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
    * Handles download progress events from SignalR.
    */
   const handleDownloadProgress = useCallback((event: DownloadProgressEvent) => {
-    const { downloadId, bytesTransferred, totalBytes, speedBytesPerSec, estimatedSecondsRemaining } = event;
+    const { downloadId, bytesTransferred, totalBytes, speedBytesPerSec, estimatedSecondsRemaining, message, percentComplete } = event;
     
+    // For zip creation progress (bytesTransferred is 0, but we have message/percentComplete)
+    if (bytesTransferred === 0 && (message || percentComplete !== undefined)) {
+      updateDownload(downloadId, {
+        progressMessage: message,
+        percentComplete: percentComplete,
+      });
+      return;
+    }
+
     // Calculate local speed if server didn't provide it
     let speed = speedBytesPerSec;
     if (!speed || speed <= 0) {
@@ -205,6 +212,9 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       totalBytes: totalBytes > 0 ? totalBytes : null,
       speed: speed > 0 ? speed : 0,
       eta,
+      // Clear zip progress message once actual download starts
+      progressMessage: undefined,
+      percentComplete: undefined,
     });
   }, [updateDownload]);
 
@@ -238,7 +248,9 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       bytesTransferred: number,
       totalBytes: number,
       speedBytesPerSec: number,
-      estimatedSecondsRemaining: number | null
+      estimatedSecondsRemaining: number | null,
+      message?: string,
+      percentComplete?: number
     ) => {
       handleDownloadProgress({
         downloadId,
@@ -246,6 +258,8 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
         totalBytes,
         speedBytesPerSec,
         estimatedSecondsRemaining,
+        message,
+        percentComplete,
       });
     };
 
@@ -271,53 +285,6 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
   }, [connection, handleDownloadProgress, handleDownloadStatusChanged]);
 
   /**
-   * Fetches a chunk with retry logic.
-   * Requirements: 1.7
-   */
-  const fetchChunkWithRetry = useCallback(async (
-    url: string,
-    signal: AbortSignal,
-    downloadId: string
-  ): Promise<Response> => {
-    const controller = downloadControllersRef.current.get(downloadId);
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      if (signal.aborted) {
-        throw new DOMException("Download cancelled", "AbortError");
-      }
-
-      try {
-        const response = await fetch(url, { signal });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        // Reset retry count on success
-        if (controller) {
-          controller.retryCount = 0;
-        }
-        return response;
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          throw error;
-        }
-        lastError = error instanceof Error ? error : new Error(String(error));
-        
-        if (attempt < MAX_RETRIES) {
-          // Wait before retrying with exponential backoff
-          const delay = RETRY_DELAY_MS * Math.pow(2, attempt);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          if (controller) {
-            controller.retryCount = attempt + 1;
-          }
-        }
-      }
-    }
-
-    throw lastError || new Error("Failed to fetch chunk after retries");
-  }, []);
-
-  /**
    * Executes a download by streaming from the server and triggering browser download.
    * Requirements: 1.7, 1.8, 4.3
    */
@@ -328,8 +295,8 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       throw new Error("Download not found");
     }
 
-    // Only execute queued or preparing downloads
-    if (download.status !== 'queued' && download.status !== 'preparing') {
+    // Only execute queued, preparing, or ready downloads
+    if (download.status !== 'queued' && download.status !== 'preparing' && download.status !== 'ready') {
       return;
     }
 
@@ -344,12 +311,57 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
     speedTrackingRef.current.set(downloadId, { lastBytes: 0, lastTime: Date.now() });
 
     try {
-      // Update status to downloading
-      updateDownload(downloadId, { status: 'downloading' });
+      // Update status to preparing for zip downloads (they need to wait for zip creation)
+      if (download.type === 'zip') {
+        updateDownload(downloadId, { status: 'preparing' });
+      } else {
+        updateDownload(downloadId, { status: 'downloading' });
+      }
 
       // Stream the download from the server
       const streamUrl = `${API_BASE}/downloads/${downloadId}/stream`;
-      const response = await fetchChunkWithRetry(streamUrl, abortController.signal, downloadId);
+      
+      // For zip downloads, we may need to retry if the zip isn't ready yet
+      let response: Response;
+      const maxPrepareRetries = 120; // 2 minutes max wait (120 * 1000ms)
+      let prepareRetries = 0;
+      
+      while (true) {
+        if (abortController.signal.aborted) {
+          throw new DOMException("Download cancelled", "AbortError");
+        }
+
+        response = await fetch(streamUrl, { signal: abortController.signal });
+        
+        // 202 Accepted means zip is still being prepared
+        if (response.status === 202) {
+          prepareRetries++;
+          if (prepareRetries >= maxPrepareRetries) {
+            throw new Error("Timeout waiting for zip to be prepared");
+          }
+          // Wait 1 second before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        // Got a successful response, break out of the loop
+        break;
+      }
+
+      // Update status to downloading now that we're actually streaming
+      // Reset any zip-creation progress indicators so the download progress starts from 0.
+      updateDownload(downloadId, {
+        status: 'downloading',
+        transferredBytes: 0,
+        speed: 0,
+        eta: null,
+        progressMessage: undefined,
+        percentComplete: undefined,
+      });
 
       // Get content info from headers
       const contentLength = response.headers.get('Content-Length');
@@ -378,6 +390,7 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       const chunks: Uint8Array[] = [];
       let transferredBytes = 0;
       let lastProgressUpdate = Date.now();
+      let lastPercent = -1;
 
       while (true) {
         if (abortController.signal.aborted) {
@@ -393,7 +406,8 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
 
         // Update progress (throttle to avoid too many updates)
         const now = Date.now();
-        if (now - lastProgressUpdate > 100) { // Update every 100ms
+        // Target: ~4 updates/sec max, and avoid updating when the visible percent hasn't changed.
+        if (now - lastProgressUpdate >= 250) {
           const tracking = speedTrackingRef.current.get(downloadId);
           let speed = 0;
           if (tracking) {
@@ -407,6 +421,17 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
 
           const remaining = (totalBytes ?? 0) - transferredBytes;
           const eta = calculateEta(remaining, speed);
+
+          const percent = totalBytes && totalBytes > 0
+            ? Math.floor((transferredBytes / totalBytes) * 100)
+            : -1;
+
+          // If the percent hasn't changed and we have a known total size, skip this update.
+          if (percent >= 0 && percent === lastPercent) {
+            lastProgressUpdate = now;
+            continue;
+          }
+          lastPercent = percent;
 
           updateDownload(downloadId, {
             transferredBytes,
@@ -461,7 +486,7 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       speedTrackingRef.current.delete(downloadId);
       downloadControllersRef.current.delete(downloadId);
     }
-  }, [updateDownload, fetchChunkWithRetry]);
+  }, [updateDownload]);
 
   /**
    * Creates a download on the server and adds it to the queue.

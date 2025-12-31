@@ -14,9 +14,13 @@ public sealed class FileBrowserSessionService
     private static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan MaxTtl = TimeSpan.FromMinutes(60);
 
-    // Transport-safe per-request read size. The server stores agent responses in a bounded OutputLog tail.
-    // Keeping chunks small avoids JSON truncation (and thus "malformed JSON" errors) for file.read.
-    public const int TransportSafeMaxBytesPerRead = 32 * 1024;
+    // Transport-safe per-request read size.
+    // Agent responses for file.read are persisted via command OutputLog, which is truncated per log-chunk.
+    // If we ask for too many bytes, the Base64 payload makes the JSON exceed the server's per-chunk cap
+    // (see AgentHub.MaxCommandLogChunkChars), resulting in truncated JSON and "malformed JSON" errors.
+    //
+    // 20KB binary -> ~27KB Base64, leaving headroom for JSON overhead and any escaping.
+    public const int TransportSafeMaxBytesPerRead = 20 * 1024;
 
     private readonly DataContext _db;
     private readonly IMemoryCache _cache;

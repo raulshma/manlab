@@ -37,6 +37,10 @@ public class AgentHub : Hub
 
     private const string CommandOutputGroupPrefix = "command-output";
 
+    // Throttle zip progress updates to every 2 seconds per download
+    private static readonly TimeSpan ZipProgressThrottleInterval = TimeSpan.FromSeconds(2);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTime> _lastZipProgressUpdate = new();
+
     private readonly ILogger<AgentHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentConnectionRegistry _connectionRegistry;
@@ -805,17 +809,24 @@ public class AgentHub : Hub
             logs = logs[..MaxCommandLogChunkChars] + "\n[...log chunk truncated by server...]\n";
         }
 
-        // Append logs (bounded tail) OR overwrite for structured-output commands.
+        // Append logs (bounded tail) OR overwrite/append for structured-output commands.
         if (!string.IsNullOrEmpty(logs))
         {
-            var isFileBrowserCommand = command.CommandType is CommandType.FileList or CommandType.FileRead or CommandType.FileZip;
+            // File browser commands send structured JSON results that may be chunked.
+            // IMPORTANT: the agent may send intermediate chunks with status=InProgress and only the final chunk with status=Success.
+            // We must treat those chunks as structured; otherwise we'd append with newlines and corrupt JSON.
+            //
+            // FileZip is excluded here because its InProgress payload is progress telemetry, not the final structured result.
+            var isStructuredFileBrowserCommand = command.CommandType is CommandType.FileList or CommandType.FileRead;
             var isTerminalState = parsedStatus is CommandStatus.Success or CommandStatus.Failed;
+            var treatAsStructured = ShouldTreatAsStructuredFileBrowserOutput(isStructuredFileBrowserCommand, parsedStatus);
 
-            if (isFileBrowserCommand && isTerminalState)
+            if (treatAsStructured)
             {
                 // For file browser commands, the "logs" payload is actually structured content (JSON).
-                // Do not append to existing OutputLog (dispatch diagnostics), as that corrupts JSON.
-                command.OutputLog = logs;
+                // The agent may send large responses in chunks, so we need to accumulate them.
+                // Check if this looks like a continuation (doesn't start with '{') or a new JSON response.
+                command.OutputLog = AccumulateStructuredOutput(command.OutputLog, logs);
             }
             else
             {
@@ -836,7 +847,13 @@ public class AgentHub : Hub
         // Handle FileZip command completion: update download session TotalBytes
         if (command.CommandType == CommandType.FileZip && parsedStatus == CommandStatus.Success && !string.IsNullOrEmpty(logs))
         {
-            TryUpdateDownloadSessionFromFileZipResult(command.Payload, logs);
+            await TryUpdateDownloadSessionFromFileZipResultAsync(command.Payload, logs);
+        }
+
+        // Handle FileZip in-progress: forward zip creation progress to client
+        if (command.CommandType == CommandType.FileZip && parsedStatus == CommandStatus.InProgress && !string.IsNullOrEmpty(logs))
+        {
+            await TryForwardZipProgressAsync(command.Payload, logs);
         }
 
         await dbContext.SaveChangesAsync();
@@ -851,6 +868,32 @@ public class AgentHub : Hub
 
         // Notify connected dashboard clients that commands for this node changed.
         await Clients.All.SendAsync("CommandUpdated", command.NodeId, command.Id, command.Status.ToString());
+    }
+
+    internal static bool ShouldTreatAsStructuredFileBrowserOutput(bool isStructuredFileBrowserCommand, CommandStatus status)
+    {
+        if (!isStructuredFileBrowserCommand)
+        {
+            return false;
+        }
+
+        // Structured chunks may arrive while the command is still InProgress.
+        // We treat them as structured to avoid newline insertion corrupting JSON.
+        return status is CommandStatus.InProgress or CommandStatus.Success or CommandStatus.Failed;
+    }
+
+    internal static string AccumulateStructuredOutput(string? existing, string incomingChunk)
+    {
+        var looksLikeJsonStart = incomingChunk.TrimStart().StartsWith('{') || incomingChunk.TrimStart().StartsWith('[');
+
+        if (looksLikeJsonStart || string.IsNullOrEmpty(existing))
+        {
+            // New JSON response - overwrite
+            return incomingChunk;
+        }
+
+        // Continuation chunk - append to existing
+        return existing + incomingChunk;
     }
 
     private static async Task TryUpdateScriptRunFromCommandAsync(DataContext dbContext, CommandQueueItem command, CommandStatus parsedStatus, string? logs)
@@ -958,7 +1001,7 @@ public class AgentHub : Hub
     /// Attempts to update download session TotalBytes from FileZipResult.
     /// This enables StreamZipFileAsync to proceed with streaming the zip.
     /// </summary>
-    private void TryUpdateDownloadSessionFromFileZipResult(string? payloadJson, string logs)
+    private async Task TryUpdateDownloadSessionFromFileZipResultAsync(string? payloadJson, string logs)
     {
         try
         {
@@ -1024,6 +1067,37 @@ public class AgentHub : Hub
                         "Updated download session {DownloadId} with TempFilePath={TempFilePath}",
                         downloadId, tempFilePath);
                 }
+
+                // Mark the session as Ready so the client knows it can start streaming
+                _downloadSessions.UpdateStatus(downloadId, DownloadSessionService.DownloadStatus.Ready);
+
+                // Clean up throttle tracking since zip creation is complete
+                _lastZipProgressUpdate.TryRemove(downloadId, out _);
+
+                // Notify client that zip is ready
+                if (_downloadSessions.TryGetSession(downloadId, out var session) && session is not null)
+                {
+                    var statusEvent = new DownloadStatusChangedEvent
+                    {
+                        DownloadId = downloadId,
+                        Status = "ready",
+                        Error = null
+                    };
+
+                    if (!string.IsNullOrEmpty(session.ClientConnectionId))
+                    {
+                        await Clients.Client(session.ClientConnectionId).SendAsync(
+                            "DownloadStatusChanged",
+                            statusEvent.DownloadId.ToString(),
+                            statusEvent.Status,
+                            statusEvent.Error);
+                    }
+                    await Clients.Group(GetDownloadProgressGroup(downloadId)).SendAsync(
+                        "DownloadStatusChanged",
+                        statusEvent.DownloadId.ToString(),
+                        statusEvent.Status,
+                        statusEvent.Error);
+                }
             }
             else
             {
@@ -1039,6 +1113,84 @@ public class AgentHub : Hub
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error updating download session from FileZipResult");
+        }
+    }
+
+    /// <summary>
+    /// Forwards zip creation progress to the client via SignalR.
+    /// Parses progress messages like "Compressing: 50% (5/10 files)" from agent logs.
+    /// Throttled to update every 2 seconds for performance.
+    /// </summary>
+    private async Task TryForwardZipProgressAsync(string? payloadJson, string logs)
+    {
+        try
+        {
+            // Extract downloadId from command payload
+            var downloadId = TryExtractGuidFromPayload(payloadJson, "downloadId");
+            if (downloadId == Guid.Empty)
+            {
+                downloadId = TryExtractGuidFromPayload(payloadJson, "DownloadId");
+            }
+
+            if (downloadId == Guid.Empty)
+            {
+                return; // Can't forward without downloadId
+            }
+
+            // Throttle updates to every 2 seconds per download for performance
+            var now = DateTime.UtcNow;
+            if (_lastZipProgressUpdate.TryGetValue(downloadId, out var lastUpdate))
+            {
+                if (now - lastUpdate < ZipProgressThrottleInterval)
+                {
+                    return; // Skip this update, too soon
+                }
+            }
+            _lastZipProgressUpdate[downloadId] = now;
+
+            // Get the download session to find the client connection
+            if (!_downloadSessions.TryGetSession(downloadId, out var session) || session is null)
+            {
+                _lastZipProgressUpdate.TryRemove(downloadId, out _); // Clean up
+                return;
+            }
+
+            // Parse progress from logs like "Compressing: 50% (5/10 files)" or "Creating zip archive with 10 file(s)..."
+            int? percentComplete = null;
+
+            // Try to extract percentage from "Compressing: XX% (N/M files)"
+            var percentMatch = System.Text.RegularExpressions.Regex.Match(logs, @"Compressing:\s*(\d+)%");
+            if (percentMatch.Success && int.TryParse(percentMatch.Groups[1].Value, out var percent))
+            {
+                percentComplete = percent;
+            }
+
+            // Send progress update to client using individual parameters
+            if (!string.IsNullOrEmpty(session.ClientConnectionId))
+            {
+                await Clients.Client(session.ClientConnectionId).SendAsync("DownloadProgress", 
+                    downloadId.ToString(),
+                    0L,                    // bytesTransferred - not applicable during zip creation
+                    0L,                    // totalBytes
+                    0.0,                   // speedBytesPerSec
+                    (int?)null,            // estimatedSecondsRemaining
+                    logs,                  // message
+                    percentComplete);
+            }
+
+            // Also send to the download progress group
+            await Clients.Group(GetDownloadProgressGroup(downloadId)).SendAsync("DownloadProgress",
+                downloadId.ToString(),
+                0L,
+                0L,
+                0.0,
+                (int?)null,
+                logs,
+                percentComplete);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to forward zip progress");
         }
     }
 

@@ -478,26 +478,66 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-                if (string.IsNullOrEmpty(logs) || logs.Length <= MaxOutboundTextChunkChars)
+            if (string.IsNullOrEmpty(logs) || logs.Length <= MaxOutboundTextChunkChars)
+            {
+                await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, logs).ConfigureAwait(false);
+            }
+            else
+            {
+                // Chunk large logs into multiple hub invocations.
+                //
+                // Special handling for file browser structured JSON results: if we send status=Success for the first chunk,
+                // the server may pick up a terminal state and attempt to deserialize partial JSON.
+                // We send status=InProgress for intermediate chunks and only send the original status for the final chunk.
+                var isStructuredFileBrowserJson = LooksLikeFileBrowserStructuredJson(logs);
+                var intermediateStatus = isStructuredFileBrowserJson
+                    ? "InProgress"
+                    : status;
+
+                for (var i = 0; i < logs.Length; i += MaxOutboundTextChunkChars)
                 {
-                    await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, logs).ConfigureAwait(false);
+                    var len = Math.Min(MaxOutboundTextChunkChars, logs.Length - i);
+                    var chunk = logs.Substring(i, len);
+                    var isLast = (i + len) >= logs.Length;
+
+                    var chunkStatus = isStructuredFileBrowserJson
+                        ? (isLast ? status : intermediateStatus)
+                        : status;
+
+                    await _connection.InvokeAsync("UpdateCommandStatus", commandId, chunkStatus, chunk).ConfigureAwait(false);
                 }
-                else
-                {
-                    // Chunk large logs into multiple hub invocations.
-                    for (var i = 0; i < logs.Length; i += MaxOutboundTextChunkChars)
-                    {
-                        var len = Math.Min(MaxOutboundTextChunkChars, logs.Length - i);
-                        var chunk = logs.Substring(i, len);
-                        await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, chunk).ConfigureAwait(false);
-                    }
-                }
+            }
             _logger.LogDebug("Command status updated: {CommandId} -> {Status}", commandId, status);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to update command status");
         }
+    }
+
+    private static bool LooksLikeFileBrowserStructuredJson(string logs)
+    {
+        // We only want to apply the intermediate InProgress chunking trick for the structured JSON outputs
+        // used by file.list and file.read.
+        //
+        // Heuristic: must start like JSON and contain expected keys.
+        if (string.IsNullOrWhiteSpace(logs))
+        {
+            return false;
+        }
+
+        var trimmed = logs.TrimStart();
+        if (!(trimmed.StartsWith('{') || trimmed.StartsWith('[')))
+        {
+            return false;
+        }
+
+        // file.read: contentBase64, bytesRead, totalBytes
+        // file.list: entries, truncated
+        return trimmed.Contains("\"contentBase64\"", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("\"bytesRead\"", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("\"totalBytes\"", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("\"entries\"", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -411,6 +411,12 @@ public sealed record DownloadProgressUpdate
 
     /// <summary>Estimated seconds remaining (null if unknown).</summary>
     public int? EstimatedSecondsRemaining { get; init; }
+
+    /// <summary>Progress message from agent (e.g., "Compressing: 50% (5/10 files)").</summary>
+    public string? Message { get; init; }
+
+    /// <summary>Percentage complete for zip creation (0-100).</summary>
+    public int? PercentComplete { get; init; }
 }
 
 /// <summary>

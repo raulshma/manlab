@@ -898,6 +898,7 @@ export interface ExtendedAgentConfiguration extends AgentConfiguration {
 export type DownloadStatus =
   | 'queued'      // Waiting in queue
   | 'preparing'   // Server preparing download
+  | 'ready'       // Zip is ready, can start streaming
   | 'downloading' // Actively transferring
   | 'completed'   // Successfully finished
   | 'failed'      // Error occurred
@@ -921,6 +922,10 @@ export interface DownloadItem {
   error: string | null;          // Error message if failed
   startedAt: string;             // Start timestamp
   completedAt: string | null;    // Completion timestamp
+  /** Progress message for zip creation (e.g., "Compressing: 50%") */
+  progressMessage?: string;
+  /** Percentage complete for zip creation (0-100) */
+  percentComplete?: number;
 }
 
 /**
@@ -951,6 +956,10 @@ export interface DownloadProgressEvent {
   totalBytes: number;
   speedBytesPerSec: number;
   estimatedSecondsRemaining: number | null;
+  /** Progress message from agent (e.g., "Compressing: 50% (5/10 files)") */
+  message?: string;
+  /** Percentage complete for zip creation (0-100) */
+  percentComplete?: number;
 }
 
 /**

@@ -91,6 +91,8 @@ function getStatusLabel(status: DownloadStatus): string {
       return "Queued";
     case "preparing":
       return "Preparing...";
+    case "ready":
+      return "Ready";
     case "downloading":
       return "Downloading";
     case "completed":
@@ -117,6 +119,7 @@ function getStatusBadgeVariant(
       return "destructive";
     case "downloading":
     case "preparing":
+    case "ready":
       return "secondary";
     default:
       return "outline";
@@ -145,6 +148,7 @@ function DownloadItemRow({
   const isActive =
     download.status === "queued" ||
     download.status === "preparing" ||
+    download.status === "ready" ||
     download.status === "downloading";
   const isCompleted = download.status === "completed";
   const isFailed = download.status === "failed";
@@ -213,17 +217,22 @@ function DownloadItemRow({
               {/* Progress bar for active downloads */}
               {isActive && (
                 <div className="space-y-1">
-                  <Progress value={progress} className="h-1.5">
+                  <Progress value={download.percentComplete ?? progress} className="h-1.5">
                     <ProgressTrack className="h-1.5">
                       <ProgressIndicator />
                     </ProgressTrack>
                   </Progress>
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>
-                      {download.totalBytes
-                        ? `${formatBytes(download.transferredBytes)} / ${formatBytes(download.totalBytes)}`
-                        : formatBytes(download.transferredBytes)}
-                    </span>
+                    {/* Show zip creation progress message if available */}
+                    {download.progressMessage ? (
+                      <span>{download.progressMessage}</span>
+                    ) : (
+                      <span>
+                        {download.totalBytes
+                          ? `${formatBytes(download.transferredBytes)} / ${formatBytes(download.totalBytes)}`
+                          : formatBytes(download.transferredBytes)}
+                      </span>
+                    )}
                     <div className="flex items-center gap-2">
                       {download.speed > 0 && (
                         <span>{formatSpeed(download.speed)}</span>
@@ -231,7 +240,9 @@ function DownloadItemRow({
                       {download.eta !== null && download.eta > 0 && (
                         <span>ETA: {formatDuration(download.eta)}</span>
                       )}
-                      {progress > 0 && <span>{progress}%</span>}
+                      {(download.percentComplete ?? progress) > 0 && (
+                        <span>{download.percentComplete ?? progress}%</span>
+                      )}
                     </div>
                   </div>
                 </div>

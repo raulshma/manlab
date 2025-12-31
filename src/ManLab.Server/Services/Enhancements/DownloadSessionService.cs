@@ -26,6 +26,7 @@ public sealed class DownloadSessionService
     {
         Queued,
         Preparing,
+        Ready,
         Downloading,
         Completed,
         Failed,
