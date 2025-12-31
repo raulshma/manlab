@@ -368,6 +368,12 @@ public sealed class FileDownloadController : ControllerBase
     {
         var path = session.Paths[0];
 
+        // Re-fetch connection ID in case agent reconnected
+        if (!_registry.TryGet(session.NodeId, out var currentConnectionId))
+        {
+            throw new InvalidOperationException("Agent disconnected.");
+        }
+
         // Create an in-memory streaming session
         var streamingSession = _fileStreaming.CreateSession(
             session.Id,
@@ -386,18 +392,46 @@ public sealed class FileDownloadController : ControllerBase
 
             var payloadJson = JsonSerializer.Serialize(streamPayload, ManLabJsonContext.Default.FileStreamPayload);
 
-            // Send stream command to agent
-            await _hubContext.Clients.Client(connectionId)
+            // Send stream command to agent using current connection ID
+            await _hubContext.Clients.Client(currentConnectionId)
                 .SendAsync("ExecuteCommand", Guid.NewGuid(), CommandTypes.FileStream, payloadJson, cancellationToken);
 
             _logger.LogInformation(
-                "Initiated file streaming for download {DownloadId}, file: {Path}",
-                session.Id, path);
+                "Initiated file streaming for download {DownloadId}, file: {Path}, connection: {ConnectionId}",
+                session.Id, path, currentConnectionId);
 
             // Read chunks from the streaming channel and write to HTTP response
+            // Use explicit timeout for first chunk to detect if agent failed to start streaming
             long bytesWritten = 0;
             bool headersSent = false;
+            
+            // Wait for the first chunk with a timeout
+            using var firstChunkTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, firstChunkTimeoutCts.Token);
+            
+            try
+            {
+                // Wait for data to be available (with timeout)
+                var dataAvailable = await streamingSession.Reader.WaitToReadAsync(linkedCts.Token);
+                if (!dataAvailable)
+                {
+                    // Channel completed without any data
+                    if (!string.IsNullOrEmpty(streamingSession.Error))
+                    {
+                        throw new InvalidOperationException(streamingSession.Error);
+                    }
+                    throw new InvalidOperationException("Agent completed streaming without sending any data.");
+                }
+            }
+            catch (OperationCanceledException) when (firstChunkTimeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogError(
+                    "Timeout waiting for first chunk from agent for download {DownloadId}. Agent may not have received the command.",
+                    session.Id);
+                throw new TimeoutException("Timed out waiting for agent to start streaming. The agent may have failed to receive the command or encountered an error.");
+            }
 
+            // First chunk is available, now read all chunks (no timeout needed, just respect cancellation)
             await foreach (var chunk in streamingSession.Reader.ReadAllAsync(cancellationToken))
             {
                 // Set Content-Length on first chunk if we have total bytes
@@ -490,6 +524,12 @@ public sealed class FileDownloadController : ControllerBase
             throw new InvalidOperationException("Zip file path not available. The agent may not have reported the temp file path.");
         }
 
+        // Re-fetch connection ID in case agent reconnected during zip creation
+        if (!_registry.TryGet(session.NodeId, out var currentConnectionId))
+        {
+            throw new InvalidOperationException("Agent disconnected during zip creation.");
+        }
+
         // Set Content-Length now that we know the zip size (if not already set)
         if (session.TotalBytes.HasValue && session.TotalBytes.Value > 0 && !Response.HasStarted)
         {
@@ -504,7 +544,13 @@ public sealed class FileDownloadController : ControllerBase
 
         try
         {
+            // Small delay to allow agent to finish processing the file.zip completion
+            // The agent uses InvokeAsync to report completion, and we might see the session
+            // as ready before the invoke returns to the agent
+            await Task.Delay(200, cancellationToken);
+
             // Dispatch file.stream command to agent
+            var streamCommandId = Guid.NewGuid();
             var streamPayload = new FileStreamPayload
             {
                 DownloadId = session.Id,
@@ -514,16 +560,59 @@ public sealed class FileDownloadController : ControllerBase
 
             var payloadJson = JsonSerializer.Serialize(streamPayload, ManLabJsonContext.Default.FileStreamPayload);
 
-            // Send stream command to agent (don't need to store in DB - this is fire-and-forget)
-            await _hubContext.Clients.Client(connectionId)
-                .SendAsync("ExecuteCommand", Guid.NewGuid(), CommandTypes.FileStream, payloadJson, cancellationToken);
+            _logger.LogInformation(
+                "Sending file.stream command {CommandId} for download {DownloadId}, file: {TempFilePath}, connection: {ConnectionId}, payload: {Payload}",
+                streamCommandId, session.Id, session.TempFilePath, currentConnectionId, payloadJson);
+
+            // Verify streaming session is accessible before sending command
+            if (!_fileStreaming.TryGetSession(session.Id, out var verifySession) || verifySession is null)
+            {
+                _logger.LogError(
+                    "CRITICAL: Streaming session {DownloadId} was just created but cannot be found! This is a bug.",
+                    session.Id);
+                throw new InvalidOperationException("Streaming session was not properly created.");
+            }
+            _logger.LogDebug("Verified streaming session {DownloadId} exists before sending command", session.Id);
+
+            // Send stream command to agent using current connection ID
+            await _hubContext.Clients.Client(currentConnectionId)
+                .SendAsync("ExecuteCommand", streamCommandId, CommandTypes.FileStream, payloadJson, cancellationToken);
 
             _logger.LogInformation(
-                "Initiated file streaming for download {DownloadId}, file: {TempFilePath}",
-                session.Id, session.TempFilePath);
+                "Sent file.stream command {CommandId} to agent, waiting for chunks...",
+                streamCommandId);
 
             // Read chunks from the streaming channel and write to HTTP response
+            // Use explicit timeout for first chunk to detect if agent failed to start streaming
             long bytesWritten = 0;
+            
+            // Wait for the first chunk with a timeout
+            using var firstChunkTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, firstChunkTimeoutCts.Token);
+            
+            try
+            {
+                // Wait for data to be available (with timeout)
+                var dataAvailable = await streamingSession.Reader.WaitToReadAsync(linkedCts.Token);
+                if (!dataAvailable)
+                {
+                    // Channel completed without any data
+                    if (!string.IsNullOrEmpty(streamingSession.Error))
+                    {
+                        throw new InvalidOperationException(streamingSession.Error);
+                    }
+                    throw new InvalidOperationException("Agent completed streaming without sending any data.");
+                }
+            }
+            catch (OperationCanceledException) when (firstChunkTimeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogError(
+                    "Timeout waiting for first chunk from agent for download {DownloadId}. Agent may not have received the command.",
+                    session.Id);
+                throw new TimeoutException("Timed out waiting for agent to start streaming. The agent may have failed to receive the command or encountered an error.");
+            }
+
+            // First chunk is available, now read all chunks (no timeout needed, just respect cancellation)
             await foreach (var chunk in streamingSession.Reader.ReadAllAsync(cancellationToken))
             {
                 await Response.Body.WriteAsync(chunk, cancellationToken);

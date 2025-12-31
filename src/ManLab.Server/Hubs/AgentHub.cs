@@ -1682,13 +1682,17 @@ public class AgentHub : Hub
         // Decode and write to streaming channel
         if (!_fileStreaming.TryGetSession(downloadId, out var streamSession) || streamSession is null)
         {
-            _logger.LogWarning("File chunk received but no streaming session exists for {DownloadId}", downloadId);
+            _logger.LogWarning(
+                "File chunk received but no streaming session exists for {DownloadId}. " +
+                "This might indicate a timing issue where the server hasn't created the session yet.",
+                downloadId);
             return;
         }
 
         try
         {
             var chunk = Convert.FromBase64String(chunkBase64);
+            _logger.LogDebug("Writing chunk of {ChunkSize} bytes to streaming session {DownloadId}", chunk.Length, downloadId);
             await streamSession.WriteChunkAsync(chunk);
         }
         catch (FormatException ex)

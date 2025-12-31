@@ -2703,8 +2703,12 @@ del ""%~f0""
             throw new FileNotFoundException($"File not found: {path}");
         }
 
+        Log.FileStreamStarting(_logger, downloadId, actualPath, chunkSize);
+
         // Initiate streaming via the callback (does not block - streaming happens in background).
         await _streamFileCallback(downloadId, actualPath, chunkSize, cancellationToken).ConfigureAwait(false);
+
+        Log.FileStreamCompleted(_logger, downloadId);
 
         return $"Streaming initiated for {path}";
     }

@@ -90,4 +90,12 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Reconnected to server. Connection ID: {ConnectionId}")]
     public static partial void ConnectionReconnected(ILogger logger, string? connectionId);
+
+    // ============ File Streaming ============
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Starting file stream for download {DownloadId}, path: {FilePath}, chunkSize: {ChunkSize}")]
+    public static partial void FileStreamStarting(ILogger logger, Guid downloadId, string filePath, int chunkSize);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "File stream completed for download {DownloadId}")]
+    public static partial void FileStreamCompleted(ILogger logger, Guid downloadId);
 }
