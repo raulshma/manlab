@@ -463,8 +463,9 @@ public sealed class FileDownloadController : ControllerBase
                 throw new OperationCanceledException("Download was cancelled.");
             }
 
-            // Check if zip is ready (agent will have set TotalBytes when zip is complete)
-            if (currentSession.TotalBytes.HasValue && currentSession.TotalBytes.Value > 0)
+            // Check if zip is ready (agent will have set TotalBytes and TempFilePath when zip is complete)
+            if (currentSession.TotalBytes.HasValue && currentSession.TotalBytes.Value > 0 
+                && !string.IsNullOrEmpty(currentSession.TempFilePath))
             {
                 // Zip is ready, stream it
                 await StreamZipContentAsync(currentSession, connectionId, cancellationToken);
@@ -482,23 +483,21 @@ public sealed class FileDownloadController : ControllerBase
         string connectionId,
         CancellationToken cancellationToken)
     {
-        // The zip file path should be stored in the session or we need to request it
-        // For now, we'll use the same chunked read approach as single files
-        // but targeting the temp zip file path
+        // Use the temp file path stored in the session after zip creation
+        if (string.IsNullOrEmpty(session.TempFilePath))
+        {
+            throw new InvalidOperationException("Zip file path not available. The agent may not have reported the temp file path.");
+        }
 
         const int chunkSize = 64 * 1024;
         long offset = 0;
         var totalBytes = session.TotalBytes ?? 0;
 
-        // We need to get the temp file path from the agent
-        // This would typically be stored in the session after zip creation
-        // For now, we'll request chunks using a special path format
-
         while (!cancellationToken.IsCancellationRequested && offset < totalBytes)
         {
             var readPayload = new FileReadPayload
             {
-                Path = $"__download__{session.Id}", // Special path format for temp downloads
+                Path = session.TempFilePath, // Use the actual temp file path from the agent
                 MaxBytes = chunkSize,
                 Offset = offset
             };

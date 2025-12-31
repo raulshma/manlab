@@ -58,6 +58,12 @@ public sealed class DownloadSessionService
         /// Used to forward progress updates to the correct client.
         /// </summary>
         public string? ClientConnectionId { get; init; }
+
+        /// <summary>
+        /// The path to the temporary zip file on the agent (for zip downloads).
+        /// Set after the agent completes zip creation.
+        /// </summary>
+        public string? TempFilePath { get; set; }
     }
 
     /// <summary>
@@ -207,6 +213,23 @@ public sealed class DownloadSessionService
         }
 
         session.TotalBytes = totalBytes;
+        return true;
+    }
+
+    /// <summary>
+    /// Sets the temp file path for a zip download session.
+    /// </summary>
+    /// <param name="downloadId">The download session ID.</param>
+    /// <param name="tempFilePath">The path to the temp zip file on the agent.</param>
+    /// <returns>True if the session was found and updated.</returns>
+    public bool SetTempFilePath(Guid downloadId, string tempFilePath)
+    {
+        if (!_sessions.TryGetValue(downloadId, out var session))
+        {
+            return false;
+        }
+
+        session.TempFilePath = tempFilePath;
         return true;
     }
 

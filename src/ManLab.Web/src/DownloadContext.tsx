@@ -515,8 +515,15 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       completedAt: null,
     };
 
-    // Add to queue
-    setDownloads(prev => [...prev, downloadItem]);
+    // Add to queue - update both state and ref synchronously
+    // The ref update ensures executeDownload can find the item immediately
+    // since the useEffect that syncs downloadsRef runs asynchronously after render
+    setDownloads(prev => {
+      const updated = [...prev, downloadItem];
+      // Synchronously update the ref so executeDownload can find it immediately
+      downloadsRef.current = updated;
+      return updated;
+    });
 
     // Initialize speed tracking
     speedTrackingRef.current.set(result.downloadId, { lastBytes: 0, lastTime: Date.now() });

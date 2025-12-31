@@ -41,17 +41,20 @@ public class AgentHub : Hub
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentConnectionRegistry _connectionRegistry;
     private readonly IAuditLog _audit;
+    private readonly DownloadSessionService _downloadSessions;
 
     public AgentHub(
         ILogger<AgentHub> logger,
         IServiceScopeFactory scopeFactory,
         AgentConnectionRegistry connectionRegistry,
-        IAuditLog audit)
+        IAuditLog audit,
+        DownloadSessionService downloadSessions)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
         _connectionRegistry = connectionRegistry;
         _audit = audit;
+        _downloadSessions = downloadSessions;
     }
 
     /// <summary>
@@ -805,7 +808,7 @@ public class AgentHub : Hub
         // Append logs (bounded tail) OR overwrite for structured-output commands.
         if (!string.IsNullOrEmpty(logs))
         {
-            var isFileBrowserCommand = command.CommandType is CommandType.FileList or CommandType.FileRead;
+            var isFileBrowserCommand = command.CommandType is CommandType.FileList or CommandType.FileRead or CommandType.FileZip;
             var isTerminalState = parsedStatus is CommandStatus.Success or CommandStatus.Failed;
 
             if (isFileBrowserCommand && isTerminalState)
@@ -828,6 +831,12 @@ public class AgentHub : Hub
         if (parsedStatus is CommandStatus.Success or CommandStatus.Failed)
         {
             command.ExecutedAt = DateTime.UtcNow;
+        }
+
+        // Handle FileZip command completion: update download session TotalBytes
+        if (command.CommandType == CommandType.FileZip && parsedStatus == CommandStatus.Success && !string.IsNullOrEmpty(logs))
+        {
+            TryUpdateDownloadSessionFromFileZipResult(command.Payload, logs);
         }
 
         await dbContext.SaveChangesAsync();
@@ -943,6 +952,94 @@ public class AgentHub : Hub
         }
 
         return Guid.Empty;
+    }
+
+    /// <summary>
+    /// Attempts to update download session TotalBytes from FileZipResult.
+    /// This enables StreamZipFileAsync to proceed with streaming the zip.
+    /// </summary>
+    private void TryUpdateDownloadSessionFromFileZipResult(string? payloadJson, string logs)
+    {
+        try
+        {
+            // Extract downloadId from command payload
+            var downloadId = TryExtractGuidFromPayload(payloadJson, "downloadId");
+            if (downloadId == Guid.Empty)
+            {
+                downloadId = TryExtractGuidFromPayload(payloadJson, "DownloadId");
+            }
+
+            if (downloadId == Guid.Empty)
+            {
+                _logger.LogWarning("FileZip command completed but no downloadId found in payload");
+                return;
+            }
+
+            // Parse FileZipResult from logs to get ArchiveBytes
+            using var doc = JsonDocument.Parse(logs);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                _logger.LogWarning("FileZip result is not a JSON object for download {DownloadId}", downloadId);
+                return;
+            }
+
+            long archiveBytes = 0;
+            if (root.TryGetProperty("archiveBytes", out var el) || root.TryGetProperty("ArchiveBytes", out el))
+            {
+                if (el.ValueKind == JsonValueKind.Number && el.TryGetInt64(out var bytes))
+                {
+                    archiveBytes = bytes;
+                }
+            }
+
+            if (archiveBytes <= 0)
+            {
+                _logger.LogWarning("FileZip result has no valid ArchiveBytes for download {DownloadId}", downloadId);
+                return;
+            }
+
+            // Extract TempFilePath from result
+            string? tempFilePath = null;
+            if (root.TryGetProperty("tempFilePath", out var pathEl) || root.TryGetProperty("TempFilePath", out pathEl))
+            {
+                if (pathEl.ValueKind == JsonValueKind.String)
+                {
+                    tempFilePath = pathEl.GetString();
+                }
+            }
+
+            // Update the download session TotalBytes and TempFilePath so StreamZipFileAsync can proceed
+            if (_downloadSessions.SetTotalBytes(downloadId, archiveBytes))
+            {
+                _logger.LogInformation(
+                    "Updated download session {DownloadId} with TotalBytes={ArchiveBytes}",
+                    downloadId, archiveBytes);
+                
+                // Also set the temp file path if available
+                if (!string.IsNullOrEmpty(tempFilePath))
+                {
+                    _downloadSessions.SetTempFilePath(downloadId, tempFilePath);
+                    _logger.LogInformation(
+                        "Updated download session {DownloadId} with TempFilePath={TempFilePath}",
+                        downloadId, tempFilePath);
+                }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Failed to update download session {DownloadId} - session not found or expired",
+                    downloadId);
+            }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse FileZipResult JSON");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error updating download session from FileZipResult");
+        }
     }
 
     private static bool TryParseScriptOutputChunk(string logs, out string stream, out string chunk)

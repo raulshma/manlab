@@ -2520,12 +2520,42 @@ del ""%~f0""
 
     private async Task<string> HandleFileReadAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
-        var path = ExtractVirtualPathStrict(payloadRoot, required: true);
-        var virtualPath = NormalizeVirtualPath(path!);
+        var path = ExtractVirtualPathStrict(payloadRoot, required: true)!;
+        
+        string actualPath;
+        string resolvedVirtualPath;
 
-        if (virtualPath == "/")
+        // Check if this is a direct OS path (temp file created by agent)
+        // Windows: starts with X:\ or X:/
+        // Unix: absolute path to a temp directory
+        var isDirectOsPath = IsDirectOsPath(path);
+        
+        if (isDirectOsPath)
         {
-            throw new ArgumentException("file.read requires a file path, not '/'.");
+            // Direct OS path (e.g., temp file from file.zip command)
+            // Only allow files in temp directories for security
+            var tempPath = Path.GetTempPath();
+            var normalizedPath = Path.GetFullPath(path);
+            
+            if (!normalizedPath.StartsWith(tempPath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UnauthorizedAccessException($"Direct file access is only allowed for temp files. Path: {path}");
+            }
+            
+            actualPath = normalizedPath;
+            resolvedVirtualPath = path; // Keep original path for logging
+        }
+        else
+        {
+            // Standard virtual path resolution
+            var virtualPath = NormalizeVirtualPath(path);
+
+            if (virtualPath == "/")
+            {
+                throw new ArgumentException("file.read requires a file path, not '/'.");
+            }
+
+            (actualPath, resolvedVirtualPath) = ResolveActualPathFromVirtual(virtualPath);
         }
 
         var requestedMax = ExtractOptionalInt(payloadRoot, "maxBytes", "MaxBytes");
@@ -2539,7 +2569,6 @@ del ""%~f0""
             throw new ArgumentException("offset must be >= 0");
         }
 
-        var (actualPath, resolvedVirtualPath) = ResolveActualPathFromVirtual(virtualPath);
         if (string.IsNullOrWhiteSpace(actualPath))
         {
             throw new ArgumentException("Invalid path.");
@@ -2662,6 +2691,33 @@ del ""%~f0""
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Checks if the path is a direct OS path (like a temp file path) rather than a virtual path.
+    /// </summary>
+    private static bool IsDirectOsPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        // Windows: paths like C:\... or C:/...
+        if (path.Length >= 3 && char.IsLetter(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/'))
+        {
+            return true;
+        }
+
+        // Unix: absolute paths starting with /tmp/ or similar temp directories
+        // Only consider paths starting with the temp path as direct OS paths
+        if (Path.IsPathRooted(path) && !path.StartsWith('/') == false)
+        {
+            var tempPath = Path.GetTempPath();
+            return path.StartsWith(tempPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static string NormalizeVirtualPath(string input)
