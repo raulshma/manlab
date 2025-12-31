@@ -141,7 +141,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
         killall "manlab-agent" 2>/dev/null || true
     fi
     # Wait for processes to terminate
-    local max_wait=10 waited=0
+    max_wait=10 waited=0
     while [[ $waited -lt $max_wait ]]; do
         if ! pgrep -x "manlab-agent" &>/dev/null; then break; fi
         sleep 1; ((waited++))

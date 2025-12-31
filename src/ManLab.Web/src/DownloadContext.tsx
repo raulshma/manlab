@@ -147,6 +147,12 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
   // Track active download controllers for cancellation
   const downloadControllersRef = useRef<Map<string, DownloadController>>(new Map());
 
+  // Ref to access the latest downloads synchronously (avoids stale closure issues)
+  const downloadsRef = useRef<DownloadItem[]>(downloads);
+  useEffect(() => {
+    downloadsRef.current = downloads;
+  }, [downloads]);
+
   // Persist queue to sessionStorage when it changes
   useEffect(() => {
     saveQueueToStorage(downloads);
@@ -316,7 +322,8 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
    * Requirements: 1.7, 1.8, 4.3
    */
   const executeDownload = useCallback(async (downloadId: string): Promise<void> => {
-    const download = downloads.find(d => d.id === downloadId);
+    // Use downloadsRef to get current state (avoids stale closure)
+    const download = downloadsRef.current.find(d => d.id === downloadId);
     if (!download) {
       throw new Error("Download not found");
     }
@@ -454,7 +461,7 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       speedTrackingRef.current.delete(downloadId);
       downloadControllersRef.current.delete(downloadId);
     }
-  }, [downloads, updateDownload, fetchChunkWithRetry]);
+  }, [updateDownload, fetchChunkWithRetry]);
 
   /**
    * Creates a download on the server and adds it to the queue.
@@ -521,7 +528,8 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
    * Cancels an active or queued download.
    */
   const cancelDownload = useCallback(async (downloadId: string): Promise<void> => {
-    const download = downloads.find(d => d.id === downloadId);
+    // Use downloadsRef to get current state (avoids stale closure)
+    const download = downloadsRef.current.find(d => d.id === downloadId);
     if (!download) {
       throw new Error("Download not found");
     }
@@ -556,13 +564,14 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
     // Clean up speed tracking and controllers
     speedTrackingRef.current.delete(downloadId);
     downloadControllersRef.current.delete(downloadId);
-  }, [downloads, updateDownload]);
+  }, [updateDownload]);
 
   /**
    * Retries a failed download.
    */
   const retryDownload = useCallback(async (downloadId: string): Promise<void> => {
-    const download = downloads.find(d => d.id === downloadId);
+    // Use downloadsRef to get current state (avoids stale closure)
+    const download = downloadsRef.current.find(d => d.id === downloadId);
     if (!download) {
       throw new Error("Download not found");
     }
@@ -581,7 +590,7 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       paths: download.paths,
       asZip: download.type === 'zip',
     });
-  }, [downloads, queueDownload]);
+  }, [queueDownload]);
 
   /**
    * Clears all completed downloads from the queue.
