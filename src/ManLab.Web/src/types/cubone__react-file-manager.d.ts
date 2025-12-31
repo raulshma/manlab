@@ -32,11 +32,15 @@ declare module "@cubone/react-file-manager" {
     onFileOpen?: (file: TFile) => void;
     onRefresh?: () => void;
     onDownload?: (items: TFile[]) => void;
+    /** Called when selection changes (if supported by the library version) */
+    onSelect?: (items: TFile[]) => void;
     permissions?: FileManagerPermissions;
     enableFilePreview?: boolean;
     layout?: FileManagerLayout;
     height?: number | string;
     width?: number | string;
+    /** Enable multi-select mode (if supported by the library version) */
+    enableMultiSelect?: boolean;
   };
 
   export const FileManager: <TFile extends FileManagerFileLike = FileManagerFileLike>(

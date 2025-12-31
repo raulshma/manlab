@@ -113,8 +113,8 @@ internal sealed class EnhancedNetworkTelemetryCollector
                         TotalTxBytes = stats.BytesSent,
                         RxErrors = stats.IncomingPacketsWithErrors,
                         TxErrors = stats.OutgoingPacketsWithErrors,
-                        RxDropped = stats.IncomingPacketsDiscarded,
-                        TxDropped = stats.OutgoingPacketsDiscarded
+                        RxDropped = !RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? stats.IncomingPacketsDiscarded : null,
+                        TxDropped = !RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? stats.OutgoingPacketsDiscarded : null
                     };
 
                     // Calculate rates if we have previous data

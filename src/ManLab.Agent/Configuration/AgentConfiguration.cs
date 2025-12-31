@@ -178,6 +178,18 @@ public class AgentConfiguration
     public int FileBrowserMaxBytes { get; set; } = 2 * 1024 * 1024;
 
     /// <summary>
+    /// Maximum total uncompressed size for zip archives (bytes).
+    /// Default is 1GB.
+    /// </summary>
+    public long FileZipMaxUncompressedBytes { get; set; } = 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// Maximum number of files to include in a zip archive.
+    /// Default is 10,000.
+    /// </summary>
+    public int FileZipMaxFileCount { get; set; } = 10_000;
+
+    /// <summary>
     /// Optional file path where the agent writes its own logs.
     /// If empty, the agent chooses an OS-appropriate default.
     /// </summary>

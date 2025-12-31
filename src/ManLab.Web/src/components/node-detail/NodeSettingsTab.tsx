@@ -265,7 +265,7 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                <ScrollArea className="h-48">
+                <ScrollArea className="h-40">
                   <div
                     ref={logContainerRef}
                     className="px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all"

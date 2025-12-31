@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/empty";
 
 import { RemoteFileBrowser } from "@/components/RemoteFileBrowser";
+import { DownloadProgressPanel } from "@/components/DownloadProgressPanel";
 
 import {
   AlertCircle,
@@ -214,20 +215,25 @@ export function FileBrowserPage() {
       </div>
 
       {/* Main */}
-      <div className="flex-1 overflow-auto p-4">
-        {selectedNode ? (
-          <RemoteFileBrowser nodeId={selectedNode.id} nodeStatus={selectedNode.status} autoOpen />
-        ) : (
-          <Empty className="h-full border-0">
-            <EmptyMedia variant="icon">
-              <Folder />
-            </EmptyMedia>
-            <EmptyTitle>Select a Node</EmptyTitle>
-            <EmptyDescription>
-              Choose a node from the sidebar to browse its files.
-            </EmptyDescription>
-          </Empty>
-        )}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-auto p-4 pb-16">
+          {selectedNode ? (
+            <RemoteFileBrowser nodeId={selectedNode.id} nodeStatus={selectedNode.status} autoOpen />
+          ) : (
+            <Empty className="h-full border-0">
+              <EmptyMedia variant="icon">
+                <Folder />
+              </EmptyMedia>
+              <EmptyTitle>Select a Node</EmptyTitle>
+              <EmptyDescription>
+                Choose a node from the sidebar to browse its files.
+              </EmptyDescription>
+            </Empty>
+          )}
+        </div>
+        
+        {/* Download progress panel - Requirements: 7.1 */}
+        <DownloadProgressPanel position="bottom" maxHeight="250px" />
       </div>
     </div>
   );

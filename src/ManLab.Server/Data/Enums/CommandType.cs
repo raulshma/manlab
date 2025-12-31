@@ -68,5 +68,8 @@ public enum CommandType
     FileList,
 
     /// <summary>Read a bounded file (file browser).</summary>
-    FileRead
+    FileRead,
+
+    /// <summary>Create a zip archive from multiple files/folders (file browser).</summary>
+    FileZip
 }

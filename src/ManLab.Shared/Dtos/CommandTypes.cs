@@ -45,6 +45,7 @@ public static class CommandTypes
     // File browser (remote tools)
     public const string FileList = "file.list";
     public const string FileRead = "file.read";
+    public const string FileZip = "file.zip";
 
     // Command lifecycle
     public const string CommandCancel = "command.cancel";
@@ -85,6 +86,7 @@ public static class CommandTypes
 
         FileList,
         FileRead,
+        FileZip,
 
         CommandCancel,
         ConfigUpdate
@@ -348,4 +350,80 @@ public record ConfigUpdatePayload
 
     /// <summary>Hard upper bound for file reads returned by the agent (bytes).</summary>
     public int? FileBrowserMaxBytes { get; init; }
+}
+
+/// <summary>
+/// Payload for file.zip command.
+/// Creates a zip archive from the specified paths.
+/// </summary>
+public sealed record FileZipPayload
+{
+    /// <summary>Unique identifier for tracking download progress.</summary>
+    public Guid DownloadId { get; init; }
+
+    /// <summary>Virtual paths to include in the zip archive.</summary>
+    public string[] Paths { get; init; } = [];
+
+    /// <summary>Maximum total uncompressed size in bytes (default 1GB).</summary>
+    public long MaxUncompressedBytes { get; init; } = 1024 * 1024 * 1024;
+
+    /// <summary>Maximum number of files to include (default 10,000).</summary>
+    public int MaxFileCount { get; init; } = 10_000;
+}
+
+/// <summary>
+/// Result returned by file.zip command.
+/// </summary>
+public sealed record FileZipResult
+{
+    /// <summary>Path to the temporary zip file on the agent.</summary>
+    public string TempFilePath { get; init; } = string.Empty;
+
+    /// <summary>Total size of the zip archive in bytes.</summary>
+    public long ArchiveBytes { get; init; }
+
+    /// <summary>Number of files included in the archive.</summary>
+    public int FileCount { get; init; }
+
+    /// <summary>Number of directories included in the archive.</summary>
+    public int DirectoryCount { get; init; }
+
+    /// <summary>Paths that were skipped due to access errors.</summary>
+    public string[] SkippedPaths { get; init; } = [];
+}
+
+/// <summary>
+/// Progress update for file downloads sent via SignalR.
+/// </summary>
+public sealed record DownloadProgressUpdate
+{
+    /// <summary>Unique identifier for the download session.</summary>
+    public Guid DownloadId { get; init; }
+
+    /// <summary>Number of bytes transferred so far.</summary>
+    public long BytesTransferred { get; init; }
+
+    /// <summary>Total number of bytes to transfer (if known).</summary>
+    public long TotalBytes { get; init; }
+
+    /// <summary>Current transfer speed in bytes per second.</summary>
+    public double SpeedBytesPerSec { get; init; }
+
+    /// <summary>Estimated seconds remaining (null if unknown).</summary>
+    public int? EstimatedSecondsRemaining { get; init; }
+}
+
+/// <summary>
+/// Status change event for downloads sent via SignalR.
+/// </summary>
+public sealed record DownloadStatusChangedEvent
+{
+    /// <summary>Unique identifier for the download session.</summary>
+    public Guid DownloadId { get; init; }
+
+    /// <summary>New status of the download.</summary>
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>Error message if the download failed.</summary>
+    public string? Error { get; init; }
 }

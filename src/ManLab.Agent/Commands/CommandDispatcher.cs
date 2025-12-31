@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -168,6 +169,7 @@ public sealed class CommandDispatcher : IDisposable
                     var t when t == CommandTypes.TerminalInput => await HandleTerminalInputAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.FileList => await HandleFileListAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.FileRead => await HandleFileReadAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.FileZip => await HandleFileZipAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.ConfigUpdate => HandleConfigUpdate(payloadRoot),
                     _ => throw new NotSupportedException($"Unknown command type: {type}")
                 };
@@ -1919,7 +1921,8 @@ del ""%~f0""
             || normalizedType == CommandTypes.TerminalClose
             || normalizedType == CommandTypes.TerminalInput
             || normalizedType == CommandTypes.FileList
-            || normalizedType == CommandTypes.FileRead;
+            || normalizedType == CommandTypes.FileRead
+            || normalizedType == CommandTypes.FileZip;
     }
 
     private bool IsRemoteToolEnabled(string normalizedType)
@@ -1939,12 +1942,401 @@ del ""%~f0""
             return _config.EnableTerminal;
         }
 
-        if (normalizedType == CommandTypes.FileList || normalizedType == CommandTypes.FileRead)
+        if (normalizedType == CommandTypes.FileList || normalizedType == CommandTypes.FileRead || normalizedType == CommandTypes.FileZip)
         {
             return _config.EnableFileBrowser;
         }
 
         return true;
+    }
+
+    private async Task<string> HandleFileZipAsync(Guid commandId, JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        if (payloadRoot is null || payloadRoot.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("file.zip requires a JSON object payload.");
+        }
+
+        var root = payloadRoot.Value;
+
+        // Extract downloadId for progress tracking.
+        var downloadId = TryGetGuid(root, "downloadId") ?? Guid.Empty;
+
+        // Extract paths array.
+        var paths = ExtractPathsArray(root);
+        if (paths.Length == 0)
+        {
+            throw new ArgumentException("file.zip requires at least one path.");
+        }
+
+        // Extract limits from payload, falling back to config defaults.
+        var maxUncompressedBytes = ExtractOptionalLong(payloadRoot, "maxUncompressedBytes", "MaxUncompressedBytes")
+            ?? _config.FileZipMaxUncompressedBytes;
+        maxUncompressedBytes = Math.Clamp(maxUncompressedBytes, 1, _config.FileZipMaxUncompressedBytes);
+
+        var maxFileCount = ExtractOptionalInt(payloadRoot, "maxFileCount", "MaxFileCount")
+            ?? _config.FileZipMaxFileCount;
+        maxFileCount = Math.Clamp(maxFileCount, 1, _config.FileZipMaxFileCount);
+
+        // Create collection context for tracking files and limits.
+        var context = new ZipCollectionContext
+        {
+            MaxUncompressedBytes = maxUncompressedBytes,
+            MaxFileCount = maxFileCount
+        };
+
+        // Find common ancestor for relative paths in archive.
+        var normalizedPaths = paths.Select(NormalizeVirtualPath).ToArray();
+        var commonAncestor = FindCommonAncestor(normalizedPaths);
+
+        // Report initial progress.
+        await _updateStatusCallback(commandId, "InProgress", $"Scanning {paths.Length} path(s)...").ConfigureAwait(false);
+
+        foreach (var virtualPath in normalizedPaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Validate path doesn't contain traversal.
+            if (virtualPath.Contains(".."))
+            {
+                throw new ArgumentException($"Path traversal is not allowed: {virtualPath}");
+            }
+
+            var (actualPath, resolvedVirtualPath) = ResolveActualPathFromVirtual(virtualPath);
+            if (string.IsNullOrWhiteSpace(actualPath))
+            {
+                context.SkippedPaths.Add(virtualPath);
+                continue;
+            }
+
+            // Calculate relative path for archive entry.
+            var archiveBasePath = GetRelativeArchivePath(resolvedVirtualPath, commonAncestor);
+
+            if (Directory.Exists(actualPath))
+            {
+                // Recursively enumerate directory.
+                context.DirectoryCount++;
+                try
+                {
+                    CollectFilesFromDirectory(
+                        actualPath,
+                        archiveBasePath,
+                        context,
+                        cancellationToken);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    context.SkippedPaths.Add(virtualPath);
+                }
+            }
+            else if (File.Exists(actualPath))
+            {
+                try
+                {
+                    var fileInfo = new FileInfo(actualPath);
+                    var fileSize = fileInfo.Length;
+
+                    // Check limits before adding.
+                    if (context.TotalUncompressedSize + fileSize > maxUncompressedBytes)
+                    {
+                        throw new InvalidOperationException(
+                            $"Zip operation would exceed maximum uncompressed size limit of {maxUncompressedBytes:N0} bytes.");
+                    }
+
+                    if (context.FilesToZip.Count >= maxFileCount)
+                    {
+                        throw new InvalidOperationException(
+                            $"Zip operation would exceed maximum file count limit of {maxFileCount:N0} files.");
+                    }
+
+                    context.TotalUncompressedSize += fileSize;
+                    context.FilesToZip.Add((actualPath, archiveBasePath));
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    context.SkippedPaths.Add(virtualPath);
+                }
+                catch (IOException)
+                {
+                    context.SkippedPaths.Add(virtualPath);
+                }
+            }
+            else
+            {
+                context.SkippedPaths.Add(virtualPath);
+            }
+        }
+
+        if (context.FilesToZip.Count == 0)
+        {
+            throw new InvalidOperationException("No accessible files found to zip.");
+        }
+
+        // Report file count before creating archive.
+        await _updateStatusCallback(commandId, "InProgress", 
+            $"Creating zip archive with {context.FilesToZip.Count} file(s)...").ConfigureAwait(false);
+
+        // Create temporary zip file.
+        var tempZipPath = Path.Combine(Path.GetTempPath(), $"manlab-zip-{Guid.NewGuid():N}.zip");
+
+        try
+        {
+            // Progress callback for zip creation.
+            var filesProcessed = 0;
+            var lastProgressReport = DateTime.UtcNow;
+            var progressInterval = TimeSpan.FromSeconds(1); // Report progress at most once per second.
+
+            async Task ReportZipProgress(string currentFile)
+            {
+                filesProcessed++;
+                var now = DateTime.UtcNow;
+                if (now - lastProgressReport >= progressInterval)
+                {
+                    lastProgressReport = now;
+                    var percent = (int)((filesProcessed * 100.0) / context.FilesToZip.Count);
+                    await _updateStatusCallback(commandId, "InProgress", 
+                        $"Compressing: {percent}% ({filesProcessed}/{context.FilesToZip.Count} files)").ConfigureAwait(false);
+                }
+            }
+
+            await CreateZipArchiveAsync(
+                tempZipPath,
+                context.FilesToZip,
+                context.SkippedPaths,
+                ReportZipProgress,
+                cancellationToken).ConfigureAwait(false);
+
+            var archiveInfo = new FileInfo(tempZipPath);
+            var result = new FileZipResult
+            {
+                TempFilePath = tempZipPath,
+                ArchiveBytes = archiveInfo.Length,
+                FileCount = context.FilesToZip.Count,
+                DirectoryCount = context.DirectoryCount,
+                SkippedPaths = context.SkippedPaths.ToArray()
+            };
+
+            return JsonSerializer.Serialize(result, ManLabJsonContext.Default.FileZipResult);
+        }
+        catch
+        {
+            // Clean up temp file on failure.
+            try { File.Delete(tempZipPath); } catch { /* ignore cleanup errors */ }
+            throw;
+        }
+    }
+
+    private static string[] ExtractPathsArray(JsonElement root)
+    {
+        if (!root.TryGetProperty("paths", out var pathsEl) && !root.TryGetProperty("Paths", out pathsEl))
+        {
+            throw new ArgumentException("file.zip payload must include 'paths' array.");
+        }
+
+        if (pathsEl.ValueKind != JsonValueKind.Array)
+        {
+            throw new ArgumentException("'paths' must be an array.");
+        }
+
+        var paths = new List<string>();
+        foreach (var item in pathsEl.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                var path = item.GetString();
+                if (!string.IsNullOrWhiteSpace(path))
+                {
+                    paths.Add(path);
+                }
+            }
+        }
+
+        return paths.ToArray();
+    }
+
+    private static string FindCommonAncestor(string[] normalizedPaths)
+    {
+        if (normalizedPaths.Length == 0) return "/";
+        if (normalizedPaths.Length == 1)
+        {
+            // For a single path, use its parent directory.
+            var segments = normalizedPaths[0].Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length <= 1) return "/";
+            return "/" + string.Join('/', segments.Take(segments.Length - 1));
+        }
+
+        // Find common prefix segments.
+        var splitPaths = normalizedPaths
+            .Select(p => p.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            .ToArray();
+
+        var minLength = splitPaths.Min(s => s.Length);
+        var commonSegments = new List<string>();
+
+        for (int i = 0; i < minLength; i++)
+        {
+            var segment = splitPaths[0][i];
+            if (splitPaths.All(s => s[i].Equals(segment, StringComparison.OrdinalIgnoreCase)))
+            {
+                commonSegments.Add(segment);
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return commonSegments.Count == 0 ? "/" : "/" + string.Join('/', commonSegments);
+    }
+
+    private static string GetRelativeArchivePath(string virtualPath, string commonAncestor)
+    {
+        if (commonAncestor == "/")
+        {
+            // Remove leading slash for archive entry.
+            return virtualPath.TrimStart('/');
+        }
+
+        // Remove common ancestor prefix.
+        if (virtualPath.StartsWith(commonAncestor, StringComparison.OrdinalIgnoreCase))
+        {
+            var relative = virtualPath.Substring(commonAncestor.Length).TrimStart('/');
+            return string.IsNullOrEmpty(relative) ? Path.GetFileName(virtualPath.TrimEnd('/')) : relative;
+        }
+
+        return virtualPath.TrimStart('/');
+    }
+
+    /// <summary>
+    /// Context for collecting files during zip operation.
+    /// </summary>
+    private sealed class ZipCollectionContext
+    {
+        public List<(string ActualPath, string ArchiveEntryPath)> FilesToZip { get; } = new();
+        public List<string> SkippedPaths { get; } = new();
+        public long TotalUncompressedSize { get; set; }
+        public int DirectoryCount { get; set; }
+        public long MaxUncompressedBytes { get; init; }
+        public int MaxFileCount { get; init; }
+    }
+
+    private static void CollectFilesFromDirectory(
+        string directoryPath,
+        string archiveBasePath,
+        ZipCollectionContext context,
+        CancellationToken cancellationToken)
+    {
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = false,
+            IgnoreInaccessible = true,
+            ReturnSpecialDirectories = false
+        };
+
+        // Process files in current directory.
+        foreach (var filePath in Directory.EnumerateFiles(directoryPath, "*", options))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var fileInfo = new FileInfo(filePath);
+                var fileSize = fileInfo.Length;
+
+                // Check limits.
+                if (context.TotalUncompressedSize + fileSize > context.MaxUncompressedBytes)
+                {
+                    throw new InvalidOperationException(
+                        $"Zip operation would exceed maximum uncompressed size limit of {context.MaxUncompressedBytes:N0} bytes.");
+                }
+
+                if (context.FilesToZip.Count >= context.MaxFileCount)
+                {
+                    throw new InvalidOperationException(
+                        $"Zip operation would exceed maximum file count limit of {context.MaxFileCount:N0} files.");
+                }
+
+                context.TotalUncompressedSize += fileSize;
+                var entryPath = string.IsNullOrEmpty(archiveBasePath)
+                    ? fileInfo.Name
+                    : $"{archiveBasePath}/{fileInfo.Name}";
+                context.FilesToZip.Add((filePath, entryPath));
+            }
+            catch (UnauthorizedAccessException)
+            {
+                context.SkippedPaths.Add(filePath);
+            }
+            catch (IOException)
+            {
+                context.SkippedPaths.Add(filePath);
+            }
+        }
+
+        // Recursively process subdirectories.
+        foreach (var subDir in Directory.EnumerateDirectories(directoryPath, "*", options))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var dirInfo = new DirectoryInfo(subDir);
+                context.DirectoryCount++;
+                var subArchivePath = string.IsNullOrEmpty(archiveBasePath)
+                    ? dirInfo.Name
+                    : $"{archiveBasePath}/{dirInfo.Name}";
+
+                CollectFilesFromDirectory(
+                    subDir,
+                    subArchivePath,
+                    context,
+                    cancellationToken);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                context.SkippedPaths.Add(subDir);
+            }
+        }
+    }
+
+    private static async Task CreateZipArchiveAsync(
+        string zipPath,
+        List<(string ActualPath, string ArchiveEntryPath)> filesToZip,
+        List<string> skippedPaths,
+        Func<string, Task>? progressCallback,
+        CancellationToken cancellationToken)
+    {
+        await using var zipStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, useAsync: true);
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: false);
+
+        foreach (var (actualPath, entryPath) in filesToZip)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                // Normalize entry path to use forward slashes (zip standard).
+                var normalizedEntryPath = entryPath.Replace('\\', '/');
+                var entry = archive.CreateEntry(normalizedEntryPath, CompressionLevel.Optimal);
+
+                await using var entryStream = entry.Open();
+                await using var fileStream = new FileStream(actualPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+                await fileStream.CopyToAsync(entryStream, cancellationToken).ConfigureAwait(false);
+
+                // Report progress after each file is added.
+                if (progressCallback != null)
+                {
+                    await progressCallback(actualPath).ConfigureAwait(false);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                skippedPaths.Add(actualPath);
+            }
+            catch (IOException)
+            {
+                skippedPaths.Add(actualPath);
+            }
+        }
     }
 
     private async Task<string> HandleFileListAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)

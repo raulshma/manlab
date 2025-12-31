@@ -37,4 +37,9 @@ namespace ManLab.Shared.Dtos;
 [JsonSerializable(typeof(List<FileBrowserEntry>))]
 [JsonSerializable(typeof(FileListResult))]
 [JsonSerializable(typeof(FileReadResult))]
+[JsonSerializable(typeof(FileZipPayload))]
+[JsonSerializable(typeof(FileZipResult))]
+[JsonSerializable(typeof(DownloadProgressUpdate))]
+[JsonSerializable(typeof(DownloadStatusChangedEvent))]
+[JsonSerializable(typeof(CancelCommandPayload))]
 public partial class ManLabJsonContext : JsonSerializerContext;

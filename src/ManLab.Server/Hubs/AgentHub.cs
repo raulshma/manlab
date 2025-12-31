@@ -1069,6 +1069,160 @@ public class AgentHub : Hub
     #region Agent Backoff and Ping Methods
 
     /// <summary>
+    /// Receives download progress updates from an agent and forwards to the requesting client.
+    /// </summary>
+    /// <param name="downloadId">The download session ID.</param>
+    /// <param name="bytesTransferred">Number of bytes transferred so far.</param>
+    /// <param name="totalBytes">Total number of bytes to transfer.</param>
+    public async Task ReportDownloadProgress(Guid downloadId, long bytesTransferred, long totalBytes)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before reporting download progress.");
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var downloadService = scope.ServiceProvider.GetRequiredService<DownloadSessionService>();
+
+        if (!downloadService.TryGetSession(downloadId, out var session))
+        {
+            _logger.LogWarning("Download progress reported for unknown session {DownloadId}", downloadId);
+            return;
+        }
+
+        // Verify the session belongs to the registered node
+        if (session!.NodeId != registeredNodeId)
+        {
+            _logger.LogWarning(
+                "Rejected download progress for session {DownloadId}: session belongs to node {SessionNodeId} but connection is bound to {RegisteredNodeId}",
+                downloadId, session.NodeId, registeredNodeId);
+            throw new HubException("Unauthorized: download session does not belong to this agent.");
+        }
+
+        // Update session progress
+        downloadService.UpdateProgress(downloadId, bytesTransferred, totalBytes);
+
+        // Calculate speed and ETA
+        var elapsed = DateTime.UtcNow - session.CreatedAt;
+        var speedBytesPerSec = elapsed.TotalSeconds > 0 ? bytesTransferred / elapsed.TotalSeconds : 0;
+        int? estimatedSecondsRemaining = null;
+        if (speedBytesPerSec > 0 && totalBytes > bytesTransferred)
+        {
+            var remainingBytes = totalBytes - bytesTransferred;
+            estimatedSecondsRemaining = (int)Math.Ceiling(remainingBytes / speedBytesPerSec);
+        }
+
+        // Forward progress to the requesting client
+        if (!string.IsNullOrEmpty(session.ClientConnectionId))
+        {
+            await Clients.Client(session.ClientConnectionId).SendAsync("DownloadProgress", new
+            {
+                downloadId,
+                bytesTransferred,
+                totalBytes,
+                speedBytesPerSec,
+                estimatedSecondsRemaining
+            });
+        }
+
+        // Also broadcast to the download progress group for any subscribed clients
+        await Clients.Group(GetDownloadProgressGroup(downloadId)).SendAsync("DownloadProgress", new
+        {
+            downloadId,
+            bytesTransferred,
+            totalBytes,
+            speedBytesPerSec,
+            estimatedSecondsRemaining
+        });
+    }
+
+    /// <summary>
+    /// Reports a download status change from the agent.
+    /// </summary>
+    /// <param name="downloadId">The download session ID.</param>
+    /// <param name="status">The new status.</param>
+    /// <param name="error">Error message if the download failed.</param>
+    public async Task ReportDownloadStatusChanged(Guid downloadId, string status, string? error)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before reporting download status.");
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var downloadService = scope.ServiceProvider.GetRequiredService<DownloadSessionService>();
+
+        if (!downloadService.TryGetSession(downloadId, out var session))
+        {
+            _logger.LogWarning("Download status change reported for unknown session {DownloadId}", downloadId);
+            return;
+        }
+
+        // Verify the session belongs to the registered node
+        if (session!.NodeId != registeredNodeId)
+        {
+            _logger.LogWarning(
+                "Rejected download status change for session {DownloadId}: session belongs to node {SessionNodeId} but connection is bound to {RegisteredNodeId}",
+                downloadId, session.NodeId, registeredNodeId);
+            throw new HubException("Unauthorized: download session does not belong to this agent.");
+        }
+
+        // Update session status
+        if (Enum.TryParse<DownloadSessionService.DownloadStatus>(status, true, out var parsedStatus))
+        {
+            downloadService.UpdateStatus(downloadId, parsedStatus);
+
+            if (parsedStatus is DownloadSessionService.DownloadStatus.Completed or DownloadSessionService.DownloadStatus.Failed)
+            {
+                downloadService.CompleteSession(downloadId, parsedStatus == DownloadSessionService.DownloadStatus.Completed, error);
+            }
+        }
+
+        _logger.LogInformation("Download session {DownloadId} status changed to {Status}", downloadId, status);
+
+        // Forward status change to the requesting client
+        if (!string.IsNullOrEmpty(session.ClientConnectionId))
+        {
+            await Clients.Client(session.ClientConnectionId).SendAsync("DownloadStatusChanged", new
+            {
+                downloadId,
+                status,
+                error
+            });
+        }
+
+        // Also broadcast to the download progress group
+        await Clients.Group(GetDownloadProgressGroup(downloadId)).SendAsync("DownloadStatusChanged", new
+        {
+            downloadId,
+            status,
+            error
+        });
+    }
+
+    /// <summary>
+    /// Allows dashboard clients to subscribe to download progress updates.
+    /// </summary>
+    /// <param name="downloadId">The download session ID to subscribe to.</param>
+    public async Task SubscribeDownloadProgress(Guid downloadId)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, GetDownloadProgressGroup(downloadId));
+        _logger.LogDebug("Client {ConnectionId} subscribed to download progress for {DownloadId}", Context.ConnectionId, downloadId);
+    }
+
+    /// <summary>
+    /// Allows dashboard clients to unsubscribe from download progress updates.
+    /// </summary>
+    /// <param name="downloadId">The download session ID to unsubscribe from.</param>
+    public async Task UnsubscribeDownloadProgress(Guid downloadId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetDownloadProgressGroup(downloadId));
+    }
+
+    private static string GetDownloadProgressGroup(Guid downloadId)
+        => $"download-progress.{downloadId:N}";
+
+    /// <summary>
     /// Receives backoff status from an agent when heartbeat fails.
     /// Broadcasts to dashboard clients so they can display next expected ping time.
     /// </summary>

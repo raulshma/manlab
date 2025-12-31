@@ -3,9 +3,12 @@
  *
  * Uses @cubone/react-file-manager for the UI.
  * Session is created server-side (no policy allowlist) and is short-lived.
+ * 
+ * Requirements: 8.1, 8.8 - Multi-select mode with checkbox selection
+ * Requirements: 2.1, 2.2 - Download actions integration
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FileManager } from "@cubone/react-file-manager";
@@ -30,8 +33,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { FileBrowserSelectionToolbar } from "@/components/FileBrowserSelectionToolbar";
+import { DownloadConfirmationDialog, type DownloadConfirmationRequest } from "@/components/DownloadConfirmationDialog";
+import { useDownload } from "@/DownloadContext";
+import { shouldShowConfirmation } from "@/lib/download-utils";
 
 import { AlertCircle, Clock, Download, Folder } from "lucide-react";
+
+// Local storage key for selection preference on navigation
+const SELECTION_PREFERENCE_KEY = "manlab:file_browser_preserve_selection";
 
 type SystemFileBrowserSession = {
   sessionId: string;
@@ -49,6 +59,42 @@ interface RemoteFileBrowserProps {
    * Defaults to true (matches "click node => show file browser").
    */
   autoOpen?: boolean;
+}
+
+/**
+ * Selection state for multi-select mode.
+ * Requirements: 8.1
+ */
+interface SelectionState {
+  /** Set of selected file/folder paths */
+  selectedPaths: Set<string>;
+  /** Whether multi-select mode is active */
+  selectionMode: boolean;
+}
+
+/**
+ * Loads selection preference from localStorage.
+ * Requirements: 8.8
+ */
+function loadSelectionPreference(): boolean {
+  try {
+    const stored = localStorage.getItem(SELECTION_PREFERENCE_KEY);
+    return stored === "true";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Saves selection preference to localStorage.
+ * Requirements: 8.8
+ */
+function saveSelectionPreference(preserve: boolean): void {
+  try {
+    localStorage.setItem(SELECTION_PREFERENCE_KEY, String(preserve));
+  } catch {
+    // Ignore storage errors
+  }
 }
 
 function formatCountdown(expiresAt: string): string {
@@ -148,6 +194,25 @@ export function RemoteFileBrowser({
   const [previewText, setPreviewText] = useState<string>("");
   const [previewTruncated, setPreviewTruncated] = useState<boolean>(false);
 
+  // Multi-select state - Requirements: 8.1
+  const [selectionState, setSelectionState] = useState<SelectionState>({
+    selectedPaths: new Set(),
+    selectionMode: false,
+  });
+  
+  // Selection preference for navigation - Requirements: 8.8
+  const [preserveSelectionOnNav, setPreserveSelectionOnNav] = useState<boolean>(() => 
+    loadSelectionPreference()
+  );
+
+  // Download confirmation dialog state - Requirements: 9.1, 9.2
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
+  const [confirmationRequest, setConfirmationRequest] = useState<DownloadConfirmationRequest | null>(null);
+  const pendingDownloadRef = useRef<{ paths: string[]; asZip: boolean } | null>(null);
+
+  // Download context for triggering downloads - Requirements: 2.1, 2.2
+  const { queueDownload, executeDownload } = useDownload();
+
   // Reset session when node changes
   useEffect(() => {
     setSession(null);
@@ -155,6 +220,11 @@ export function RemoteFileBrowser({
     setOpenError(null);
     setAutoOpenBlocked(false);
     autoOpenAttemptedForNodeIdRef.current = null;
+    // Clear selection when node changes
+    setSelectionState({
+      selectedPaths: new Set(),
+      selectionMode: false,
+    });
   }, [nodeId]);
 
   // Expiry countdown timer
@@ -235,6 +305,7 @@ export function RemoteFileBrowser({
 
   const listTruncated = Boolean(listQuery.data?.truncated);
 
+  // filesForUi must be defined before selection callbacks that use it
   const filesForUi = useMemo(() => {
     const entries: FileBrowserEntry[] = listQuery.data?.entries ?? [];
 
@@ -244,6 +315,116 @@ export function RemoteFileBrowser({
       size: f.size ?? undefined,
     }));
   }, [listQuery.data]);
+
+  /**
+   * Selects all items in the current directory.
+   * Requirements: 8.6
+   */
+  const selectAll = useCallback(() => {
+    setSelectionState(() => {
+      const newSelected = new Set<string>();
+      filesForUi.forEach(file => newSelected.add(file.path));
+      return {
+        selectedPaths: newSelected,
+        selectionMode: newSelected.size > 0,
+      };
+    });
+  }, [filesForUi]);
+
+  /**
+   * Clears all selections.
+   * Requirements: 8.7
+   */
+  const clearSelection = useCallback(() => {
+    setSelectionState({
+      selectedPaths: new Set(),
+      selectionMode: false,
+    });
+  }, []);
+
+  /**
+   * Handles folder navigation with selection preference.
+   * Requirements: 8.8
+   */
+  const handleFolderChange = useCallback((newPath: string) => {
+    if (!preserveSelectionOnNav) {
+      // Clear selection when navigating
+      setSelectionState({
+        selectedPaths: new Set(),
+        selectionMode: false,
+      });
+    }
+    setCurrentPath(newPath || "/");
+  }, [preserveSelectionOnNav]);
+
+  /**
+   * Updates selection preference and saves to localStorage.
+   * Requirements: 8.8
+   */
+  const updateSelectionPreference = useCallback((preserve: boolean) => {
+    setPreserveSelectionOnNav(preserve);
+    saveSelectionPreference(preserve);
+  }, []);
+
+  /**
+   * Starts a download via the download context.
+   * Requirements: 2.1, 2.2
+   */
+  const handleStartDownload = useCallback(async (paths: string[], asZip: boolean) => {
+    if (!session) {
+      toast.error("No active session");
+      return;
+    }
+
+    try {
+      const downloadId = await queueDownload({
+        nodeId,
+        sessionId: session.sessionId,
+        paths,
+        asZip,
+      });
+      
+      // Start executing the download
+      await executeDownload(downloadId);
+      
+      // Clear selection after starting download
+      clearSelection();
+      
+      toast.success(asZip ? "Zip download started" : "Download started");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to start download";
+      toast.error(message);
+    }
+  }, [session, nodeId, queueDownload, executeDownload, clearSelection]);
+
+  /**
+   * Handles confirmation dialog confirm action.
+   * Requirements: 9.5
+   */
+  const handleConfirmDownload = useCallback(() => {
+    if (pendingDownloadRef.current) {
+      const { paths, asZip } = pendingDownloadRef.current;
+      handleStartDownload(paths, asZip);
+      pendingDownloadRef.current = null;
+    }
+    setConfirmationOpen(false);
+    setConfirmationRequest(null);
+  }, [handleStartDownload]);
+
+  /**
+   * Handles confirmation dialog cancel action.
+   * Requirements: 9.5
+   */
+  const handleCancelConfirmation = useCallback(() => {
+    pendingDownloadRef.current = null;
+    setConfirmationOpen(false);
+    setConfirmationRequest(null);
+  }, []);
+
+  // Get selected items from paths - Requirements: 8.2
+  const selectedItems = useMemo(() => {
+    return filesForUi.filter(file => selectionState.selectedPaths.has(file.path));
+  }, [filesForUi, selectionState.selectedPaths]);
 
   const readMutation = useMutation({
     mutationFn: async (file: FileBrowserEntry) => {
@@ -438,15 +619,83 @@ export function RemoteFileBrowser({
               </Alert>
             )}
 
+            {/* Selection toolbar - Requirements: 8.2 */}
+            <FileBrowserSelectionToolbar
+              selectedItems={selectedItems}
+              allItems={filesForUi}
+              onDownloadSelected={() => {
+                // Download single selected file - Requirements: 2.1
+                const file = selectedItems.find(item => !item.isDirectory);
+                if (!file || !session) return;
+                
+                const totalBytes = file.size ?? null;
+                const filename = filenameFromPath(file.path);
+                
+                // Check if confirmation is needed - Requirements: 9.1
+                if (shouldShowConfirmation(totalBytes, false)) {
+                  pendingDownloadRef.current = { paths: [file.path], asZip: false };
+                  setConfirmationRequest({
+                    totalBytes,
+                    isZip: false,
+                    fileCount: 1,
+                    filename,
+                  });
+                  setConfirmationOpen(true);
+                } else {
+                  // Start download directly
+                  handleStartDownload([file.path], false);
+                }
+              }}
+              onDownloadAsZip={() => {
+                // Download selected items as zip - Requirements: 2.2
+                if (!session || selectedItems.length === 0) return;
+                
+                const paths = selectedItems.map(item => item.path);
+                const totalBytes = selectedItems.reduce((sum, item) => {
+                  if (!item.isDirectory && item.size != null) {
+                    return sum + item.size;
+                  }
+                  return sum;
+                }, 0);
+                
+                // Generate filename for zip
+                const now = new Date();
+                const timestamp = now.toISOString().replace(/[-:T]/g, '').substring(0, 15);
+                const filename = selectedItems.length === 1 
+                  ? `${filenameFromPath(selectedItems[0].path)}.zip`
+                  : `download_${timestamp}.zip`;
+                
+                // Check if confirmation is needed - Requirements: 9.2
+                if (shouldShowConfirmation(totalBytes, true)) {
+                  pendingDownloadRef.current = { paths, asZip: true };
+                  setConfirmationRequest({
+                    totalBytes: totalBytes > 0 ? totalBytes : null,
+                    isZip: true,
+                    fileCount: selectedItems.length,
+                    filename,
+                  });
+                  setConfirmationOpen(true);
+                } else {
+                  // Start download directly
+                  handleStartDownload(paths, true);
+                }
+              }}
+              onSelectAll={selectAll}
+              onClearSelection={clearSelection}
+              preserveSelectionOnNav={preserveSelectionOnNav}
+              onPreserveSelectionChange={updateSelectionPreference}
+              disabled={!session}
+            />
+
             <div className="min-h-[70vh]">
               <FileManager
                 files={filesForUi}
                 isLoading={listQuery.isFetching}
                 initialPath={initialPathForUi}
-                onFolderChange={(p: string) => setCurrentPath(p || "/")}
+                onFolderChange={handleFolderChange}
                 onFileOpen={(file: FileBrowserEntry) => {
                   if (file.isDirectory) {
-                    setCurrentPath(file.path);
+                    handleFolderChange(file.path);
                     return;
                   }
                   readMutation.mutate(file);
@@ -458,6 +707,14 @@ export function RemoteFileBrowser({
                   });
                 }}
                 onDownload={(items: FileBrowserEntry[]) => {
+                  // Update selection state when items are selected via FileManager
+                  const newSelected = new Set(items.map(item => item.path));
+                  setSelectionState({
+                    selectedPaths: newSelected,
+                    selectionMode: newSelected.size > 0,
+                  });
+                  
+                  // If single file, download directly
                   const first = items?.find((i) => !i.isDirectory);
                   if (!first) {
                     toast.error("Select a file to download.");
@@ -559,6 +816,15 @@ export function RemoteFileBrowser({
           </pre>
         </DialogContent>
       </Dialog>
+
+      {/* Download confirmation dialog - Requirements: 9.1, 9.2, 9.5 */}
+      <DownloadConfirmationDialog
+        open={confirmationOpen}
+        onOpenChange={setConfirmationOpen}
+        request={confirmationRequest}
+        onConfirm={handleConfirmDownload}
+        onCancel={handleCancelConfirmation}
+      />
     </div>
   );
 }

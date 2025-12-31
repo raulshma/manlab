@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SignalRProvider } from "./SignalRContext";
+import { DownloadProvider } from "./DownloadContext";
 import { ThemeProvider } from "./components/theme-provider";
 import { AppLayout } from "./layout/AppLayout";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -41,14 +42,18 @@ function AppRoutes() {
 
 /**
  * Main App component with providers.
+ * DownloadProvider is nested inside SignalRProvider to access SignalR connection.
+ * Requirements: 3.1, 3.4 - Download context with SignalR integration
  */
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
         <SignalRProvider>
-          <AppRoutes />
-          <Toaster />
+          <DownloadProvider>
+            <AppRoutes />
+            <Toaster />
+          </DownloadProvider>
         </SignalRProvider>
       </ThemeProvider>
     </QueryClientProvider>

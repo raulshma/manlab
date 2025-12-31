@@ -887,3 +887,77 @@ export interface ExtendedAgentConfiguration extends AgentConfiguration {
   apmHealthCheckEndpoints: string[];
   apmDatabaseEndpoints: DatabaseEndpointConfig[];
 }
+
+// ============================================================================
+// File Download Types
+// ============================================================================
+
+/**
+ * Status of a download operation.
+ */
+export type DownloadStatus =
+  | 'queued'      // Waiting in queue
+  | 'preparing'   // Server preparing download
+  | 'downloading' // Actively transferring
+  | 'completed'   // Successfully finished
+  | 'failed'      // Error occurred
+  | 'cancelled';  // User cancelled
+
+/**
+ * A download item in the download queue.
+ */
+export interface DownloadItem {
+  id: string;                    // Unique download ID
+  nodeId: string;                // Target node
+  sessionId: string;             // File browser session
+  paths: string[];               // Files/folders to download
+  filename: string;              // Output filename
+  type: 'single' | 'zip';        // Download type
+  status: DownloadStatus;        // Current status
+  totalBytes: number | null;     // Total size (if known)
+  transferredBytes: number;      // Bytes downloaded
+  speed: number;                 // Current speed (bytes/sec)
+  eta: number | null;            // Estimated time remaining (seconds)
+  error: string | null;          // Error message if failed
+  startedAt: string;             // Start timestamp
+  completedAt: string | null;    // Completion timestamp
+}
+
+/**
+ * Request to create a new download.
+ */
+export interface CreateDownloadRequest {
+  sessionId: string;
+  paths: string[];
+  asZip?: boolean;
+}
+
+/**
+ * Response from creating a download.
+ */
+export interface CreateDownloadResponse {
+  downloadId: string;
+  filename: string;
+  totalBytes: number | null;
+  status: string;
+}
+
+/**
+ * Progress event for downloads sent via SignalR.
+ */
+export interface DownloadProgressEvent {
+  downloadId: string;
+  bytesTransferred: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+  estimatedSecondsRemaining: number | null;
+}
+
+/**
+ * Status change event for downloads sent via SignalR.
+ */
+export interface DownloadStatusChangedEvent {
+  downloadId: string;
+  status: DownloadStatus;
+  error: string | null;
+}
