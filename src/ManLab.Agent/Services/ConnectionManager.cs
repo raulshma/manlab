@@ -640,17 +640,21 @@ public sealed class ConnectionManager : IAsyncDisposable
     }
 
     /// <summary>
-    /// Streams a file to the server in chunks using SignalR.
-    /// This bypasses the command queue for efficient large file transfers.
+    /// High-performance file streaming using the binary protocol.
+    /// Uses ChunkedFileReader for efficient large file handling with minimal allocations.
     /// </summary>
-    /// <param name="downloadId">The download session ID.</param>
+    /// <param name="streamId">The streaming session ID.</param>
     /// <param name="filePath">The path to the file to stream.</param>
-    /// <param name="chunkSize">The size of each chunk in bytes (default 256KB).</param>
+    /// <param name="startOffset">Byte offset to start reading from (for resumable downloads).</param>
+    /// <param name="endOffset">Byte offset to stop reading at (-1 for end of file).</param>
+    /// <param name="chunkSize">The size of each chunk in bytes (default 1MB).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public async Task StreamFileToServerAsync(
-        Guid downloadId,
+        Guid streamId,
         string filePath,
-        int chunkSize = 256 * 1024,
+        long startOffset = 0,
+        long endOffset = -1,
+        int chunkSize = ChunkedFileReader.DefaultChunkSize,
         CancellationToken cancellationToken = default)
     {
         if (!_isConnected || !_isRegistered)
@@ -660,63 +664,64 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         if (!File.Exists(filePath))
         {
-            await _connection.InvokeAsync("StreamFileFailed", downloadId, $"File not found: {filePath}", cancellationToken)
+            await _connection.InvokeAsync("StreamFailed", streamId, $"File not found: {filePath}", cancellationToken)
                 .ConfigureAwait(false);
             return;
         }
 
         try
         {
-            await using var fs = new FileStream(
-                filePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                bufferSize: chunkSize,
-                useAsync: true);
+            // Get file metadata first
+            var metadata = ChunkedFileReader.GetFileMetadata(filePath);
+            var etag = ChunkedFileReader.ComputeETag(filePath);
 
-            var totalBytes = fs.Length;
-            var buffer = new byte[chunkSize];
-            long transferred = 0;
+            // Send metadata to server so it can set Content-Length header
+            await _connection.InvokeAsync(
+                "StreamMetadata",
+                streamId,
+                metadata.Size,
+                metadata.LastModified.ToString("O"),
+                etag,
+                cancellationToken).ConfigureAwait(false);
 
             _logger.LogInformation(
-                "Starting file stream for download {DownloadId}, file: {FilePath}, size: {TotalBytes}",
-                downloadId, filePath, totalBytes);
+                "Starting file stream for {StreamId}, file: {FilePath}, size: {TotalBytes}, offset: {StartOffset}-{EndOffset}",
+                streamId, filePath, metadata.Size, startOffset, endOffset);
 
-            while (true)
+            using var reader = new ChunkedFileReader();
+            long bytesTransferred = 0;
+
+            await foreach (var chunk in reader.ReadFileChunksAsync(
+                filePath,
+                chunkSize,
+                startOffset,
+                endOffset,
+                progressCallback: null, // Progress handled by byte counting
+                cancellationToken: cancellationToken))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var read = await fs.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
-                if (read == 0)
-                {
-                    break;
-                }
-
-                transferred += read;
-
-                // Send chunk as Base64
-                var chunkData = read == chunkSize ? buffer : buffer[..read];
-                var chunkBase64 = Convert.ToBase64String(chunkData);
-
-                await _connection.InvokeAsync("StreamFileChunk", downloadId, chunkBase64, cancellationToken)
+                // Send raw binary chunk (SignalR handles serialization)
+                await _connection.InvokeAsync("StreamChunk", streamId, chunk, cancellationToken)
                     .ConfigureAwait(false);
+
+                bytesTransferred += chunk.Length;
             }
 
             // Signal completion
-            await _connection.InvokeAsync("StreamFileComplete", downloadId, totalBytes, cancellationToken)
+            await _connection.InvokeAsync("StreamComplete", streamId, cancellationToken)
                 .ConfigureAwait(false);
 
             _logger.LogInformation(
-                "File stream completed for download {DownloadId}, {TransferredBytes} bytes transferred",
-                downloadId, transferred);
+                "File stream completed for {StreamId}, {TransferredBytes} bytes transferred",
+                streamId, bytesTransferred);
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("File stream cancelled for download {DownloadId}", downloadId);
+            _logger.LogInformation("File stream cancelled for {StreamId}", streamId);
             try
             {
-                await _connection.InvokeAsync("StreamFileFailed", downloadId, "Operation cancelled", cancellationToken)
+                await _connection.InvokeAsync("StreamFailed", streamId, "Operation cancelled", CancellationToken.None)
                     .ConfigureAwait(false);
             }
             catch { /* Ignore cleanup failures */ }
@@ -724,14 +729,41 @@ public sealed class ConnectionManager : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "File stream failed for download {DownloadId}", downloadId);
+            _logger.LogError(ex, "File stream failed for {StreamId}", streamId);
             try
             {
-                await _connection.InvokeAsync("StreamFileFailed", downloadId, ex.Message, CancellationToken.None)
+                await _connection.InvokeAsync("StreamFailed", streamId, ex.Message, CancellationToken.None)
                     .ConfigureAwait(false);
             }
             catch { /* Ignore cleanup failures */ }
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Reports a stream failure to the server.
+    /// Used by CommandDispatcher when file.stream command fails before streaming starts.
+    /// </summary>
+    /// <param name="streamId">The streaming session ID.</param>
+    /// <param name="error">Error message describing the failure.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task ReportStreamFailedAsync(Guid streamId, string error, CancellationToken cancellationToken = default)
+    {
+        if (!_isConnected || !_isRegistered)
+        {
+            _logger.LogWarning("Cannot report stream failure for {StreamId}: not connected", streamId);
+            return;
+        }
+
+        try
+        {
+            await _connection.InvokeAsync("StreamFailed", streamId, error, cancellationToken)
+                .ConfigureAwait(false);
+            _logger.LogInformation("Reported stream failure for {StreamId}: {Error}", streamId, error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to report stream failure for {StreamId}", streamId);
         }
     }
 

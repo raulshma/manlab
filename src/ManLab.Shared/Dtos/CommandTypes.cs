@@ -395,22 +395,6 @@ public sealed record FileZipResult
 }
 
 /// <summary>
-/// Payload for file.stream command.
-/// Initiates streaming download of a file directly via SignalR (bypasses command queue).
-/// </summary>
-public sealed record FileStreamPayload
-{
-    /// <summary>Unique identifier for the download session.</summary>
-    public Guid DownloadId { get; init; }
-
-    /// <summary>Path to the file to stream (can be virtual path or direct temp file path).</summary>
-    public string Path { get; init; } = string.Empty;
-
-    /// <summary>Chunk size in bytes (default 256KB).</summary>
-    public int ChunkSize { get; init; } = 256 * 1024;
-}
-
-/// <summary>
 /// Progress update for file downloads sent via SignalR.
 /// </summary>
 public sealed record DownloadProgressUpdate
@@ -450,4 +434,96 @@ public sealed record DownloadStatusChangedEvent
 
     /// <summary>Error message if the download failed.</summary>
     public string? Error { get; init; }
+}
+
+/// <summary>
+/// Payload for initiating a high-performance streaming download.
+/// Used for large file transfers with resumable download support.
+/// </summary>
+public sealed record StreamDownloadPayload
+{
+    /// <summary>Unique identifier for the streaming session.</summary>
+    public Guid StreamId { get; init; }
+
+    /// <summary>Path to the file to stream (virtual or actual path).</summary>
+    public string Path { get; init; } = string.Empty;
+
+    /// <summary>Byte offset to start streaming from (for resumable downloads).</summary>
+    public long StartOffset { get; init; }
+
+    /// <summary>Byte offset to stop streaming at (-1 for end of file).</summary>
+    public long EndOffset { get; init; } = -1;
+
+    /// <summary>Chunk size in bytes (default 1MB).</summary>
+    public int ChunkSize { get; init; } = 1024 * 1024;
+}
+
+/// <summary>
+/// File metadata returned before streaming starts.
+/// </summary>
+public sealed record FileStreamMetadata
+{
+    /// <summary>Total file size in bytes.</summary>
+    public long TotalBytes { get; init; }
+
+    /// <summary>Last modified timestamp (UTC).</summary>
+    public string LastModified { get; init; } = string.Empty;
+
+    /// <summary>ETag for cache validation.</summary>
+    public string ETag { get; init; } = string.Empty;
+
+    /// <summary>MIME type of the file (if detectable).</summary>
+    public string ContentType { get; init; } = "application/octet-stream";
+
+    /// <summary>Whether the server supports range requests for this file.</summary>
+    public bool AcceptRanges { get; init; } = true;
+}
+
+/// <summary>
+/// Chunk header sent before each data chunk in streaming downloads.
+/// Enables progress tracking without parsing the actual data.
+/// </summary>
+public sealed record StreamChunkHeader
+{
+    /// <summary>The streaming session ID.</summary>
+    public Guid StreamId { get; init; }
+
+    /// <summary>Byte offset of this chunk in the file.</summary>
+    public long Offset { get; init; }
+
+    /// <summary>Length of this chunk in bytes.</summary>
+    public int Length { get; init; }
+
+    /// <summary>True if this is the final chunk.</summary>
+    public bool IsFinal { get; init; }
+}
+
+/// <summary>
+/// Summary of a completed zip operation.
+/// </summary>
+public sealed record ZipCreationSummary
+{
+    /// <summary>Path to the temporary zip file on the agent.</summary>
+    public string TempFilePath { get; init; } = string.Empty;
+
+    /// <summary>Total size of the zip archive in bytes.</summary>
+    public long ArchiveBytes { get; init; }
+
+    /// <summary>Number of files included in the archive.</summary>
+    public int FileCount { get; init; }
+
+    /// <summary>Number of directories traversed.</summary>
+    public int DirectoryCount { get; init; }
+
+    /// <summary>Total uncompressed size of all included files.</summary>
+    public long UncompressedBytes { get; init; }
+
+    /// <summary>Compression ratio (compressed / uncompressed).</summary>
+    public double CompressionRatio { get; init; }
+
+    /// <summary>Paths that were skipped due to access errors or limits.</summary>
+    public string[] SkippedPaths { get; init; } = [];
+
+    /// <summary>Time taken to create the zip in milliseconds.</summary>
+    public long CreationTimeMs { get; init; }
 }

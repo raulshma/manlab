@@ -75,7 +75,7 @@ builder.Services.AddScoped<LogViewerSessionService>();
 builder.Services.AddScoped<FileBrowserSessionService>();
 builder.Services.AddScoped<TerminalSessionService>();
 builder.Services.AddSingleton<DownloadSessionService>();
-builder.Services.AddSingleton<FileStreamingService>();
+builder.Services.AddSingleton<StreamingDownloadService>();
 builder.Services.AddScoped<RemoteToolsAuthorizationService>();
 builder.Services.AddHostedService<TerminalSessionCleanupService>();
 
@@ -86,6 +86,7 @@ builder.Services.AddOptions<ManLab.Server.Services.Ssh.SshProvisioningOptions>()
 builder.Services.AddScoped<EnrollmentTokenService>();
 builder.Services.AddScoped<ManLab.Server.Services.Ssh.SshProvisioningService>();
 builder.Services.AddScoped<ManLab.Server.Services.Ssh.SshAuditService>();
+builder.Services.AddScoped<ManLab.Server.Services.Ssh.SshFileService>();
 builder.Services.AddSingleton<ManLab.Server.Services.Ssh.SshRateLimitService>();
 builder.Services.AddSingleton<OnboardingJobRunner>();
 builder.Services.AddSingleton<LocalAgentInstallationService>();

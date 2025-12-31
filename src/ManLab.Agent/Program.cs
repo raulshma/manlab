@@ -179,7 +179,8 @@ using var commandDispatcher = new ManLab.Agent.Commands.CommandDispatcher(
     () => cts.Cancel(),
     agentConfig, // Feature toggles
     terminalHandler, // Terminal session handler
-    async (downloadId, filePath, chunkSize, ct) => await connectionManager.StreamFileToServerAsync(downloadId, filePath, chunkSize, ct).ConfigureAwait(false));
+    async (streamId, filePath, startOffset, endOffset, chunkSize, ct) => await connectionManager.StreamFileToServerAsync(streamId, filePath, startOffset, endOffset, chunkSize, ct).ConfigureAwait(false),
+    async (streamId, error, ct) => await connectionManager.ReportStreamFailedAsync(streamId, error, ct).ConfigureAwait(false));
 
 // Handle command execution via dispatcher
 connectionManager.OnCommandReceived += async (commandId, type, payload) =>

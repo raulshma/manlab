@@ -49,6 +49,9 @@ import type {
   NetworkTelemetry,
   EnhancedGpuTelemetry,
   ApplicationPerformanceTelemetry,
+  // SSH file download types
+  SshDownloadStatusResponse,
+  SshFileListResponse,
 } from "./types";
 
 const API_BASE = "/api";
@@ -1426,4 +1429,99 @@ export async function getTerminalSession(
     throw new Error(`Failed to get terminal session: ${response.statusText}`);
   }
   return response.json();
+}
+
+// ==========================================
+// SSH File Download API
+// ==========================================
+
+/**
+ * Checks if SSH download is available for a node.
+ * Returns status including whether credentials are stored from onboarding.
+ */
+export async function fetchSshDownloadStatus(nodeId: string): Promise<SshDownloadStatusResponse> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/ssh-download/status`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to check SSH download status: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Lists files/directories via SSH/SFTP using stored onboarding credentials.
+ * @param nodeId The node ID
+ * @param path Virtual path to list (use "/" for root)
+ * @param maxEntries Optional maximum number of entries to return
+ */
+export async function listSshFiles(
+  nodeId: string,
+  path: string,
+  maxEntries?: number
+): Promise<SshFileListResponse> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/ssh-file-browser/list`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, maxEntries }),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found or no SSH credentials");
+    if (response.status === 503) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.message || "SSH connection failed");
+    }
+    throw new Error(`Failed to list files via SSH: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Downloads a single file via SSH/SFTP.
+ * Returns a Response object for streaming the file content.
+ * @param nodeId The node ID
+ * @param path Virtual path of the file to download
+ */
+export async function downloadSshFile(
+  nodeId: string,
+  path: string
+): Promise<Response> {
+  const encodedPath = encodeURIComponent(path);
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/ssh-download/file?path=${encodedPath}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("File not found or no SSH credentials");
+    if (response.status === 503) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.message || "SSH connection failed");
+    }
+    throw new Error(`Failed to download file via SSH: ${response.statusText}`);
+  }
+  return response;
+}
+
+/**
+ * Downloads multiple files/directories as a zip via SSH/SFTP.
+ * NOTE: The server streams the zip payload directly (application/zip).
+ * @param nodeId The node ID
+ * @param paths Array of virtual paths to include in the zip
+ */
+export async function downloadSshZip(
+  nodeId: string,
+  paths: string[]
+): Promise<Response> {
+  const response = await fetch(`${API_BASE}/devices/${nodeId}/ssh-download/zip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths }),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found or no SSH credentials");
+    if (response.status === 503) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.message || "SSH connection failed");
+    }
+    throw new Error(`Failed to start zip download via SSH: ${response.statusText}`);
+  }
+  return response;
 }

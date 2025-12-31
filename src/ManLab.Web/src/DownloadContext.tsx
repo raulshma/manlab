@@ -2,6 +2,12 @@
  * Download Context for managing file downloads with progress tracking.
  * Provides download queue management, progress updates via SignalR, and browser download triggering.
  * 
+ * Architecture:
+ * - Uses API (/api/...) for high-performance HTTP streaming
+ * - SignalR only used for control messages (progress, status) not file data
+ * - Supports Range requests for resumable downloads
+ * - Optimized for multi-gigabyte file transfers
+ * 
  * Requirements: 1.7, 1.8, 4.1, 4.2, 4.3, 4.5, 4.6
  */
 
@@ -25,6 +31,7 @@ import type {
 } from "./types";
 import { calculateEta } from "./lib/download-utils";
 
+// API for high-performance streaming (Range support, HTTP streaming)
 const API_BASE = "/api";
 const SESSION_STORAGE_KEY = "manlab:download_queue";
 
@@ -286,6 +293,8 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
 
   /**
    * Executes a download by streaming from the server and triggering browser download.
+    * Uses API with Range header support for resumable downloads.
+   * Both single file and zip downloads use the same streaming logic.
    * Requirements: 1.7, 1.8, 4.3
    */
   const executeDownload = useCallback(async (downloadId: string): Promise<void> => {
@@ -311,17 +320,14 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
     speedTrackingRef.current.set(downloadId, { lastBytes: 0, lastTime: Date.now() });
 
     try {
-      // Update status to preparing for zip downloads (they need to wait for zip creation)
-      if (download.type === 'zip') {
-        updateDownload(downloadId, { status: 'preparing' });
-      } else {
-        updateDownload(downloadId, { status: 'downloading' });
-      }
+      // Start with 'preparing' status - both zip and single file downloads
+      // may need server-side preparation (zip creation or file metadata lookup)
+      updateDownload(downloadId, { status: 'preparing' });
 
       // Stream the download from the server
       const streamUrl = `${API_BASE}/downloads/${downloadId}/stream`;
       
-      // For zip downloads, we may need to retry if the zip isn't ready yet
+      // Poll for ready state - server returns 202 if still preparing
       let response: Response;
       const maxPrepareRetries = 120; // 2 minutes max wait (120 * 1000ms)
       let prepareRetries = 0;
@@ -333,11 +339,11 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
 
         response = await fetch(streamUrl, { signal: abortController.signal });
         
-        // 202 Accepted means zip is still being prepared
+        // 202 Accepted means server is still preparing (zip creation, metadata lookup, etc.)
         if (response.status === 202) {
           prepareRetries++;
           if (prepareRetries >= maxPrepareRetries) {
-            throw new Error("Timeout waiting for zip to be prepared");
+            throw new Error("Timeout waiting for download to be prepared");
           }
           // Wait 1 second before retrying
           await new Promise(resolve => setTimeout(resolve, 1000));
@@ -353,7 +359,7 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
       }
 
       // Update status to downloading now that we're actually streaming
-      // Reset any zip-creation progress indicators so the download progress starts from 0.
+      // Reset any preparation progress indicators so the download progress starts from 0
       updateDownload(downloadId, {
         status: 'downloading',
         transferredBytes: 0,
@@ -404,9 +410,8 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
         chunks.push(value);
         transferredBytes += value.length;
 
-        // Update progress (throttle to every 2 seconds like zip preparation)
+        // Update progress (throttle to every 2 seconds for smoother UI)
         const now = Date.now();
-        // Target: 1 update every 2 seconds for smoother UI, avoid updating when visible percent hasn't changed
         if (now - lastProgressUpdate >= 2000) {
           const tracking = speedTrackingRef.current.get(downloadId);
           let speed = 0;
@@ -426,7 +431,7 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
             ? Math.floor((transferredBytes / totalBytes) * 100)
             : -1;
 
-          // If the percent hasn't changed and we have a known total size, skip this update.
+          // Skip update if percentage hasn't changed (reduces re-renders)
           if (percent >= 0 && percent === lastPercent) {
             lastProgressUpdate = now;
             continue;
@@ -490,6 +495,7 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
 
   /**
    * Creates a download on the server and adds it to the queue.
+    * Uses API for high-performance HTTP streaming.
    */
   const queueDownload = useCallback(async (request: QueueDownloadRequest): Promise<string> => {
     const { nodeId, sessionId, paths, asZip } = request;
@@ -558,6 +564,7 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
 
   /**
    * Cancels an active or queued download.
+    * Uses API for cancellation.
    */
   const cancelDownload = useCallback(async (downloadId: string): Promise<void> => {
     // Use downloadsRef to get current state (avoids stale closure)

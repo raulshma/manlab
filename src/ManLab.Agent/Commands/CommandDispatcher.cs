@@ -48,7 +48,8 @@ public sealed class CommandDispatcher : IDisposable
     private readonly DockerManager _dockerManager;
     private readonly AgentConfiguration _config;
     private readonly TerminalSessionHandler? _terminalHandler;
-    private readonly Func<Guid, string, int, CancellationToken, Task>? _streamFileCallback;
+    private readonly Func<Guid, string, long, long, int, CancellationToken, Task>? _streamFileCallback;
+    private readonly Func<Guid, string, CancellationToken, Task>? _reportStreamFailedCallback;
 
     // Simple in-process rate limit for log operations.
     private readonly object _logRateLock = new();
@@ -69,7 +70,8 @@ public sealed class CommandDispatcher : IDisposable
         Action? shutdownCallback = null,
         AgentConfiguration? config = null,
         TerminalSessionHandler? terminalHandler = null,
-        Func<Guid, string, int, CancellationToken, Task>? streamFileCallback = null)
+        Func<Guid, string, long, long, int, CancellationToken, Task>? streamFileCallback = null,
+        Func<Guid, string, CancellationToken, Task>? reportStreamFailedCallback = null)
     {
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<CommandDispatcher>();
@@ -81,6 +83,7 @@ public sealed class CommandDispatcher : IDisposable
         _config = config ?? new AgentConfiguration();
         _terminalHandler = terminalHandler;
         _streamFileCallback = streamFileCallback;
+        _reportStreamFailedCallback = reportStreamFailedCallback;
     }
 
     /// <summary>
@@ -2634,6 +2637,10 @@ del ""%~f0""
         return JsonSerializer.Serialize(result, ManLabJsonContext.Default.FileReadResult);
     }
 
+    /// <summary>
+    /// Handles the file.stream command for high-performance streaming.
+    /// Uses ChunkedFileReader for efficient large file transfers with Range support.
+    /// </summary>
     private async Task<string> HandleFileStreamAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
         if (_streamFileCallback is null)
@@ -2648,13 +2655,38 @@ del ""%~f0""
 
         var root = payloadRoot.Value;
 
-        // Extract downloadId for streaming.
-        var downloadId = TryGetGuid(root, "downloadId") ?? Guid.Empty;
-        if (downloadId == Guid.Empty)
+        // Extract streamId FIRST so we can report failures to the server.
+        var streamId = TryGetGuid(root, "streamId") ?? Guid.Empty;
+        if (streamId == Guid.Empty)
         {
-            throw new ArgumentException("file.stream requires a valid 'downloadId'.");
+            throw new ArgumentException("file.stream requires a valid 'streamId'.");
         }
 
+        // Now that we have streamId, wrap the rest in try-catch to report failures.
+        try
+        {
+            return await HandleFileStreamCoreAsync(root, streamId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Report the failure to the server so it can unblock the waiting download.
+            if (_reportStreamFailedCallback is not null)
+            {
+                try
+                {
+                    await _reportStreamFailedCallback(streamId, ex.Message, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception reportEx)
+                {
+                    _logger.LogWarning(reportEx, "Failed to report stream failure to server for {StreamId}", streamId);
+                }
+            }
+            throw;
+        }
+    }
+
+    private async Task<string> HandleFileStreamCoreAsync(JsonElement root, Guid streamId, CancellationToken cancellationToken)
+    {
         // Extract path (can be virtual path or direct temp file path).
         var path = root.TryGetProperty("path", out var pathEl) || root.TryGetProperty("Path", out pathEl)
             ? pathEl.GetString()
@@ -2665,9 +2697,16 @@ del ""%~f0""
             throw new ArgumentException("file.stream requires a non-empty 'path'.");
         }
 
-        // Chunk size (default 256KB).
-        var chunkSize = ExtractOptionalInt(payloadRoot, "chunkSize", "ChunkSize") ?? (256 * 1024);
-        chunkSize = Math.Clamp(chunkSize, 16 * 1024, 1024 * 1024); // 16KB - 1MB range
+        // Extract offset parameters for Range request support.
+        var startOffset = ExtractOptionalLong(root, "startOffset", "StartOffset") ?? 0;
+        var endOffset = ExtractOptionalLong(root, "endOffset", "EndOffset") ?? -1;
+
+        // Chunk size (default 1MB).
+        var chunkSize = ExtractOptionalInt(root, "chunkSize", "ChunkSize") 
+            ?? ManLab.Agent.Services.ChunkedFileReader.DefaultChunkSize;
+        chunkSize = Math.Clamp(chunkSize, 
+            ManLab.Agent.Services.ChunkedFileReader.MinChunkSize, 
+            ManLab.Agent.Services.ChunkedFileReader.MaxChunkSize);
 
         // Resolve the actual file path.
         string actualPath;
@@ -2703,12 +2742,27 @@ del ""%~f0""
             throw new FileNotFoundException($"File not found: {path}");
         }
 
-        Log.FileStreamStarting(_logger, downloadId, actualPath, chunkSize);
+        // Validate offset bounds against file size.
+        var fileInfo = new FileInfo(actualPath);
+        if (startOffset < 0 || startOffset >= fileInfo.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(startOffset),
+                $"Start offset {startOffset} is out of range for file of size {fileInfo.Length}.");
+        }
 
-        // Initiate streaming via the callback (does not block - streaming happens in background).
-        await _streamFileCallback(downloadId, actualPath, chunkSize, cancellationToken).ConfigureAwait(false);
+        if (endOffset >= 0 && endOffset < startOffset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(endOffset),
+                $"End offset {endOffset} must be greater than or equal to start offset {startOffset}.");
+        }
 
-        Log.FileStreamCompleted(_logger, downloadId);
+        _logger.LogInformation(
+            "Starting file stream for {StreamId}, file: {FilePath}, size: {TotalBytes}, range: {StartOffset}-{EndOffset}, chunk: {ChunkSize}",
+            streamId, actualPath, fileInfo.Length, startOffset, endOffset, chunkSize);
+
+        // Initiate streaming via the callback.
+        await _streamFileCallback!(streamId, actualPath, startOffset, endOffset, chunkSize, cancellationToken)
+            .ConfigureAwait(false);
 
         return $"Streaming initiated for {path}";
     }
@@ -2716,7 +2770,11 @@ del ""%~f0""
     private static long? ExtractOptionalLong(JsonElement? payloadRoot, string camel, string pascal)
     {
         if (payloadRoot is null) return null;
-        var root = payloadRoot.Value;
+        return ExtractOptionalLong(payloadRoot.Value, camel, pascal);
+    }
+
+    private static long? ExtractOptionalLong(JsonElement root, string camel, string pascal)
+    {
         if (root.ValueKind != JsonValueKind.Object) return null;
         if (root.TryGetProperty(camel, out var el) || root.TryGetProperty(pascal, out el))
         {
@@ -2765,7 +2823,11 @@ del ""%~f0""
     private static int? ExtractOptionalInt(JsonElement? payloadRoot, string camel, string pascal)
     {
         if (payloadRoot is null) return null;
-        var root = payloadRoot.Value;
+        return ExtractOptionalInt(payloadRoot.Value, camel, pascal);
+    }
+
+    private static int? ExtractOptionalInt(JsonElement root, string camel, string pascal)
+    {
         if (root.ValueKind != JsonValueKind.Object) return null;
         if (root.TryGetProperty(camel, out var el) || root.TryGetProperty(pascal, out el))
         {

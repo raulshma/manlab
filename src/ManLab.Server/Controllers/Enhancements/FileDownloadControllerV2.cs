@@ -15,6 +15,10 @@ using Microsoft.Net.Http.Headers;
 
 namespace ManLab.Server.Controllers.Enhancements;
 
+// Obsolete: the controller was renamed to FileDownloadController.cs when legacy naming was removed.
+// Kept temporarily to avoid breaking existing checkouts that still reference this filename.
+#if false
+
 /// <summary>
 /// High-performance file download controller optimized for huge files.
 /// 
@@ -343,17 +347,8 @@ public sealed class FileDownloadController : ControllerBase
 
         // Determine the file path to stream
         string filePath;
-        if (session.AsZip)
+        if (session.AsZip && !string.IsNullOrEmpty(session.TempFilePath))
         {
-            // For zip downloads, we must have the temp file path from the agent's FileZip result.
-            if (string.IsNullOrEmpty(session.TempFilePath))
-            {
-                _logger.LogError(
-                    "Zip download {DownloadId} has no TempFilePath set. Status: {Status}, TotalBytes: {TotalBytes}",
-                    session.Id, session.Status, session.TotalBytes);
-                throw new InvalidOperationException(
-                    "Zip file path not available. The agent may not have reported the temp file location.");
-            }
             filePath = session.TempFilePath;
         }
         else if (session.Paths.Length > 0)
@@ -454,8 +449,6 @@ public sealed class FileDownloadController : ControllerBase
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(ZipCreationTimeout);
 
-        var loggedOnce = false;
-
         try
         {
             while (!cts.Token.IsCancellationRequested)
@@ -475,25 +468,11 @@ public sealed class FileDownloadController : ControllerBase
                     return (false, 499, "Download was cancelled.");
                 }
 
-                // Check if zip is ready - the Ready status is the authoritative indicator.
-                // TotalBytes and TempFilePath are both required for streaming.
-                if (currentSession.Status == DownloadSessionService.DownloadStatus.Ready &&
-                    currentSession.TotalBytes.HasValue && currentSession.TotalBytes > 0 &&
+                // Check if zip is ready
+                if (currentSession.TotalBytes.HasValue && currentSession.TotalBytes > 0 &&
                     !string.IsNullOrEmpty(currentSession.TempFilePath))
                 {
-                    _logger.LogInformation(
-                        "Zip ready for download {DownloadId}: Status={Status}, TotalBytes={TotalBytes}, TempFilePath={TempFilePath}",
-                        session.Id, currentSession.Status, currentSession.TotalBytes, currentSession.TempFilePath);
                     return (true, 200, null);
-                }
-
-                // Log waiting state once per request for debugging
-                if (!loggedOnce)
-                {
-                    _logger.LogDebug(
-                        "Waiting for zip download {DownloadId}: Status={Status}, TotalBytes={TotalBytes}, TempFilePath={TempFilePath}",
-                        session.Id, currentSession.Status, currentSession.TotalBytes, currentSession.TempFilePath ?? "(null)");
-                    loggedOnce = true;
                 }
 
                 await Task.Delay(200, cts.Token);
@@ -781,3 +760,5 @@ public sealed class FileDownloadController : ControllerBase
 
     #endregion
 }
+
+#endif

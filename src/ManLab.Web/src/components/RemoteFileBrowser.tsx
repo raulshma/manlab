@@ -1,8 +1,9 @@
 /**
- * RemoteFileBrowser - Remote file browser with full-system access.
+ * RemoteFileBrowser - Remote file browser with SSH/SFTP support.
  *
  * Uses @cubone/react-file-manager for the UI.
- * Session is created server-side (no policy allowlist) and is short-lived.
+ * Prefers SSH/SFTP downloads using stored onboarding credentials when available.
+ * Falls back to agent-based file browser when SSH is not configured.
  * 
  * Requirements: 8.1, 8.8 - Multi-select mode with checkbox selection
  * Requirements: 2.1, 2.2 - Download actions integration
@@ -18,9 +19,13 @@ import {
   createSystemFileBrowserSession,
   listFileBrowserEntries,
   readFileBrowserContent,
+  fetchSshDownloadStatus,
+  listSshFiles,
+  downloadSshFile,
+  downloadSshZip,
 } from "@/api";
 
-import type { FileBrowserEntry } from "@/types";
+import type { FileBrowserEntry, SshDownloadStatusResponse, SshFileEntry } from "@/types";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +43,7 @@ import { DownloadConfirmationDialog, type DownloadConfirmationRequest } from "@/
 import { useDownload } from "@/DownloadContext";
 import { shouldShowConfirmation } from "@/lib/download-utils";
 
-import { AlertCircle, Clock, Download, Folder } from "lucide-react";
+import { AlertCircle, Clock, Download, Folder, Server } from "lucide-react";
 
 // Local storage key for selection preference on navigation
 const SELECTION_PREFERENCE_KEY = "manlab:file_browser_preserve_selection";
@@ -178,6 +183,11 @@ export function RemoteFileBrowser({
 
   const isOnline = nodeStatus === "Online";
 
+  // SSH mode - prefer SSH when available
+  const [useSshMode, setUseSshMode] = useState<boolean>(true);
+  const [sshStatus, setSshStatus] = useState<SshDownloadStatusResponse | null>(null);
+  const [sshError, setSshError] = useState<string | null>(null);
+
   const [session, setSession] = useState<SystemFileBrowserSession | null>(null);
   const [expiryCountdown, setExpiryCountdown] = useState<string>("");
   const [openError, setOpenError] = useState<string | null>(null);
@@ -213,6 +223,32 @@ export function RemoteFileBrowser({
   // Download context for triggering downloads - Requirements: 2.1, 2.2
   const { queueDownload, executeDownload } = useDownload();
 
+  // Check SSH availability when node changes
+  const sshStatusQuery = useQuery({
+    queryKey: ["sshDownloadStatus", nodeId],
+    queryFn: () => fetchSshDownloadStatus(nodeId),
+    enabled: !!nodeId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnWindowFocus: false,
+  });
+
+  // Update SSH status when query completes
+  useEffect(() => {
+    if (sshStatusQuery.data) {
+      setSshStatus(sshStatusQuery.data);
+      setSshError(null);
+      // Auto-enable SSH mode if available
+      if (sshStatusQuery.data.available && sshStatusQuery.data.hasCredentials) {
+        setUseSshMode(true);
+      }
+    } else if (sshStatusQuery.error) {
+      setSshError(sshStatusQuery.error instanceof Error ? sshStatusQuery.error.message : "Failed to check SSH status");
+    }
+  }, [sshStatusQuery.data, sshStatusQuery.error]);
+
+  // Determine if SSH is usable
+  const sshAvailable = sshStatus?.available && sshStatus?.hasCredentials;
+
   // Reset session when node changes
   useEffect(() => {
     setSession(null);
@@ -220,6 +256,7 @@ export function RemoteFileBrowser({
     setOpenError(null);
     setAutoOpenBlocked(false);
     autoOpenAttemptedForNodeIdRef.current = null;
+    setSshError(null);
     // Clear selection when node changes
     setSelectionState({
       selectedPaths: new Set(),
@@ -227,7 +264,7 @@ export function RemoteFileBrowser({
     });
   }, [nodeId]);
 
-  // Expiry countdown timer
+  // Expiry countdown timer (only for agent-based sessions)
   useEffect(() => {
     if (!session) return;
 
@@ -271,10 +308,14 @@ export function RemoteFileBrowser({
     },
   });
 
-  // Auto-open when online
+  // Auto-open when online (only for agent mode when SSH is not available)
   useEffect(() => {
     if (!autoOpen) return;
     if (!isOnline) return;
+    
+    // If SSH is available, we don't need a session
+    if (sshAvailable && useSshMode) return;
+    
     if (session) return;
     if (createSessionMutation.isPending) return;
     if (autoOpenBlocked) return;
@@ -285,7 +326,7 @@ export function RemoteFileBrowser({
 
     createSessionMutation.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoOpen, isOnline, nodeId, autoOpenBlocked]);
+  }, [autoOpen, isOnline, nodeId, autoOpenBlocked, sshAvailable, useSshMode]);
 
   const effectivePath = useMemo(() => {
     // react-file-manager uses "" as root; we map that to "/".
@@ -293,28 +334,50 @@ export function RemoteFileBrowser({
     return p ? p : "/";
   }, [currentPath]);
 
-  const listQuery = useQuery({
+  // SSH-based file listing query
+  const sshListQuery = useQuery({
+    queryKey: ["sshFileBrowserList", nodeId, effectivePath],
+    queryFn: () => listSshFiles(nodeId, effectivePath, 5000),
+    enabled: sshAvailable && useSshMode,
+    refetchOnWindowFocus: false,
+  });
+
+  // Agent-based file listing query (fallback)
+  const agentListQuery = useQuery({
     queryKey: ["fileBrowserList", nodeId, session?.sessionId, effectivePath],
     queryFn: () => {
       if (!session) throw new Error("No session");
       return listFileBrowserEntries(nodeId, session.sessionId, effectivePath, 5000);
     },
-    enabled: !!session,
+    enabled: !!session && (!sshAvailable || !useSshMode),
     refetchOnWindowFocus: false,
   });
 
+  // Use whichever query is active
+  const listQuery = (sshAvailable && useSshMode) ? sshListQuery : agentListQuery;
   const listTruncated = Boolean(listQuery.data?.truncated);
 
-  // filesForUi must be defined before selection callbacks that use it
+  // Convert SSH entries to FileBrowserEntry format for consistency
   const filesForUi = useMemo(() => {
-    const entries: FileBrowserEntry[] = listQuery.data?.entries ?? [];
-
+    if (sshAvailable && useSshMode && sshListQuery.data) {
+      // Convert SshFileEntry to FileBrowserEntry format
+      return sshListQuery.data.entries.map((f: SshFileEntry) => ({
+        name: f.name,
+        isDirectory: f.isDirectory,
+        path: f.path,
+        updatedAt: f.lastModified ?? undefined,
+        size: f.size ?? undefined,
+      }));
+    }
+    
+    // Agent-based entries
+    const entries: FileBrowserEntry[] = agentListQuery.data?.entries ?? [];
     return entries.map((f) => ({
       ...f,
       updatedAt: f.updatedAt ?? undefined,
       size: f.size ?? undefined,
     }));
-  }, [listQuery.data]);
+  }, [sshAvailable, useSshMode, sshListQuery.data, agentListQuery.data]);
 
   /**
    * Selects all items in the current directory.
@@ -367,10 +430,76 @@ export function RemoteFileBrowser({
   }, []);
 
   /**
-   * Starts a download via the download context.
+   * Starts an SSH download (direct from server via SFTP).
+   */
+  const handleSshDownload = useCallback(async (paths: string[], asZip: boolean) => {
+    try {
+      if (asZip || paths.length > 1) {
+        // Download as zip (server streams the zip directly)
+        toast.loading("Downloading zip via SSH...", { id: `ssh-zip-${nodeId}` });
+
+        const response = await downloadSshZip(nodeId, paths);
+        const blob = await response.blob();
+
+        // Extract filename from Content-Disposition if available
+        const contentDisposition = response.headers.get("Content-Disposition");
+        let filename = "download.zip";
+        if (contentDisposition) {
+          const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/);
+          if (filenameMatch) {
+            filename = filenameMatch[1];
+          }
+        } else if (paths.length === 1) {
+          // Fall back to a reasonable default consistent with server behavior
+          filename = `${filenameFromPath(paths[0])}.zip`;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        toast.success(`Downloaded ${filename}`, { id: `ssh-zip-${nodeId}` });
+      } else {
+        // Single file download
+        const path = paths[0];
+        const filename = filenameFromPath(path);
+        
+        toast.loading(`Downloading ${filename}...`, { id: `ssh-download-${path}` });
+        
+        const response = await downloadSshFile(nodeId, path);
+        const blob = await response.blob();
+        
+        // Trigger browser download
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        toast.success(`Downloaded ${filename}`, { id: `ssh-download-${path}` });
+      }
+      
+      // Clear selection after starting download
+      clearSelection();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to download via SSH";
+      toast.error(message);
+    }
+  }, [nodeId, clearSelection]);
+
+  /**
+   * Starts a download via the download context (agent-based fallback).
    * Requirements: 2.1, 2.2
    */
-  const handleStartDownload = useCallback(async (paths: string[], asZip: boolean) => {
+  const handleAgentDownload = useCallback(async (paths: string[], asZip: boolean) => {
     if (!session) {
       toast.error("No active session");
       return;
@@ -396,6 +525,18 @@ export function RemoteFileBrowser({
       toast.error(message);
     }
   }, [session, nodeId, queueDownload, executeDownload, clearSelection]);
+
+  /**
+   * Starts a download - uses SSH if available, otherwise falls back to agent.
+   * Requirements: 2.1, 2.2
+   */
+  const handleStartDownload = useCallback(async (paths: string[], asZip: boolean) => {
+    if (sshAvailable && useSshMode) {
+      await handleSshDownload(paths, asZip);
+    } else {
+      await handleAgentDownload(paths, asZip);
+    }
+  }, [sshAvailable, useSshMode, handleSshDownload, handleAgentDownload]);
 
   /**
    * Handles confirmation dialog confirm action.
@@ -428,9 +569,35 @@ export function RemoteFileBrowser({
 
   const readMutation = useMutation({
     mutationFn: async (file: FileBrowserEntry) => {
-      if (!session) throw new Error("No session");
-
       const name = filenameFromPath(file.path);
+
+      // SSH mode - download via SFTP
+      if (sshAvailable && useSshMode) {
+        if (isLikelyTextFile(name)) {
+          // For text files in SSH mode, download and preview
+          const response = await downloadSshFile(nodeId, file.path);
+          const blob = await response.blob();
+          const text = await blob.text();
+          
+          return { 
+            mode: "preview" as const, 
+            name, 
+            text,
+            truncated: false,
+            path: file.path
+          };
+        }
+        
+        // Binary file - trigger direct download
+        const response = await downloadSshFile(nodeId, file.path);
+        const blob = await response.blob();
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        
+        return { mode: "download" as const, name, bytes, path: file.path };
+      }
+
+      // Agent-based mode (fallback)
+      if (!session) throw new Error("No session");
 
       // Text files: fetch a single chunk for preview.
       if (isLikelyTextFile(name)) {
@@ -442,7 +609,7 @@ export function RemoteFileBrowser({
           0
         );
 
-        return { mode: "preview" as const, name, resp };
+        return { mode: "preview-agent" as const, name, resp };
       }
 
       // Binary files: fetch all chunks and download.
@@ -484,7 +651,18 @@ export function RemoteFileBrowser({
       return { mode: "download" as const, name, bytes: out, path: file.path };
     },
     onSuccess: (data) => {
+      // SSH mode text preview
       if (data.mode === "preview") {
+        setPreviewTitle(data.name);
+        setPreviewPath(data.path || "");
+        setPreviewText(data.text);
+        setPreviewTruncated(data.truncated);
+        setPreviewOpen(true);
+        return;
+      }
+
+      // Agent mode text preview
+      if (data.mode === "preview-agent") {
         const result = data.resp.result;
         if (!result) {
           throw new Error(data.resp.error || "Failed to read file");
@@ -500,6 +678,7 @@ export function RemoteFileBrowser({
         return;
       }
 
+      // Binary download
       downloadBytes(data.bytes, data.name, "application/octet-stream");
       toast.success(`Downloaded ${data.name}`);
     },
@@ -509,6 +688,9 @@ export function RemoteFileBrowser({
   });
 
   const initialPathForUi = effectivePath === "/" ? "" : effectivePath;
+
+  // Determine if we're ready to show the file browser
+  const isReady = (sshAvailable && useSshMode) || !!session;
 
   if (!isOnline) {
     return (
@@ -531,12 +713,32 @@ export function RemoteFileBrowser({
           <Folder className="h-5 w-5 text-muted-foreground" />
           <div>
             <div className="text-sm font-medium">File Browser</div>
-            <div className="text-xs text-muted-foreground">Direct system access (session-scoped)</div>
+            <div className="text-xs text-muted-foreground">
+              {sshAvailable && useSshMode 
+                ? `SSH/SFTP via ${sshStatus?.host || "onboarding credentials"}`
+                : "Direct system access (session-scoped)"}
+            </div>
+            {sshError && !sshAvailable && (
+              <div className="text-xs text-destructive">SSH unavailable: {sshError}</div>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {session && (
+          {/* SSH mode badge */}
+          {sshAvailable && (
+            <Badge
+              variant={useSshMode ? "default" : "outline"}
+              className="flex items-center gap-1 cursor-pointer"
+              onClick={() => setUseSshMode(!useSshMode)}
+            >
+              <Server className="h-3 w-3" />
+              SSH {useSshMode ? "On" : "Off"}
+            </Badge>
+          )}
+
+          {/* Session countdown for agent mode */}
+          {session && !useSshMode && (
             <Badge
               variant={expiryCountdown === "Expired" ? "destructive" : "outline"}
               className="flex items-center gap-1"
@@ -546,38 +748,50 @@ export function RemoteFileBrowser({
             </Badge>
           )}
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setSession(null);
-              setCurrentPath("/");
-            }}
-            disabled={!session}
-          >
-            Close
-          </Button>
+          {/* Agent mode controls - only show when not using SSH */}
+          {(!sshAvailable || !useSshMode) && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSession(null);
+                  setCurrentPath("/");
+                }}
+                disabled={!session}
+              >
+                Close
+              </Button>
 
-          <Button
-            size="sm"
-            onClick={() => createSessionMutation.mutate()}
-            disabled={createSessionMutation.isPending}
-          >
-            {createSessionMutation.isPending ? (
-              <>
-                <Spinner className="h-4 w-4 mr-2" />
-                Opening…
-              </>
-            ) : (
-              "Open"
-            )}
-          </Button>
+              <Button
+                size="sm"
+                onClick={() => createSessionMutation.mutate()}
+                disabled={createSessionMutation.isPending}
+              >
+                {createSessionMutation.isPending ? (
+                  <>
+                    <Spinner className="h-4 w-4 mr-2" />
+                    Opening…
+                  </>
+                ) : (
+                  "Open"
+                )}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
       <div className="p-4">
-        {!session ? (
+        {!isReady ? (
           <div className="space-y-3">
+            {sshStatusQuery.isLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Spinner className="h-4 w-4" />
+                Checking SSH availability...
+              </div>
+            )}
+            
             {createSessionMutation.isError && openError ? (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
@@ -592,15 +806,23 @@ export function RemoteFileBrowser({
                   )}
                 </AlertDescription>
               </Alert>
-            ) : (
+            ) : !sshAvailable && !session ? (
               <div className="text-sm text-muted-foreground">Open a session to start browsing.</div>
-            )}
+            ) : null}
           </div>
         ) : (
           <div className="space-y-3">
             <div className="text-xs text-muted-foreground">
-              Root: <span className="font-mono">{session.rootPath}</span> · Current:{" "}
-              <span className="font-mono">{effectivePath}</span>
+              {sshAvailable && useSshMode ? (
+                <>
+                  SSH Mode · Current: <span className="font-mono">{effectivePath}</span>
+                </>
+              ) : (
+                <>
+                  Root: <span className="font-mono">{session?.rootPath || "/"}</span> · Current:{" "}
+                  <span className="font-mono">{effectivePath}</span>
+                </>
+              )}
               {listTruncated && (
                 <span className="ml-2 text-amber-600">(showing a bounded subset)</span>
               )}
@@ -626,7 +848,8 @@ export function RemoteFileBrowser({
               onDownloadSelected={() => {
                 // Download single selected file - Requirements: 2.1
                 const file = selectedItems.find(item => !item.isDirectory);
-                if (!file || !session) return;
+                if (!file) return;
+                if (!sshAvailable && !useSshMode && !session) return;
                 
                 const totalBytes = file.size ?? null;
                 const filename = filenameFromPath(file.path);
@@ -648,7 +871,8 @@ export function RemoteFileBrowser({
               }}
               onDownloadAsZip={() => {
                 // Download selected items as zip - Requirements: 2.2
-                if (!session || selectedItems.length === 0) return;
+                if (selectedItems.length === 0) return;
+                if (!sshAvailable && !useSshMode && !session) return;
                 
                 const paths = selectedItems.map(item => item.path);
                 const totalBytes = selectedItems.reduce((sum, item) => {
@@ -684,7 +908,7 @@ export function RemoteFileBrowser({
               onClearSelection={clearSelection}
               preserveSelectionOnNav={preserveSelectionOnNav}
               onPreserveSelectionChange={updateSelectionPreference}
-              disabled={!session}
+              disabled={!isReady}
             />
 
             <div className="min-h-[70vh]">
@@ -701,10 +925,15 @@ export function RemoteFileBrowser({
                   readMutation.mutate(file);
                 }}
                 onRefresh={() => {
-                  if (!session) return;
-                  queryClient.invalidateQueries({
-                    queryKey: ["fileBrowserList", nodeId, session.sessionId],
-                  });
+                  if (sshAvailable && useSshMode) {
+                    queryClient.invalidateQueries({
+                      queryKey: ["sshFileBrowserList", nodeId],
+                    });
+                  } else if (session) {
+                    queryClient.invalidateQueries({
+                      queryKey: ["fileBrowserList", nodeId, session.sessionId],
+                    });
+                  }
                 }}
                 onDownload={(items: FileBrowserEntry[]) => {
                   // Update selection state when items are selected via FileManager
@@ -721,7 +950,9 @@ export function RemoteFileBrowser({
                     return;
                   }
                   if (items.length > 1) {
-                    toast.message("Downloading one file at a time for now.");
+                    // For multiple items, use zip download
+                    handleStartDownload(items.map(i => i.path), true);
+                    return;
                   }
                   readMutation.mutate(first);
                 }}

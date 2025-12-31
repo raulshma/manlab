@@ -970,3 +970,60 @@ export interface DownloadStatusChangedEvent {
   status: DownloadStatus;
   error: string | null;
 }
+
+// ==========================================
+// SSH File Download Types
+// ==========================================
+
+/**
+ * Response from SSH download status check.
+ */
+export interface SshDownloadStatusResponse {
+  available: boolean;
+  nodeId: string | null;
+  machineId: string | null;
+  host: string | null;
+  username: string | null;
+  hasCredentials: boolean;
+  authMode: string | null;
+  message: string | null;
+  error: string | null;
+}
+
+/**
+ * Request for SSH file list.
+ */
+export interface SshFileListRequest {
+  path: string;
+  maxEntries?: number;
+}
+
+/**
+ * Response from SSH file list.
+ */
+export interface SshFileListResponse {
+  entries: SshFileEntry[];
+  truncated: boolean;
+}
+
+/**
+ * A file/directory entry returned by SSH file list.
+ */
+export interface SshFileEntry {
+  name: string;
+  isDirectory: boolean;
+  path: string;
+  size: number | null;
+  lastModified: string | null;
+  permissions: string | null;
+}
+
+/**
+ * Request for SSH zip download.
+ */
+export interface SshZipDownloadRequest {
+  paths: string[];
+}
+
+// Note: SSH zip downloads are streamed directly as a zip payload (binary),
+// not a JSON initiation response. See `downloadSshZip()` in `api.ts`.
