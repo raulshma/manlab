@@ -29,7 +29,7 @@ public class AgentHub : Hub
     // Defense-in-depth bounds for hub messages and persisted command logs.
     // Keep these comfortably below HubOptions.MaximumReceiveMessageSize (currently 128KB).
     private const int MaxTerminalOutputChunkChars = 16 * 1024;
-    private const int MaxCommandLogChunkChars = 32 * 1024;
+    private const int MaxCommandLogChunkChars = 96 * 1024;
     private const int MaxCommandOutputLogBytesUtf8 = 128 * 1024;
 
     private const string ContextNodeIdKey = "manlab.nodeId";
@@ -46,19 +46,22 @@ public class AgentHub : Hub
     private readonly AgentConnectionRegistry _connectionRegistry;
     private readonly IAuditLog _audit;
     private readonly DownloadSessionService _downloadSessions;
+    private readonly FileStreamingService _fileStreaming;
 
     public AgentHub(
         ILogger<AgentHub> logger,
         IServiceScopeFactory scopeFactory,
         AgentConnectionRegistry connectionRegistry,
         IAuditLog audit,
-        DownloadSessionService downloadSessions)
+        DownloadSessionService downloadSessions,
+        FileStreamingService fileStreaming)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
         _connectionRegistry = connectionRegistry;
         _audit = audit;
         _downloadSessions = downloadSessions;
+        _fileStreaming = fileStreaming;
     }
 
     /// <summary>
@@ -1645,6 +1648,117 @@ public class AgentHub : Hub
     public async Task RequestPingFromAgent(string connectionId)
     {
         await Clients.Client(connectionId).SendAsync("RequestPing");
+    }
+
+    #endregion
+
+    #region File Streaming Methods
+
+    /// <summary>
+    /// Receives a file chunk from an agent during streaming download.
+    /// This bypasses the command queue for efficient direct streaming.
+    /// </summary>
+    /// <param name="downloadId">The download session ID.</param>
+    /// <param name="chunkBase64">Base64-encoded chunk data.</param>
+    public async Task StreamFileChunk(Guid downloadId, string chunkBase64)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before streaming file chunks.");
+        }
+
+        // Verify the download session belongs to this node
+        if (!_downloadSessions.TryGetSession(downloadId, out var session) || session is null)
+        {
+            _logger.LogWarning("File chunk received for unknown download session {DownloadId}", downloadId);
+            return;
+        }
+
+        if (session.NodeId != registeredNodeId)
+        {
+            throw new HubException("Unauthorized: download session does not belong to this agent.");
+        }
+
+        // Decode and write to streaming channel
+        if (!_fileStreaming.TryGetSession(downloadId, out var streamSession) || streamSession is null)
+        {
+            _logger.LogWarning("File chunk received but no streaming session exists for {DownloadId}", downloadId);
+            return;
+        }
+
+        try
+        {
+            var chunk = Convert.FromBase64String(chunkBase64);
+            await streamSession.WriteChunkAsync(chunk);
+        }
+        catch (FormatException ex)
+        {
+            _logger.LogError(ex, "Invalid Base64 chunk received for download {DownloadId}", downloadId);
+            _fileStreaming.FailSession(downloadId, "Invalid Base64 chunk received");
+        }
+    }
+
+    /// <summary>
+    /// Signals that the file stream is complete.
+    /// </summary>
+    /// <param name="downloadId">The download session ID.</param>
+    /// <param name="totalBytes">Total bytes streamed.</param>
+    public Task StreamFileComplete(Guid downloadId, long totalBytes)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before completing file stream.");
+        }
+
+        // Verify the download session belongs to this node
+        if (!_downloadSessions.TryGetSession(downloadId, out var session) || session is null)
+        {
+            _logger.LogWarning("Stream complete received for unknown download session {DownloadId}", downloadId);
+            return Task.CompletedTask;
+        }
+
+        if (session.NodeId != registeredNodeId)
+        {
+            throw new HubException("Unauthorized: download session does not belong to this agent.");
+        }
+
+        _fileStreaming.SetTotalBytes(downloadId, totalBytes);
+        _fileStreaming.CompleteSession(downloadId);
+
+        _logger.LogInformation("File stream completed for download {DownloadId}, {TotalBytes} bytes", downloadId, totalBytes);
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Signals that the file stream failed.
+    /// </summary>
+    /// <param name="downloadId">The download session ID.</param>
+    /// <param name="error">Error message.</param>
+    public Task StreamFileFailed(Guid downloadId, string error)
+    {
+        if (!TryGetRegisteredAgentContext(out var registeredNodeId, out _))
+        {
+            throw new HubException("Unauthorized: agent must register before reporting stream failure.");
+        }
+
+        // Verify the download session belongs to this node
+        if (!_downloadSessions.TryGetSession(downloadId, out var session) || session is null)
+        {
+            _logger.LogWarning("Stream failed received for unknown download session {DownloadId}", downloadId);
+            return Task.CompletedTask;
+        }
+
+        if (session.NodeId != registeredNodeId)
+        {
+            throw new HubException("Unauthorized: download session does not belong to this agent.");
+        }
+
+        _fileStreaming.FailSession(downloadId, error);
+
+        _logger.LogWarning("File stream failed for download {DownloadId}: {Error}", downloadId, error);
+
+        return Task.CompletedTask;
     }
 
     #endregion

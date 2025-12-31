@@ -178,7 +178,8 @@ using var commandDispatcher = new ManLab.Agent.Commands.CommandDispatcher(
     async snapshots => await connectionManager.SendSmartDriveSnapshotsAsync(snapshots).ConfigureAwait(false),
     () => cts.Cancel(),
     agentConfig, // Feature toggles
-    terminalHandler); // Terminal session handler
+    terminalHandler, // Terminal session handler
+    async (downloadId, filePath, chunkSize, ct) => await connectionManager.StreamFileToServerAsync(downloadId, filePath, chunkSize, ct).ConfigureAwait(false));
 
 // Handle command execution via dispatcher
 connectionManager.OnCommandReceived += async (commandId, type, payload) =>

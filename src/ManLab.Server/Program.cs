@@ -75,6 +75,7 @@ builder.Services.AddScoped<LogViewerSessionService>();
 builder.Services.AddScoped<FileBrowserSessionService>();
 builder.Services.AddScoped<TerminalSessionService>();
 builder.Services.AddSingleton<DownloadSessionService>();
+builder.Services.AddSingleton<FileStreamingService>();
 builder.Services.AddScoped<RemoteToolsAuthorizationService>();
 builder.Services.AddHostedService<TerminalSessionCleanupService>();
 

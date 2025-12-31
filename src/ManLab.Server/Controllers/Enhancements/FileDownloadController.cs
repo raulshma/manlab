@@ -16,6 +16,7 @@ namespace ManLab.Server.Controllers.Enhancements;
 /// <summary>
 /// Controller for file download operations with progress tracking.
 /// Supports single file downloads and multi-file zip downloads.
+/// Uses in-memory streaming via SignalR for efficient large file transfers.
 /// </summary>
 [ApiController]
 public sealed class FileDownloadController : ControllerBase
@@ -26,6 +27,7 @@ public sealed class FileDownloadController : ControllerBase
     private readonly DataContext _db;
     private readonly FileBrowserSessionService _fileBrowserSessions;
     private readonly DownloadSessionService _downloadSessions;
+    private readonly FileStreamingService _fileStreaming;
     private readonly RemoteToolsAuthorizationService _authorization;
     private readonly AgentConnectionRegistry _registry;
     private readonly IHubContext<AgentHub> _hubContext;
@@ -35,6 +37,7 @@ public sealed class FileDownloadController : ControllerBase
         DataContext db,
         FileBrowserSessionService fileBrowserSessions,
         DownloadSessionService downloadSessions,
+        FileStreamingService fileStreaming,
         RemoteToolsAuthorizationService authorization,
         AgentConnectionRegistry registry,
         IHubContext<AgentHub> hubContext,
@@ -43,6 +46,7 @@ public sealed class FileDownloadController : ControllerBase
         _db = db;
         _fileBrowserSessions = fileBrowserSessions;
         _downloadSessions = downloadSessions;
+        _fileStreaming = fileStreaming;
         _authorization = authorization;
         _registry = registry;
         _hubContext = hubContext;
@@ -363,87 +367,68 @@ public sealed class FileDownloadController : ControllerBase
         CancellationToken cancellationToken)
     {
         var path = session.Paths[0];
-        // Use transport-safe chunk size that accounts for Base64 encoding overhead.
-        // Keeping chunks small avoids server-side OutputLog truncation which would corrupt JSON.
-        const int chunkSize = FileBrowserSessionService.TransportSafeMaxBytesPerRead;
-        long offset = 0;
-        long? totalBytes = session.TotalBytes;
 
-        while (!cancellationToken.IsCancellationRequested)
+        // Create an in-memory streaming session
+        var streamingSession = _fileStreaming.CreateSession(
+            session.Id,
+            session.NodeId,
+            session.TotalBytes ?? 0);
+
+        try
         {
-            // Request next chunk from agent
-            var readPayload = new FileReadPayload
+            // Dispatch file.stream command to agent
+            var streamPayload = new FileStreamPayload
             {
+                DownloadId = session.Id,
                 Path = path,
-                MaxBytes = chunkSize,
-                Offset = offset
+                ChunkSize = 256 * 1024 // 256KB chunks for efficient streaming
             };
 
-            var payloadJson = JsonSerializer.Serialize(readPayload, ManLabJsonContext.Default.FileReadPayload);
+            var payloadJson = JsonSerializer.Serialize(streamPayload, ManLabJsonContext.Default.FileStreamPayload);
 
-            var cmd = new CommandQueueItem
-            {
-                Id = Guid.NewGuid(),
-                NodeId = session.NodeId,
-                CommandType = CommandType.FileRead,
-                Payload = payloadJson,
-                Status = CommandStatus.Queued,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            _db.CommandQueue.Add(cmd);
-            await _db.SaveChangesAsync(cancellationToken);
-
-            // Dispatch to agent
+            // Send stream command to agent
             await _hubContext.Clients.Client(connectionId)
-                .SendAsync("ExecuteCommand", cmd.Id, CommandTypes.FileRead, payloadJson, cancellationToken);
+                .SendAsync("ExecuteCommand", Guid.NewGuid(), CommandTypes.FileStream, payloadJson, cancellationToken);
 
-            // Wait for response
-            var completed = await WaitForCompletionAsync(cmd.Id, DefaultWaitTimeout, cancellationToken);
-            if (completed is null)
+            _logger.LogInformation(
+                "Initiated file streaming for download {DownloadId}, file: {Path}",
+                session.Id, path);
+
+            // Read chunks from the streaming channel and write to HTTP response
+            long bytesWritten = 0;
+            bool headersSent = false;
+
+            await foreach (var chunk in streamingSession.Reader.ReadAllAsync(cancellationToken))
             {
-                throw new TimeoutException("Timed out waiting for agent response.");
+                // Set Content-Length on first chunk if we have total bytes
+                if (!headersSent && streamingSession.TotalBytes > 0 && !Response.HasStarted)
+                {
+                    Response.Headers.ContentLength = streamingSession.TotalBytes;
+                    _downloadSessions.SetTotalBytes(session.Id, streamingSession.TotalBytes);
+                }
+                headersSent = true;
+
+                await Response.Body.WriteAsync(chunk, cancellationToken);
+                bytesWritten += chunk.Length;
+
+                // Update progress
+                _downloadSessions.UpdateProgress(session.Id, bytesWritten, streamingSession.TotalBytes);
             }
 
-            if (completed.Status == CommandStatus.Failed)
+            // Check for errors
+            if (!string.IsNullOrEmpty(streamingSession.Error))
             {
-                throw new InvalidOperationException(completed.OutputLog ?? "Agent returned an error.");
+                throw new InvalidOperationException(streamingSession.Error);
             }
 
-            // Parse response
-            var result = await DeserializeFileReadResultWithRetryAsync(
-                cmd.Id,
-                completed.OutputLog,
-                cancellationToken).ConfigureAwait(false);
-
-            if (result is null)
-            {
-                throw new InvalidOperationException("Agent returned null result.");
-            }
-
-            // Update total bytes if not known
-            if (!totalBytes.HasValue && result.TotalBytes > 0)
-            {
-                totalBytes = result.TotalBytes;
-                _downloadSessions.SetTotalBytes(session.Id, totalBytes.Value);
-            }
-
-            // Decode and write chunk
-            if (!string.IsNullOrEmpty(result.ContentBase64))
-            {
-                var bytes = Convert.FromBase64String(result.ContentBase64);
-                await Response.Body.WriteAsync(bytes, cancellationToken);
-                await Response.Body.FlushAsync(cancellationToken);
-
-                offset += bytes.Length;
-                _downloadSessions.UpdateProgress(session.Id, offset, totalBytes ?? 0);
-            }
-
-            // Check if we've read all bytes
-            if (result.BytesRead == 0 || (totalBytes.HasValue && offset >= totalBytes.Value))
-            {
-                break;
-            }
+            _logger.LogInformation(
+                "File streaming completed for download {DownloadId}, {BytesWritten} bytes written",
+                session.Id, bytesWritten);
+        }
+        finally
+        {
+            // Clean up the streaming session
+            _fileStreaming.RemoveSession(session.Id);
         }
     }
 
@@ -505,139 +490,64 @@ public sealed class FileDownloadController : ControllerBase
             throw new InvalidOperationException("Zip file path not available. The agent may not have reported the temp file path.");
         }
 
-        // Use transport-safe chunk size that accounts for Base64 encoding overhead.
-        // Keeping chunks small avoids server-side OutputLog truncation which would corrupt JSON.
-        const int chunkSize = FileBrowserSessionService.TransportSafeMaxBytesPerRead;
-        long offset = 0;
-        var totalBytes = session.TotalBytes ?? 0;
-
-        while (!cancellationToken.IsCancellationRequested && offset < totalBytes)
+        // Set Content-Length now that we know the zip size (if not already set)
+        if (session.TotalBytes.HasValue && session.TotalBytes.Value > 0 && !Response.HasStarted)
         {
-            var readPayload = new FileReadPayload
+            Response.Headers.ContentLength = session.TotalBytes.Value;
+        }
+
+        // Create an in-memory streaming session
+        var streamingSession = _fileStreaming.CreateSession(
+            session.Id,
+            session.NodeId,
+            session.TotalBytes ?? 0);
+
+        try
+        {
+            // Dispatch file.stream command to agent
+            var streamPayload = new FileStreamPayload
             {
-                Path = session.TempFilePath, // Use the actual temp file path from the agent
-                MaxBytes = chunkSize,
-                Offset = offset
+                DownloadId = session.Id,
+                Path = session.TempFilePath,
+                ChunkSize = 256 * 1024 // 256KB chunks for efficient streaming
             };
 
-            var payloadJson = JsonSerializer.Serialize(readPayload, ManLabJsonContext.Default.FileReadPayload);
+            var payloadJson = JsonSerializer.Serialize(streamPayload, ManLabJsonContext.Default.FileStreamPayload);
 
-            var cmd = new CommandQueueItem
-            {
-                Id = Guid.NewGuid(),
-                NodeId = session.NodeId,
-                CommandType = CommandType.FileRead,
-                Payload = payloadJson,
-                Status = CommandStatus.Queued,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            _db.CommandQueue.Add(cmd);
-            await _db.SaveChangesAsync(cancellationToken);
-
+            // Send stream command to agent (don't need to store in DB - this is fire-and-forget)
             await _hubContext.Clients.Client(connectionId)
-                .SendAsync("ExecuteCommand", cmd.Id, CommandTypes.FileRead, payloadJson, cancellationToken);
+                .SendAsync("ExecuteCommand", Guid.NewGuid(), CommandTypes.FileStream, payloadJson, cancellationToken);
 
-            var completed = await WaitForCompletionAsync(cmd.Id, DefaultWaitTimeout, cancellationToken);
-            if (completed is null)
+            _logger.LogInformation(
+                "Initiated file streaming for download {DownloadId}, file: {TempFilePath}",
+                session.Id, session.TempFilePath);
+
+            // Read chunks from the streaming channel and write to HTTP response
+            long bytesWritten = 0;
+            await foreach (var chunk in streamingSession.Reader.ReadAllAsync(cancellationToken))
             {
-                throw new TimeoutException("Timed out waiting for agent response.");
+                await Response.Body.WriteAsync(chunk, cancellationToken);
+                bytesWritten += chunk.Length;
+
+                // Update progress
+                _downloadSessions.UpdateProgress(session.Id, bytesWritten, streamingSession.TotalBytes);
             }
 
-            if (completed.Status == CommandStatus.Failed)
+            // Check for errors
+            if (!string.IsNullOrEmpty(streamingSession.Error))
             {
-                throw new InvalidOperationException(completed.OutputLog ?? "Agent returned an error.");
+                throw new InvalidOperationException(streamingSession.Error);
             }
 
-            var result = await DeserializeFileReadResultWithRetryAsync(
-                cmd.Id,
-                completed.OutputLog,
-                cancellationToken).ConfigureAwait(false);
-
-            if (result is null || string.IsNullOrEmpty(result.ContentBase64))
-            {
-                break;
-            }
-
-            var bytes = Convert.FromBase64String(result.ContentBase64);
-            await Response.Body.WriteAsync(bytes, cancellationToken);
-            await Response.Body.FlushAsync(cancellationToken);
-
-            offset += bytes.Length;
-            _downloadSessions.UpdateProgress(session.Id, offset, totalBytes);
-
-            if (result.BytesRead == 0)
-            {
-                break;
-            }
+            _logger.LogInformation(
+                "File streaming completed for download {DownloadId}, {BytesWritten} bytes written",
+                session.Id, bytesWritten);
         }
-    }
-
-    private async Task<FileReadResult> DeserializeFileReadResultWithRetryAsync(
-        Guid commandId,
-        string? initialOutputLog,
-        CancellationToken cancellationToken)
-    {
-        // The agent may chunk structured JSON across multiple UpdateCommandStatus hub invocations.
-        // Because we persist each chunk immediately, the command can become "Success" before the
-        // final chunk arrives. If we deserialize too early, we see partial JSON and fail.
-        //
-        // Retry briefly, polling for OutputLog growth, until deserialization succeeds.
-        const int pollDelayMs = 50;
-        var settleDeadline = DateTime.UtcNow.AddSeconds(2);
-
-        var output = initialOutputLog ?? string.Empty;
-        var lastLen = output.Length;
-        Exception? lastException = null;
-
-        while (true)
+        finally
         {
-            try
-            {
-                var parsed = JsonSerializer.Deserialize(output, ManLabJsonContext.Default.FileReadResult);
-                if (parsed is not null)
-                {
-                    return parsed;
-                }
-
-                lastException = new InvalidOperationException("Agent returned null result.");
-            }
-            catch (JsonException ex)
-            {
-                lastException = ex;
-            }
-
-            if (DateTime.UtcNow >= settleDeadline || cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
-
-            await Task.Delay(pollDelayMs, cancellationToken).ConfigureAwait(false);
-
-            var current = await _db.CommandQueue
-                .AsNoTracking()
-                .Where(c => c.Id == commandId)
-                .Select(c => new { c.OutputLog })
-                .FirstOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
-
-            var candidate = current?.OutputLog ?? string.Empty;
-            if (candidate.Length <= lastLen)
-            {
-                // No growth; keep waiting until settleDeadline.
-                continue;
-            }
-
-            output = candidate;
-            lastLen = candidate.Length;
+            // Clean up the streaming session
+            _fileStreaming.RemoveSession(session.Id);
         }
-
-        // Diagnostics: include length + tail so we can see if the JSON was truncated/chunked.
-        var tail = output.Length <= 512 ? output : output[^512..];
-        var bytesUtf8 = Encoding.UTF8.GetByteCount(output);
-        throw new InvalidOperationException(
-            $"Agent returned malformed JSON (len={output.Length}, utf8Bytes={bytesUtf8}). Tail(512): {tail}",
-            lastException);
     }
 
     private async Task<CommandQueueItem?> WaitForCompletionAsync(

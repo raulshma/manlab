@@ -404,10 +404,10 @@ export function DownloadProvider({ children }: DownloadProviderProps) {
         chunks.push(value);
         transferredBytes += value.length;
 
-        // Update progress (throttle to avoid too many updates)
+        // Update progress (throttle to every 2 seconds like zip preparation)
         const now = Date.now();
-        // Target: ~4 updates/sec max, and avoid updating when the visible percent hasn't changed.
-        if (now - lastProgressUpdate >= 250) {
+        // Target: 1 update every 2 seconds for smoother UI, avoid updating when visible percent hasn't changed
+        if (now - lastProgressUpdate >= 2000) {
           const tracking = speedTrackingRef.current.get(downloadId);
           let speed = 0;
           if (tracking) {

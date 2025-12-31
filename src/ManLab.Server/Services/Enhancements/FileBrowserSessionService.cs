@@ -17,10 +17,11 @@ public sealed class FileBrowserSessionService
     // Transport-safe per-request read size.
     // Agent responses for file.read are persisted via command OutputLog, which is truncated per log-chunk.
     // If we ask for too many bytes, the Base64 payload makes the JSON exceed the server's per-chunk cap
-    // (see AgentHub.MaxCommandLogChunkChars), resulting in truncated JSON and "malformed JSON" errors.
+    // (see AgentHub.MaxCommandLogChunkChars = 96KB), resulting in truncated JSON and "malformed JSON" errors.
     //
-    // 20KB binary -> ~27KB Base64, leaving headroom for JSON overhead and any escaping.
-    public const int TransportSafeMaxBytesPerRead = 20 * 1024;
+    // 48KB binary -> ~64KB Base64, leaving headroom for JSON overhead within the 96KB chunk limit.
+    // The BoundedTextSaveChangesInterceptor limits OutputLog to 128KB, so single-chunk responses are safe.
+    public const int TransportSafeMaxBytesPerRead = 48 * 1024;
 
     private readonly DataContext _db;
     private readonly IMemoryCache _cache;

@@ -46,6 +46,7 @@ public static class CommandTypes
     public const string FileList = "file.list";
     public const string FileRead = "file.read";
     public const string FileZip = "file.zip";
+    public const string FileStream = "file.stream";
 
     // Command lifecycle
     public const string CommandCancel = "command.cancel";
@@ -87,6 +88,7 @@ public static class CommandTypes
         FileList,
         FileRead,
         FileZip,
+        FileStream,
 
         CommandCancel,
         ConfigUpdate
@@ -390,6 +392,22 @@ public sealed record FileZipResult
 
     /// <summary>Paths that were skipped due to access errors.</summary>
     public string[] SkippedPaths { get; init; } = [];
+}
+
+/// <summary>
+/// Payload for file.stream command.
+/// Initiates streaming download of a file directly via SignalR (bypasses command queue).
+/// </summary>
+public sealed record FileStreamPayload
+{
+    /// <summary>Unique identifier for the download session.</summary>
+    public Guid DownloadId { get; init; }
+
+    /// <summary>Path to the file to stream (can be virtual path or direct temp file path).</summary>
+    public string Path { get; init; } = string.Empty;
+
+    /// <summary>Chunk size in bytes (default 256KB).</summary>
+    public int ChunkSize { get; init; } = 256 * 1024;
 }
 
 /// <summary>

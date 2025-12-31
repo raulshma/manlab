@@ -48,6 +48,7 @@ public sealed class CommandDispatcher : IDisposable
     private readonly DockerManager _dockerManager;
     private readonly AgentConfiguration _config;
     private readonly TerminalSessionHandler? _terminalHandler;
+    private readonly Func<Guid, string, int, CancellationToken, Task>? _streamFileCallback;
 
     // Simple in-process rate limit for log operations.
     private readonly object _logRateLock = new();
@@ -67,7 +68,8 @@ public sealed class CommandDispatcher : IDisposable
         Func<IReadOnlyList<SmartDriveSnapshotIngest>, Task>? sendSmartSnapshots = null,
         Action? shutdownCallback = null,
         AgentConfiguration? config = null,
-        TerminalSessionHandler? terminalHandler = null)
+        TerminalSessionHandler? terminalHandler = null,
+        Func<Guid, string, int, CancellationToken, Task>? streamFileCallback = null)
     {
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<CommandDispatcher>();
@@ -78,6 +80,7 @@ public sealed class CommandDispatcher : IDisposable
         _dockerManager = new DockerManager(loggerFactory.CreateLogger<DockerManager>());
         _config = config ?? new AgentConfiguration();
         _terminalHandler = terminalHandler;
+        _streamFileCallback = streamFileCallback;
     }
 
     /// <summary>
@@ -170,6 +173,7 @@ public sealed class CommandDispatcher : IDisposable
                     var t when t == CommandTypes.FileList => await HandleFileListAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.FileRead => await HandleFileReadAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.FileZip => await HandleFileZipAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.FileStream => await HandleFileStreamAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.ConfigUpdate => HandleConfigUpdate(payloadRoot),
                     _ => throw new NotSupportedException($"Unknown command type: {type}")
                 };
@@ -1922,7 +1926,8 @@ del ""%~f0""
             || normalizedType == CommandTypes.TerminalInput
             || normalizedType == CommandTypes.FileList
             || normalizedType == CommandTypes.FileRead
-            || normalizedType == CommandTypes.FileZip;
+            || normalizedType == CommandTypes.FileZip
+            || normalizedType == CommandTypes.FileStream;
     }
 
     private bool IsRemoteToolEnabled(string normalizedType)
@@ -1942,7 +1947,7 @@ del ""%~f0""
             return _config.EnableTerminal;
         }
 
-        if (normalizedType == CommandTypes.FileList || normalizedType == CommandTypes.FileRead || normalizedType == CommandTypes.FileZip)
+        if (normalizedType == CommandTypes.FileList || normalizedType == CommandTypes.FileRead || normalizedType == CommandTypes.FileZip || normalizedType == CommandTypes.FileStream)
         {
             return _config.EnableFileBrowser;
         }
@@ -2627,6 +2632,81 @@ del ""%~f0""
         };
 
         return JsonSerializer.Serialize(result, ManLabJsonContext.Default.FileReadResult);
+    }
+
+    private async Task<string> HandleFileStreamAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        if (_streamFileCallback is null)
+        {
+            throw new InvalidOperationException("File streaming is not configured.");
+        }
+
+        if (payloadRoot is null || payloadRoot.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("file.stream requires a JSON object payload.");
+        }
+
+        var root = payloadRoot.Value;
+
+        // Extract downloadId for streaming.
+        var downloadId = TryGetGuid(root, "downloadId") ?? Guid.Empty;
+        if (downloadId == Guid.Empty)
+        {
+            throw new ArgumentException("file.stream requires a valid 'downloadId'.");
+        }
+
+        // Extract path (can be virtual path or direct temp file path).
+        var path = root.TryGetProperty("path", out var pathEl) || root.TryGetProperty("Path", out pathEl)
+            ? pathEl.GetString()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("file.stream requires a non-empty 'path'.");
+        }
+
+        // Chunk size (default 256KB).
+        var chunkSize = ExtractOptionalInt(payloadRoot, "chunkSize", "ChunkSize") ?? (256 * 1024);
+        chunkSize = Math.Clamp(chunkSize, 16 * 1024, 1024 * 1024); // 16KB - 1MB range
+
+        // Resolve the actual file path.
+        string actualPath;
+
+        // Check if this is a direct OS path (e.g., temp file from zip).
+        if (IsDirectOsPath(path))
+        {
+            var tempPath = Path.GetTempPath();
+            var normalizedPath = Path.GetFullPath(path);
+
+            if (!normalizedPath.StartsWith(tempPath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UnauthorizedAccessException($"Direct file access is only allowed for temp files. Path: {path}");
+            }
+
+            actualPath = normalizedPath;
+        }
+        else
+        {
+            // Standard virtual path resolution.
+            var virtualPath = NormalizeVirtualPath(path);
+            if (virtualPath == "/")
+            {
+                throw new ArgumentException("file.stream requires a file path, not '/'.");
+            }
+
+            var (resolved, _) = ResolveActualPathFromVirtual(virtualPath);
+            actualPath = resolved;
+        }
+
+        if (string.IsNullOrWhiteSpace(actualPath) || !File.Exists(actualPath))
+        {
+            throw new FileNotFoundException($"File not found: {path}");
+        }
+
+        // Initiate streaming via the callback (does not block - streaming happens in background).
+        await _streamFileCallback(downloadId, actualPath, chunkSize, cancellationToken).ConfigureAwait(false);
+
+        return $"Streaming initiated for {path}";
     }
 
     private static long? ExtractOptionalLong(JsonElement? payloadRoot, string camel, string pascal)

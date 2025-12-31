@@ -47,8 +47,9 @@ internal sealed class BoundedTextSaveChangesInterceptor : SaveChangesInterceptor
                     break;
 
                 // Existing command output can also grow quickly.
+                // Keep aligned with AgentHub.MaxCommandOutputLogBytesUtf8 (128KB).
                 case CommandQueueItem cmd:
-                    cmd.OutputLog = TextBounds.TruncateTailUtf8(cmd.OutputLog, 64 * 1024);
+                    cmd.OutputLog = TextBounds.TruncateTailUtf8(cmd.OutputLog, 128 * 1024);
                     break;
             }
         }
