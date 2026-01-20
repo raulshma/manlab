@@ -886,7 +886,7 @@ export function AnalyticsPage() {
                              content={
                                <ChartTooltipContent
                                  labelKey="timestamp"
-                                 labelFormatter={(v) => (typeof v === "string" ? format(new Date(v), "PPp") : String(v))}
+                                  labelFormatter={(v) => { try { if (typeof v === "string") return format(new Date(v), "PPp"); return String(v); } catch { return String(v); } }}
                                  formatter={(value, name) => [percent(Number(value)), name]}
                                />
                              }
