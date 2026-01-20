@@ -110,18 +110,21 @@ export function NodeHealthTab({ nodeId }: NodeHealthTabProps) {
             metric="cpuUsage"
             label="CPU Usage"
             color="hsl(var(--chart-1))"
+            nodeId={nodeId}
           />
           <TelemetryChart
             data={telemetry || []}
             metric="ramUsage"
             label="RAM Usage"
             color="hsl(var(--chart-2))"
+            nodeId={nodeId}
           />
           <TelemetryChart
             data={telemetry || []}
             metric="diskUsage"
             label="Disk Usage"
             color="hsl(var(--chart-3))"
+            nodeId={nodeId}
           />
         </div>
       </section>
@@ -132,8 +135,8 @@ export function NodeHealthTab({ nodeId }: NodeHealthTabProps) {
           Network
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <NetworkThroughputChart data={networkTelemetry || []} />
-          <PingLatencyChart data={pingTelemetry || []} />
+          <NetworkThroughputChart data={networkTelemetry || []} nodeId={nodeId} />
+          <PingLatencyChart data={pingTelemetry || []} nodeId={nodeId} />
         </div>
       </section>
 

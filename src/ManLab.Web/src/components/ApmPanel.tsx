@@ -309,7 +309,7 @@ function SlowQueriesTable({ queries }: { queries: SlowQueryInfo[] }) {
         <tbody>
           {queries.map((query, idx) => (
             <tr key={idx} className="border-t">
-              <td className="px-3 py-2 font-mono text-[10px] max-w-[300px] truncate" title={query.query}>
+              <td className="px-3 py-2 font-mono text-[10px] max-w-75 truncate" title={query.query}>
                 {query.query}
               </td>
               <td className="px-3 py-2">{query.databaseName || '--'}</td>

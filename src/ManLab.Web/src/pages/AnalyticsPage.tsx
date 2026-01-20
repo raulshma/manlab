@@ -2,13 +2,12 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  BarChart,
+  Area,
+  AreaChart,
   Bar,
+  BarChart,
   CartesianGrid,
   Cell,
-  Legend,
-  Line,
-  LineChart,
   Pie,
   PieChart,
   Tooltip as RechartsTooltip,
@@ -20,9 +19,12 @@ import {
   Activity,
   BarChart3,
   Cpu,
+  HardDrive,
+  LayoutDashboard,
+  MemoryStick,
   Network,
-  Router,
-  Thermometer,
+  Server,
+  Zap,
 } from "lucide-react";
 
 import type { Node, Telemetry } from "@/types";
@@ -118,23 +120,39 @@ function StatCard({
   value,
   icon: Icon,
   hint,
+  trend,
+  trendLabel,
 }: {
   title: string;
   value: string;
   icon: React.ComponentType<{ className?: string }>;
   hint?: string;
+  trend?: "up" | "down" | "neutral";
+  trendLabel?: string;
 }) {
   return (
-    <Card size="sm">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center justify-between">
-          <span className="text-muted-foreground font-medium">{title}</span>
-          <Icon className="h-4 w-4 text-muted-foreground" />
-        </CardTitle>
+    <Card className="relative overflow-hidden border-none shadow-lg bg-linear-to-br from-card to-card/50 backdrop-blur-xl transition-all hover:shadow-xl hover:scale-[1.01] group">
+      <div className="absolute top-0 right-0 -mt-4 -mr-4 h-24 w-24 rounded-full bg-primary/5 blur-3xl group-hover:bg-primary/10 transition-colors" />
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
+        <div className="p-2 rounded-full bg-primary/10 text-primary">
+          <Icon className="h-4 w-4" />
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-semibold tracking-tight">{value}</div>
-        {hint ? <div className="text-xs text-muted-foreground mt-1">{hint}</div> : null}
+        <div className="flex items-baseline space-x-2">
+          <div className="text-3xl font-extrabold tracking-tight">{value}</div>
+          {trend && (
+             <span className={cn(
+                "text-xs font-medium px-1.5 py-0.5 rounded-full",
+                trend === "up" ? "bg-emerald-500/10 text-emerald-500" :
+                trend === "down" ? "bg-rose-500/10 text-rose-500" : "bg-zinc-500/10 text-zinc-500"
+             )}>
+                {trendLabel}
+             </span>
+          )}
+        </div>
+        {hint && <p className="text-xs text-muted-foreground mt-2">{hint}</p>}
       </CardContent>
     </Card>
   );
@@ -160,14 +178,25 @@ function NodeMultiSelect({
   );
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1">
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
         {selectedNodes.length === 0 ? (
-          <span className="text-sm text-muted-foreground">Select up to {maxSelected} nodes</span>
+          <div className="flex h-9 items-center px-3 rounded-md border border-dashed text-sm text-muted-foreground bg-muted/30">
+             Select nodes to compare (max {maxSelected})
+          </div>
         ) : (
           selectedNodes.map((n) => (
-            <Badge key={n.id} variant="secondary" className="font-normal">
+            <Badge key={n.id} variant="secondary" className="pl-2 pr-1 py-1 text-sm font-normal gap-1 transition-all hover:bg-secondary/80">
               {n.hostname}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 ml-1 rounded-full hover:bg-background/20"
+                onClick={() => onChange(selectedIds.filter(id => id !== n.id))}
+              >
+                <span className="sr-only">Remove</span>
+                &times;
+              </Button>
             </Badge>
           ))
         )}
@@ -175,18 +204,21 @@ function NodeMultiSelect({
 
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
-          className={cn(buttonVariants({ variant: "outline" }), "justify-start")}
+          className={cn(
+            buttonVariants({ variant: "outline", size: "default" }),
+            "border-dashed"
+          )}
         >
-          <Network className="h-4 w-4 mr-2" />
-          Choose nodes
+          <Network className="h-4 w-4 mr-2 text-primary" />
+          Add Node
         </PopoverTrigger>
-        <PopoverContent className="p-0" align="start">
+        <PopoverContent className="p-0 w-60" align="start">
           <Command>
             <CommandInput placeholder="Search nodes…" />
             <CommandList>
               <CommandEmpty>No nodes found.</CommandEmpty>
-              <CommandGroup heading="Nodes">
-                <ScrollArea className="h-72">
+              <CommandGroup heading="Available Nodes">
+                <ScrollArea className="h-64">
                   {nodes.map((n) => {
                     const checked = selectedSet.has(n.id);
                     const disabled = !checked && selectedIds.length >= maxSelected;
@@ -195,8 +227,6 @@ function NodeMultiSelect({
                       <CommandItem
                         key={n.id}
                         value={n.hostname}
-                        data-checked={checked}
-                        data-disabled={disabled}
                         onSelect={() => {
                           if (disabled) return;
                           const next = checked
@@ -204,9 +234,28 @@ function NodeMultiSelect({
                             : [...selectedIds, n.id];
                           onChange(next);
                         }}
+                        disabled={disabled}
                       >
-                        <span className="truncate">{n.hostname}</span>
-                        <span className="ml-auto text-xs text-muted-foreground font-mono">
+                         <div className={cn(
+                            "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
+                            checked ? "bg-primary text-primary-foreground" : "opacity-50 [&_svg]:invisible"
+                         )}>
+                            <svg
+                               className={cn("h-4 w-4")}
+                               fill="none"
+                               viewBox="0 0 24 24"
+                               stroke="currentColor"
+                               strokeWidth={2}
+                            >
+                               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                         </div>
+                        <span className="truncate flex-1">{n.hostname}</span>
+                        <span className={cn(
+                            "ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-mono",
+                             n.status === "Online" ? "bg-emerald-500/10 text-emerald-500" :
+                             n.status === "Offline" ? "bg-rose-500/10 text-rose-500" : "bg-yellow-500/10 text-yellow-500"
+                        )}>
                           {n.status}
                         </span>
                       </CommandItem>
@@ -420,316 +469,452 @@ export function AnalyticsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 p-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
-          <p className="text-muted-foreground">
-            Fleet-level, per-node, and comparative analytics across your ManLab nodes.
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => navigate("/nodes")}>
-          <BarChart3 className="h-4 w-4 mr-2" />
-          Manage nodes
-        </Button>
-      </header>
+    <div className="min-h-screen bg-background/50">
+      <div className="mx-auto max-w-7xl space-y-8 p-6 lg:p-10">
+        
+        {/* Header Section */}
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-linear-to-r from-primary to-primary/60">
+              Analytics
+            </h1>
+            <p className="text-muted-foreground text-lg font-light max-w-2xl">
+              Real-time telemetry, fleet health monitoring, and comparative performance metrics.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+             <Button variant="outline" size="sm" onClick={() => navigate("/nodes")} className="h-9">
+              <Server className="h-4 w-4 mr-2 text-muted-foreground" />
+              Manage Nodes
+            </Button>
+            <Button size="sm" className="h-9 shadow-lg shadow-primary/20">
+              <Zap className="h-4 w-4 mr-2" />
+               Generate Report
+            </Button>
+          </div>
+        </header>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(isValidTab(v) ? v : "fleet")}>
-        <TabsList>
-          <TabsTrigger value="fleet">Fleet</TabsTrigger>
-          <TabsTrigger value="node">Per Node</TabsTrigger>
-          <TabsTrigger value="compare">Compare</TabsTrigger>
-        </TabsList>
+        <Separator className="bg-border/40" />
 
-        <TabsContent value="fleet" className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard title="Nodes" value={`${fleetStats.total}`} icon={Activity} hint={nodesLoading ? "Loading…" : ""} />
-            <StatCard title="Online" value={`${fleetStats.online}`} icon={Router} hint={fleetStats.total ? `${Math.round((fleetStats.online / fleetStats.total) * 100)}%` : ""} />
-            <StatCard title="Avg CPU" value={percent(fleetStats.avgCpu)} icon={Cpu} hint={fleetTelemetryLoading ? "Updating…" : "Latest snapshot"} />
-            <StatCard title="Hot CPU" value={`${fleetStats.hotCpu}`} icon={Thermometer} hint="≥ 80%" />
+        <Tabs 
+          value={activeTab} 
+          onValueChange={(v) => setActiveTab(isValidTab(v) ? v : "fleet")}
+          className="space-y-8"
+        >
+          <div className="flex items-center justify-between">
+             <TabsList className="h-11 items-stretch p-1 bg-muted/60 backdrop-blur-sm">
+                <TabsTrigger value="fleet" className="px-6 text-sm">
+                   <LayoutDashboard className="h-4 w-4 mr-2 opacity-70" />
+                   Fleet Overview
+                </TabsTrigger>
+                <TabsTrigger value="node" className="px-6 text-sm">
+                   <Activity className="h-4 w-4 mr-2 opacity-70" />
+                   Per-Node Analysis
+                </TabsTrigger>
+                <TabsTrigger value="compare" className="px-6 text-sm">
+                   <BarChart3 className="h-4 w-4 mr-2 opacity-70" />
+                   Compare Metrics
+                </TabsTrigger>
+             </TabsList>
+             
+             {/* Dynamic sub-header interactions based on tab could go here */}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <Card className="lg:col-span-2">
-              <CardHeader>
-                <CardTitle className="text-base">Top nodes (latest)</CardTitle>
-                <CardDescription>Highest CPU usage, with RAM/Disk alongside for context.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ChartContainer id="fleet-top" config={fleetBarConfig} className="h-[320px] w-full">
-                  <BarChart data={topCpuNodes} margin={{ left: 12, right: 12 }}>
-                    <CartesianGrid vertical={false} />
-                    <XAxis
-                      dataKey="hostname"
-                      tickLine={false}
-                      axisLine={false}
-                      interval={0}
-                      tick={{ fontSize: 11 }}
-                      height={60}
-                      angle={-30}
-                      textAnchor="end"
-                    />
-                    <YAxis tickLine={false} axisLine={false} domain={[0, 100]} />
-                    <ChartTooltip
-                      content={
-                        <ChartTooltipContent
-                          labelKey="hostname"
-                          formatter={(value, name) => [percent(Number(value)), name]}
-                        />
-                      }
-                    />
-                    <ChartLegend content={<ChartLegendContent />} />
-                    <Bar dataKey="cpu" fill="var(--color-cpu)" radius={[6, 6, 0, 0]} />
-                    <Bar dataKey="ram" fill="var(--color-ram)" radius={[6, 6, 0, 0]} />
-                    <Bar dataKey="disk" fill="var(--color-disk)" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ChartContainer>
-              </CardContent>
-            </Card>
+          <TabsContent value="fleet" className="space-y-8 animate-in fade-in-50 slide-in-from-bottom-2 duration-500">
+            {/* Quick Stats Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              <StatCard 
+                 title="Total Nodes" 
+                 value={`${fleetStats.total}`} 
+                 icon={Server} 
+                 hint={nodesLoading ? "Syncing fleet..." : "Total managed nodes"}
+                 trend="neutral"
+              />
+              <StatCard 
+                 title="Online Nodes" 
+                 value={`${fleetStats.online}`} 
+                 icon={Activity} 
+                 hint={fleetStats.total ? `${Math.round((fleetStats.online / fleetStats.total) * 100)}% uptime` : ""}
+                 trend={fleetStats.online === fleetStats.total ? "up" : "down"}
+                 trendLabel={fleetStats.online === fleetStats.total ? "100%" : "Check offline"}
+              />
+              <StatCard 
+                 title="Avg Fleet CPU" 
+                 value={percent(fleetStats.avgCpu)} 
+                 icon={Cpu} 
+                 hint={fleetTelemetryLoading ? "Live updating..." : "Real-time average"}
+                 trend={fleetStats.avgCpu && fleetStats.avgCpu > 80 ? "down" : "up"}
+                 trendLabel={fleetStats.avgCpu ? (fleetStats.avgCpu > 80 ? "Heavy Load" : "Healthy") : undefined}
+              />
+              <StatCard 
+                 title="High Load Nodes" 
+                 value={`${fleetStats.hotCpu}`} 
+                 icon={Zap} 
+                 hint="Nodes with CPU ≥ 80%"
+                 trend={fleetStats.hotCpu > 0 ? "down" : "up"}
+                 trendLabel={fleetStats.hotCpu === 0 ? "All Good" : "Attention Needed"}
+              />
+            </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Status distribution</CardTitle>
-                <CardDescription>Current node state.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ChartContainer id="fleet-status" config={statusPieConfig} className="h-[320px]">
-                  <PieChart>
-                    <RechartsTooltip
-                      content={({ active, payload }) => {
-                        if (!active || !payload?.length) return null;
-
-                        const first = payload[0];
-                        const raw = first?.payload as unknown;
-                        if (!isStatusPayload(raw)) return null;
-
-                        return (
-                          <div className="border-border/50 bg-background rounded-lg border px-2.5 py-1.5 text-xs shadow-xl">
-                            <div className="font-medium">{raw.name}</div>
-                            <div className="text-muted-foreground">{raw.value.toLocaleString()}</div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Legend />
-                    <Pie data={statusPie} dataKey="value" nameKey="name" innerRadius={55} outerRadius={95} paddingAngle={2}>
-                      {statusPie.map((entry) => (
-                        <Cell key={entry.name} fill={entry.color} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ChartContainer>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Fleet table</CardTitle>
-              <CardDescription>
-                Quick scan across nodes. Click a hostname to jump to node details.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {nodesError ? (
-                <div className="text-sm text-destructive">Failed to load nodes.</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Node</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">CPU</TableHead>
-                        <TableHead className="text-right">RAM</TableHead>
-                        <TableHead className="text-right">Disk</TableHead>
-                        <TableHead className="text-right">Temp</TableHead>
-                        <TableHead className="text-right">Last seen</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {topCpuNodes.map((r) => (
-                        <TableRow key={r.nodeId}>
-                          <TableCell className="font-medium">
-                            <Link className="hover:underline" to={`/nodes/${r.nodeId}`}>
-                              {r.hostname}
-                            </Link>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={r.status === "Online" ? "default" : r.status === "Offline" ? "destructive" : "secondary"}>
-                              {r.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right font-mono tabular-nums">{percent(r.cpu)}</TableCell>
-                          <TableCell className="text-right font-mono tabular-nums">{percent(r.ram)}</TableCell>
-                          <TableCell className="text-right font-mono tabular-nums">{percent(r.disk)}</TableCell>
-                          <TableCell className="text-right font-mono tabular-nums">
-                            {r.temp === null ? "—" : `${r.temp.toFixed(1)}°C`}
-                          </TableCell>
-                          <TableCell className="text-right text-xs text-muted-foreground font-mono">
-                            {formatShortTime(r.lastSeen)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Separator />
-
-          <div className="text-xs text-muted-foreground">
-            Note: Fleet analytics uses each node’s latest telemetry snapshot. For deeper history and enhanced telemetry (GPU/APM/etc), use the Per Node tab.
-          </div>
-        </TabsContent>
-
-        <TabsContent value="node" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Per-node analytics</CardTitle>
-              <CardDescription>
-                Select a node to see full telemetry history, network, ping, and enhanced panels.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">Node</Badge>
-                  <Select
-                    value={effectiveSelectedNodeId}
-                    onValueChange={(v) => setSelectedNodeId(v ?? "")}
-                    disabled={!effectiveNodes.length}
-                  >
-                    <SelectTrigger className="w-[320px]">
-                      <SelectValue>
-                        {selectedNode
-                          ? `${selectedNode.hostname} (${selectedNode.status})`
-                          : "Select a node…"}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {effectiveNodes.map((n) => (
-                        <SelectItem key={n.id} value={n.id}>
-                          {n.hostname}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {effectiveSelectedNodeId ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => navigate(`/nodes/${effectiveSelectedNodeId}`)}
-                  >
-                    <Activity className="h-4 w-4 mr-2" />
-                    Open node details
-                  </Button>
-                ) : null}
-              </div>
-            </CardContent>
-          </Card>
-
-          {effectiveSelectedNodeId ? (
-            <NodeHealthTab nodeId={effectiveSelectedNodeId} />
-          ) : (
-            <div className="text-sm text-muted-foreground">No nodes available yet.</div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="compare" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Compare nodes</CardTitle>
-              <CardDescription>
-                Overlay time series across nodes (currently: CPU/RAM/Disk from telemetry history).
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="lg:col-span-2">
-                  <NodeMultiSelect nodes={effectiveNodes} selectedIds={compareNodeIds} onChange={setCompareNodeIds} />
-                </div>
-                <div>
-                  <div className="text-sm font-medium mb-2">Metric</div>
-                  <Select
-                    value={compareMetric}
-                    onValueChange={(v) => setCompareMetric(isValidMetric(v ?? "") ? (v as TelemetryPercentMetric) : "cpuUsage")}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cpuUsage">CPU Usage</SelectItem>
-                      <SelectItem value="ramUsage">RAM Usage</SelectItem>
-                      <SelectItem value="diskUsage">Disk Usage</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <Separator />
-
-              {compareNodeIds.length === 0 ? (
-                <div className="text-sm text-muted-foreground">Pick at least one node to compare.</div>
-              ) : compareTelemetryQueries.isError ? (
-                <div className="text-sm text-destructive">Failed to load telemetry for comparison.</div>
-              ) : (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">{compareMetricLabel} comparison</CardTitle>
-                    <CardDescription>Last 60 telemetry points per node.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <ChartContainer id="compare" config={compareChartConfig} className="h-[360px]">
-                      <LineChart data={compareTelemetryQueries.data?.merged ?? []} margin={{ left: 12, right: 12 }}>
-                        <CartesianGrid vertical={false} />
-                        <XAxis
-                          dataKey="timestamp"
-                          tickLine={false}
-                          axisLine={false}
-                          tickFormatter={(v) => (typeof v === "string" ? formatShortTime(v) : String(v))}
-                          minTickGap={18}
-                        />
-                        <YAxis tickLine={false} axisLine={false} domain={[0, 100]} />
-                        <ChartTooltip
-                          content={
-                            <ChartTooltipContent
-                              labelKey="timestamp"
-                              labelFormatter={(v) => (typeof v === "string" ? format(new Date(v), "PPpp") : String(v))}
-                              formatter={(value, name) => [percent(Number(value)), name]}
-                            />
-                          }
-                        />
-                        <ChartLegend content={<ChartLegendContent />} />
-
-                        {compareNodeIds.slice(0, 5).map((nodeId) => (
-                          <Line
-                            key={nodeId}
-                            type="monotone"
-                            dataKey={nodeId}
-                            stroke={`var(--color-${nodeId})`}
-                            strokeWidth={2}
-                            dot={false}
-                            connectNulls
+            {/* Main Charts Area */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Top Nodes Chart */}
+              <Card className="lg:col-span-2 shadow-sm border-none bg-card/40">
+                <CardHeader>
+                  <CardTitle>Resource Leaders</CardTitle>
+                  <CardDescription>Nodes with the highest current CPU utilization.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ChartContainer id="fleet-top" config={fleetBarConfig} className="h-87.5 w-full">
+                    <BarChart data={topCpuNodes} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="fillCpu" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="var(--color-cpu)" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="var(--color-cpu)" stopOpacity={0.1}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.1} />
+                      <XAxis
+                        dataKey="hostname"
+                        tickLine={false}
+                        axisLine={false}
+                        interval={0}
+                        tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                        height={60}
+                        angle={-30}
+                        textAnchor="end"
+                      />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} domain={[0, 100]} />
+                      <ChartTooltip
+                        cursor={{ fill: "var(--muted)/20" }}
+                        content={
+                          <ChartTooltipContent
+                            labelKey="hostname"
+                            formatter={(value, name) => [percent(Number(value)), name]}
                           />
-                        ))}
-                      </LineChart>
-                    </ChartContainer>
-                  </CardContent>
-                </Card>
-              )}
-            </CardContent>
-          </Card>
+                        }
+                      />
+                      <Bar dataKey="cpu" fill="url(#fillCpu)" radius={[4, 4, 0, 0]} maxBarSize={50} />
+                    </BarChart>
+                  </ChartContainer>
+                </CardContent>
+              </Card>
 
-          <div className="text-xs text-muted-foreground">
-            Coming soon: compare network throughput, ping latency, GPU utilization, and APM signals once we add fleet-friendly endpoints.
-          </div>
-        </TabsContent>
-      </Tabs>
+              {/* Status Distribution */}
+              <Card className="shadow-sm border-none bg-card/40">
+                <CardHeader>
+                  <CardTitle>Fleet Health</CardTitle>
+                  <CardDescription>Distribution of node statuses.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex items-center justify-center">
+                  <ChartContainer id="fleet-status" config={statusPieConfig} className="h-87.5 w-full max-w-75">
+                    <PieChart>
+                      <RechartsTooltip
+                         cursor={false}
+                         content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null;
+                          const raw = payload[0].payload as unknown;
+                          if (!isStatusPayload(raw)) return null;
+
+                          return (
+                            <div className="rounded-lg border bg-popover px-3 py-2 text-sm shadow-md animate-in fade-in-0 zoom-in-95">
+                              <h5 className="font-medium text-popover-foreground mb-1">{raw.name}</h5>
+                              <div className="text-muted-foreground">{raw.value} nodes</div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Pie 
+                         data={statusPie} 
+                         dataKey="value" 
+                         nameKey="name" 
+                         innerRadius={80} 
+                         outerRadius={110} 
+                         paddingAngle={4}
+                         stroke="none"
+                      >
+                        {statusPie.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} className="stroke-background hover:opacity-80 transition-opacity" strokeWidth={3} />
+                        ))}
+                      </Pie>
+                      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground text-2xl font-bold">
+                         {fleetStats.total}
+                      </text>
+                      <text x="50%" y="55%" textAnchor="middle" dominantBaseline="middle" className="fill-muted-foreground text-xs font-medium translate-y-4">
+                         Total Nodes
+                      </text>
+                    </PieChart>
+                  </ChartContainer>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Fleet Table */}
+            <Card className="border shadow-sm overflow-hidden">
+               <CardHeader className="bg-muted/30 border-b">
+                 <div className="flex items-center justify-between">
+                    <div>
+                        <CardTitle>Node Performance Matrix</CardTitle>
+                        <CardDescription>Comprehensive real-time metrics for all managed nodes.</CardDescription>
+                    </div>
+                 </div>
+               </CardHeader>
+              <CardContent className="p-0">
+                {nodesError ? (
+                  <div className="p-8 text-center text-destructive">Failed to load nodes data.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader className="bg-muted/10">
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead className="w-50">Node Name</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">CPU</TableHead>
+                          <TableHead className="text-right">RAM</TableHead>
+                          <TableHead className="text-right">Disk</TableHead>
+                          <TableHead className="text-right">Temperature</TableHead>
+                          <TableHead className="text-right">Last Seen</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {topCpuNodes.map((r) => (
+                          <TableRow key={r.nodeId} className="hover:bg-muted/30 transition-colors">
+                            <TableCell className="font-medium">
+                              <Link 
+                                 to={`/nodes/${r.nodeId}`}
+                                 className="flex items-center gap-2 hover:text-primary transition-colors group"
+                              >
+                                 <Server className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                                 {r.hostname}
+                              </Link>
+                            </TableCell>
+                            <TableCell>
+                               <div className="flex items-center gap-2">
+                                  <div className={cn("h-2 w-2 rounded-full", r.status === "Online" ? "bg-emerald-500" : r.status === "Offline" ? "bg-destructive" : "bg-yellow-500")} />
+                                  <span className="text-muted-foreground">{r.status}</span>
+                               </div>
+                            </TableCell>
+                            <TableCell className="text-right font-mono tabular-nums text-foreground/80">
+                               <span className={cn(r.cpu > 80 ? "text-destructive font-bold" : "")}>{percent(r.cpu)}</span>
+                            </TableCell>
+                            <TableCell className="text-right font-mono tabular-nums text-foreground/80">{percent(r.ram)}</TableCell>
+                            <TableCell className="text-right font-mono tabular-nums text-foreground/80">{percent(r.disk)}</TableCell>
+                            <TableCell className="text-right font-mono tabular-nums text-foreground/80">
+                              {r.temp === null ? "—" : `${r.temp.toFixed(1)}°C`}
+                            </TableCell>
+                            <TableCell className="text-right text-xs text-muted-foreground font-mono">
+                              {formatShortTime(r.lastSeen)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="flex items-center gap-2 p-4 rounded-lg bg-blue-500/5 border border-blue-500/10 text-sm text-blue-500">
+               <Zap className="h-4 w-4" />
+               <span className="font-medium">Pro Tip:</span>
+               Fleet analytics uses real-time snapshots. For historical trends, switch to the "Per Node" tab.
+            </div>
+          </TabsContent>
+
+          <TabsContent value="node" className="space-y-6 animate-in fade-in-50 slide-in-from-bottom-2 duration-500">
+            <Card className="border-none shadow-none bg-transparent">
+              <CardContent className="p-0">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-card p-6 rounded-xl border shadow-sm">
+                  <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center w-full">
+                     <div className="p-3 bg-primary/10 rounded-full">
+                        <Server className="h-6 w-6 text-primary" />
+                     </div>
+                     <div className="space-y-1 flex-1">
+                        <h3 className="font-semibold text-lg">Select Node</h3>
+                        <p className="text-sm text-muted-foreground">Choose a node to view detailed health metrics.</p>
+                     </div>
+                    <Select
+                      value={effectiveSelectedNodeId}
+                      onValueChange={(v) => setSelectedNodeId(v ?? "")}
+                      disabled={!effectiveNodes.length}
+                    >
+                      <SelectTrigger className="w-70 h-11">
+                        <SelectValue>
+                          {selectedNode
+                            ? `${selectedNode.hostname} • ${selectedNode.status}`
+                            : "Select a node…"}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {effectiveNodes.map((n) => (
+                          <SelectItem key={n.id} value={n.id}>
+                            <div className="flex items-center gap-2">
+                               <div className={cn("h-2 w-2 rounded-full", n.status === "Online" ? "bg-emerald-500" : "bg-zinc-300")} />
+                               {n.hostname}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {effectiveSelectedNodeId ? (
+                    <Button
+                      variant="default"
+                      className="w-full sm:w-auto mt-4 sm:mt-0"
+                      onClick={() => navigate(`/nodes/${effectiveSelectedNodeId}`)}
+                    >
+                      <Activity className="h-4 w-4 mr-2" />
+                      Full Details
+                    </Button>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+
+            {effectiveSelectedNodeId ? (
+              <div className="transition-all duration-300">
+                 <NodeHealthTab nodeId={effectiveSelectedNodeId} />
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-xl text-center">
+                 <Server className="h-12 w-12 text-muted-foreground/30 mb-4" />
+                 <h3 className="text-lg font-medium text-foreground">No Nodes Available</h3>
+                 <p className="text-muted-foreground max-w-sm">Connect a node to the cluster to begin monitoring performance.</p>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="compare" className="space-y-6 animate-in fade-in-50 slide-in-from-bottom-2 duration-500">
+             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                {/* Comparison Controls */}
+                <Card className="lg:col-span-1 h-fit">
+                   <CardHeader>
+                      <CardTitle className="text-base">Compare Configuration</CardTitle>
+                      <CardDescription>Select metric and nodes.</CardDescription>
+                   </CardHeader>
+                   <CardContent className="space-y-6">
+                      <div className="space-y-2">
+                         <label className="text-sm font-medium">Metric</label>
+                         <Select
+                           value={compareMetric}
+                           onValueChange={(v) => setCompareMetric(isValidMetric(v ?? "") ? (v as TelemetryPercentMetric) : "cpuUsage")}
+                         >
+                           <SelectTrigger className="h-10">
+                              <SelectValue />
+                           </SelectTrigger>
+                           <SelectContent>
+                              <SelectItem value="cpuUsage">
+                                 <div className="flex items-center gap-2"><Cpu className="h-4 w-4 text-muted-foreground" /> CPU Usage</div>
+                              </SelectItem>
+                              <SelectItem value="ramUsage">
+                                 <div className="flex items-center gap-2"><MemoryStick className="h-4 w-4 text-muted-foreground" /> RAM Usage</div>
+                              </SelectItem>
+                              <SelectItem value="diskUsage">
+                                 <div className="flex items-center gap-2"><HardDrive className="h-4 w-4 text-muted-foreground" /> Disk Usage</div>
+                              </SelectItem>
+                           </SelectContent>
+                         </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                         <label className="text-sm font-medium">Nodes</label>
+                         <NodeMultiSelect 
+                           nodes={effectiveNodes} 
+                           selectedIds={compareNodeIds} 
+                           onChange={setCompareNodeIds} 
+                        />
+                      </div>
+                   </CardContent>
+                </Card>
+
+                {/* Main Comparison Chart */}
+                <Card className="lg:col-span-3 min-h-125 flex flex-col">
+                   <CardHeader>
+                      <div className="flex items-center justify-between">
+                         <div>
+                            <CardTitle className="flex items-center gap-2">
+                               {compareMetric === 'cpuUsage' ? <Cpu className="h-5 w-5 text-primary" /> : 
+                                compareMetric === 'ramUsage' ? <MemoryStick className="h-5 w-5 text-primary" /> : 
+                                <HardDrive className="h-5 w-5 text-primary" />}
+                               {compareMetricLabel} Comparison
+                            </CardTitle>
+                            <CardDescription>Historical performance trend over the last hour.</CardDescription>
+                         </div>
+                         <Badge variant="outline" className="font-mono text-xs">Last 60pts</Badge>
+                      </div>
+                   </CardHeader>
+                   <CardContent className="flex-1 min-h-75">
+                     {compareNodeIds.length === 0 ? (
+                       <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-4 min-h-75">
+                          <BarChart3 className="h-12 w-12 opacity-20" />
+                          <p>Select at least 2 nodes to compare performance metrics.</p>
+                       </div>
+                     ) : compareTelemetryQueries.isError ? (
+                       <div className="h-full flex items-center justify-center text-destructive">Failed to load comparison data.</div>
+                     ) : (
+                       <ChartContainer id="compare" config={compareChartConfig} className="h-full w-full min-h-100">
+                         <AreaChart data={compareTelemetryQueries.data?.merged ?? []} margin={{ left: 0, right: 0, top: 20, bottom: 0 }}>
+                           <defs>
+                              {compareNodeIds.slice(0, 5).map((nodeId) => {
+                                 // We need to match the palette logic from useMemo but locally here or just use CSS vars
+                                 // Ideally we should move palette to a constant or use the chart config colors
+                                 return (
+                                    <linearGradient key={nodeId} id={`fill-${nodeId}`} x1="0" y1="0" x2="0" y2="1">
+                                       <stop offset="5%" stopColor={`var(--color-${nodeId})`} stopOpacity={0.3}/>
+                                       <stop offset="95%" stopColor={`var(--color-${nodeId})`} stopOpacity={0.0}/>
+                                    </linearGradient>
+                                 );
+                              })}
+                           </defs>
+                           <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.1} />
+                           <XAxis
+                             dataKey="timestamp"
+                             tickLine={false}
+                             axisLine={false}
+                             tickFormatter={(v) => (typeof v === "string" ? formatShortTime(v) : String(v))}
+                             minTickGap={30}
+                             tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                           />
+                           <YAxis 
+                              tickLine={false} 
+                              axisLine={false} 
+                              domain={[0, 100]} 
+                              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                           />
+                           <ChartTooltip
+                             content={
+                               <ChartTooltipContent
+                                 labelKey="timestamp"
+                                 labelFormatter={(v) => (typeof v === "string" ? format(new Date(v), "PPp") : String(v))}
+                                 formatter={(value, name) => [percent(Number(value)), name]}
+                               />
+                             }
+                           />
+                           <ChartLegend content={<ChartLegendContent />} />
+
+                           {compareNodeIds.slice(0, 5).map((nodeId) => (
+                             <Area
+                               key={nodeId}
+                               type="monotone"
+                               dataKey={nodeId}
+                               stroke={`var(--color-${nodeId})`}
+                               fill={`url(#fill-${nodeId})`}
+                               strokeWidth={2}
+                               dot={false}
+                               connectNulls
+                               activeDot={{ r: 4, strokeWidth: 0 }}
+                             />
+                           ))}
+                         </AreaChart>
+                       </ChartContainer>
+                     )}
+                   </CardContent>
+                </Card>
+             </div>
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   );
 }

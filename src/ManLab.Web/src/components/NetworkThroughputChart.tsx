@@ -1,13 +1,40 @@
 /**
  * NetworkThroughputChart component for visualizing network Rx/Tx throughput.
- * Uses a dual-line SVG chart for receive and transmit bytes per second.
+ * Uses a dual-line SVG chart for receive and transmit bytes per second,
+ * with an expanded modal view using Recharts for deeper history.
  */
 
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Maximize2, Loader2, RefreshCw } from "lucide-react";
+import {
+    Area,
+    AreaChart,
+    CartesianGrid,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
+    Legend
+} from "recharts";
+import { format } from "date-fns";
+
 import type { NetworkTelemetryPoint } from '../types';
+import { fetchNodeNetworkTelemetry } from '../api';
 
 interface NetworkThroughputChartProps {
   data: NetworkTelemetryPoint[];
+  nodeId?: string;
 }
 
 /**
@@ -25,14 +52,141 @@ function formatBytesPerSec(bytesPerSec: number | null): string {
  * Formats a date string to a short time (e.g., "14:30").
  */
 function formatTime(dateString: string): string {
-  const date = new Date(dateString);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch { return ""; }
+}
+
+function formatFullTime(dateString: string): string {
+    try {
+        return format(new Date(dateString), "PPpp");
+    } catch { return dateString; }
+}
+
+function ExpandedNetworkChart({ nodeId }: { nodeId: string }) {
+    const [count, setCount] = useState(300); 
+
+    const { data: history, isLoading, isError, refetch } = useQuery({
+        queryKey: ["networkTelemetry", nodeId, "history", count],
+        queryFn: async () => {
+            const data = await fetchNodeNetworkTelemetry(nodeId, count);
+            return [...data].reverse();
+        },
+        staleTime: 10000,
+    });
+
+    if (isLoading) {
+        return <div className="h-[400px] flex items-center justify-center flex-col gap-2 text-muted-foreground">
+            <Loader2 className="h-8 w-8 animate-spin" />
+            Loading history...
+        </div>;
+    }
+
+    if (isError) {
+        return <div className="h-[400px] flex items-center justify-center text-destructive">Failed to load history data.</div>;
+    }
+
+    const data = history || [];
+    
+    return (
+        <div className="space-y-4">
+             <div className="flex items-center justify-between">
+                <div className="flex gap-2">
+                    <Button variant={count === 180 ? "secondary" : "outline"} size="sm" onClick={() => setCount(180)}>30 Min</Button>
+                    <Button variant={count === 360 ? "secondary" : "outline"} size="sm" onClick={() => setCount(360)}>1 Hour</Button>
+                    <Button variant={count === 1000 ? "secondary" : "outline"} size="sm" onClick={() => setCount(1000)}>3 Hours</Button>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isLoading}>
+                    <RefreshCw className={isLoading ? "animate-spin" : ""} size={16} />
+                </Button>
+             </div>
+
+             <div className="h-[400px] w-full border rounded-lg bg-card/50 p-4">
+                <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                        <defs>
+                            <linearGradient id="gradient-expanded-rx" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="hsl(142, 76%, 36%)" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="hsl(142, 76%, 36%)" stopOpacity={0}/>
+                            </linearGradient>
+                            <linearGradient id="gradient-expanded-tx" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="hsl(221, 83%, 53%)" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="hsl(221, 83%, 53%)" stopOpacity={0}/>
+                            </linearGradient>
+                        </defs>
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.1} />
+                        <XAxis 
+                            dataKey="timestamp" 
+                            tickFormatter={formatTime} 
+                            tick={{ fontSize: 12, fill: "var(--muted-foreground)" }} 
+                            minTickGap={50}
+                            axisLine={false}
+                            tickLine={false}
+                        />
+                        <YAxis 
+                            tick={{ fontSize: 12, fill: "var(--muted-foreground)" }} 
+                            axisLine={false}
+                            tickLine={false}
+                            tickFormatter={(v) => formatBytesPerSec(v)}
+                            width={80}
+                        />
+                         <Tooltip
+                            content={({ active, payload, label }) => {
+                                if (active && payload && payload.length) {
+                                return (
+                                    <div className="rounded-lg border bg-popover px-3 py-2 text-sm shadow-md animate-in fade-in-0 zoom-in-95">
+                                        <div className="mb-1 font-medium">{formatFullTime(label)}</div>
+                                        {payload.map((p, idx) => (
+                                            <div key={idx} className="flex items-center gap-2">
+                                                <span className="h-2 w-2 rounded-full" style={{ background: p.color }} />
+                                                <span className="text-muted-foreground">{p.name}:</span>
+                                                <span className="font-mono font-medium">
+                                                    {formatBytesPerSec(Number(p.value))}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )
+                                }
+                                return null
+                            }}
+                        />
+                        <Legend />
+                        <Area 
+                            name="Rx (Download)"
+                            type="monotone" 
+                            dataKey="netRxBytesPerSec" 
+                            stroke="hsl(142, 76%, 36%)" 
+                            fill="url(#gradient-expanded-rx)" 
+                            strokeWidth={2}
+                            animationDuration={500}
+                        />
+                        <Area 
+                            name="Tx (Upload)"
+                            type="monotone" 
+                            dataKey="netTxBytesPerSec" 
+                            stroke="hsl(221, 83%, 53%)" 
+                            fill="url(#gradient-expanded-tx)" 
+                            strokeWidth={2}
+                            animationDuration={500}
+                        />
+                    </AreaChart>
+                </ResponsiveContainer>
+             </div>
+             
+             <div className="flex justify-between items-center text-sm text-muted-foreground px-2">
+                <span>Start: {data.length > 0 ? formatFullTime(data[0].timestamp) : '-'}</span>
+                <span>End: {data.length > 0 ? formatFullTime(data[data.length - 1].timestamp) : '-'}</span>
+             </div>
+        </div>
+    );
 }
 
 /**
  * NetworkThroughputChart displays dual-line chart for Rx/Tx throughput.
  */
-export function NetworkThroughputChart({ data }: NetworkThroughputChartProps) {
+export function NetworkThroughputChart({ data, nodeId }: NetworkThroughputChartProps) {
   // Reverse data to show oldest first (left to right)
   const sortedData = [...data].reverse();
   
@@ -85,6 +239,7 @@ export function NetworkThroughputChart({ data }: NetworkThroughputChartProps) {
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-medium">Network Throughput</CardTitle>
+            {nodeId && <Button variant="ghost" size="icon" className="h-6 w-6 opacity-50 cursor-not-allowed"><Maximize2 className="h-3 w-3" /></Button>}
           </div>
         </CardHeader>
         <CardContent>
@@ -97,21 +252,44 @@ export function NetworkThroughputChart({ data }: NetworkThroughputChartProps) {
   }
 
   return (
-    <Card>
+    <Card className="transition-all hover:shadow-md">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium">Network Throughput</CardTitle>
-          <div className="flex gap-4 text-xs">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: rxColor }} />
-              <span className="text-muted-foreground">Rx:</span>
-              <span className="font-medium" style={{ color: rxColor }}>{formatBytesPerSec(currentRx)}</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: txColor }} />
-              <span className="text-muted-foreground">Tx:</span>
-              <span className="font-medium" style={{ color: txColor }}>{formatBytesPerSec(currentTx)}</span>
-            </span>
+          <div className="flex items-center justify-between gap-4">
+             <div className="flex gap-4 text-xs">
+                <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: rxColor }} />
+                <span className="text-muted-foreground">Rx:</span>
+                <span className="font-medium" style={{ color: rxColor }}>{formatBytesPerSec(currentRx)}</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: txColor }} />
+                <span className="text-muted-foreground">Tx:</span>
+                <span className="font-medium" style={{ color: txColor }}>{formatBytesPerSec(currentTx)}</span>
+                </span>
+             </div>
+             {nodeId && (
+                 <Dialog>
+                    <DialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground">
+                            <Maximize2 className="h-3 w-3" />
+                        </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-4xl">
+                        <DialogHeader>
+                            <DialogTitle className="text-xl flex items-center gap-2">
+                                Network Throughput History
+                                <span className="text-sm font-normal text-muted-foreground px-2 py-0.5 rounded-full bg-muted">Live</span>
+                            </DialogTitle>
+                            <DialogDescription>
+                                High-resolution historical network traffic data.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <ExpandedNetworkChart nodeId={nodeId} />
+                    </DialogContent>
+                 </Dialog>
+             )}
           </div>
         </div>
       </CardHeader>

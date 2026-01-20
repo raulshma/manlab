@@ -254,7 +254,7 @@ export function NodesPage() {
                     }`}
                   >
                     <div
-                      className={`w-2 h-2 rounded-full flex-shrink-0 ${statusColor} ${
+                      className={`w-2 h-2 rounded-full shrink-0 ${statusColor} ${
                         node.status === "Online"
                           ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]"
                           : ""
