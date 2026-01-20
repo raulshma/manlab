@@ -1207,10 +1207,21 @@ public sealed class SshProvisioningService
         var sudoPromptCount = 0;
         var commandFinished = false;
 
-        static bool LooksLikeSudoPrompt(string s)
-            => s.Contains("[sudo] password", StringComparison.OrdinalIgnoreCase)
-               || s.Contains("Password:", StringComparison.OrdinalIgnoreCase)
-               || s.Contains("password for", StringComparison.OrdinalIgnoreCase);
+        // IMPORTANT: only respond to *new* sudo prompts.
+        // The previous implementation searched the entire accumulated output each loop iteration,
+        // which re-detected the same prompt repeatedly and could incorrectly throw.
+        var sudoPromptScanIndex = 0;
+
+        // Match common sudo prompts (default + common customizations).
+        // Examples:
+        //   "[sudo] password for user:"
+        //   "password for user:"
+        //   "Password:" (sudo -p 'Password:')
+        // NOTE: We keep the generic "Password:" because sudo can be configured to use it.
+        // This execution path is only used when the caller provided a sudo password.
+        var sudoPromptRegex = new System.Text.RegularExpressions.Regex(
+            @"(\[sudo\]\s*password[^\n]*:|password\s+for\s+[^\n:]+:|\bPassword:\s*)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
         while (!commandFinished && (DateTime.UtcNow - startTime) < timeout)
         {
@@ -1221,9 +1232,15 @@ public sealed class SshProvisioningService
             var currentOutput = output.ToString();
 
             // Detect sudo password prompt (various formats)
-            if (LooksLikeSudoPrompt(currentOutput))
+            // NOTE: The prompt text remains in the accumulated output, so we must advance the scan index.
+            var scanStart = Math.Max(0, sudoPromptScanIndex - 64); // allow boundary overlap
+            var promptMatch = sudoPromptRegex.Match(currentOutput, scanStart);
+            if (promptMatch.Success && promptMatch.Index + promptMatch.Length > sudoPromptScanIndex)
             {
-                // Only respond a limited number of times to avoid looping forever on a wrong password.
+                sudoPromptScanIndex = promptMatch.Index + promptMatch.Length;
+
+                // Only respond a limited number of times to avoid looping forever on a wrong password
+                // or on systems that keep re-prompting due to policy/tty constraints.
                 if (sudoPromptCount >= 2)
                 {
                     var result = output.ToString();
