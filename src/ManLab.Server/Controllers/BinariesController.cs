@@ -161,29 +161,50 @@ public sealed partial class BinariesController : ControllerBase
 
         var resolvedChannel = ResolveChannel(channel);
         var filePath = ResolveAgentFilePath(resolvedChannel, rid, "appsettings.json");
-        if (!System.IO.File.Exists(filePath))
-        {
-            return NotFound();
-        }
+        var hasStagedTemplate = System.IO.File.Exists(filePath);
 
         // Merge system settings (Agent defaults) into the staged template.
         // This keeps the distribution folder as a baseline while letting the dashboard control
         // feature toggles like EnableTerminal for new installs.
         JsonNode? root;
-        try
+
+        if (hasStagedTemplate)
         {
-            var raw = await System.IO.File.ReadAllTextAsync(filePath, Encoding.UTF8);
-            root = JsonNode.Parse(raw);
+            try
+            {
+                var raw = await System.IO.File.ReadAllTextAsync(filePath, Encoding.UTF8);
+                root = JsonNode.Parse(raw);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse staged agent appsettings.json at {Path}", filePath);
+                // Fall back to serving the raw file if parsing fails.
+                return PhysicalFile(
+                    filePath,
+                    contentType: "application/json",
+                    fileDownloadName: "appsettings.json",
+                    enableRangeProcessing: true);
+            }
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogWarning(ex, "Failed to parse staged agent appsettings.json at {Path}", filePath);
-            // Fall back to serving the raw file if parsing fails.
-            return PhysicalFile(
-                filePath,
-                contentType: "application/json",
-                fileDownloadName: "appsettings.json",
-                enableRangeProcessing: true);
+            // No staged template is available for this RID (common in dev setups).
+            // Instead of returning 404 (which forces installers to fall back to minimal config),
+            // generate a safe template on-the-fly so new installs pick up current Agent Defaults.
+            root = new JsonObject
+            {
+                ["Agent"] = new JsonObject
+                {
+                    // Keep these explicit even though installers typically inject secrets via env vars.
+                    ["AuthToken"] = string.Empty,
+                    ["HeartbeatIntervalSeconds"] = 15,
+                    ["MaxReconnectDelaySeconds"] = 60,
+                    ["EnableLogViewer"] = false,
+                    ["EnableScripts"] = false,
+                    ["EnableTerminal"] = false,
+                    ["EnableFileBrowser"] = false
+                }
+            };
         }
 
         if (root is not JsonObject rootObj)
