@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Threading;
 
 namespace ManLab.Server.Services.Agents;
 
@@ -12,18 +13,24 @@ public sealed class AgentConnectionRegistry
     private readonly ConcurrentDictionary<Guid, string> _nodeToConnectionId = new();
     private readonly ConcurrentDictionary<string, Guid> _connectionIdToNode = new(StringComparer.Ordinal);
     
-    // Add cached snapshot with TTL
+    // Cached snapshot with TTL.
+    // NOTE: Snapshot caching must be versioned; otherwise a concurrent Clear() can race with
+    // snapshot generation and leave a stale non-empty cached array even after the dictionaries are empty.
     private Guid[]? _cachedSnapshot;
-    private DateTime _snapshotTime;
+    private long _snapshotTimeTicksUtc;
+    private long _mutationVersion;
+    private long _cachedSnapshotVersion = -1;
     private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(5);
 
     public void Set(Guid nodeId, string connectionId)
     {
         _nodeToConnectionId[nodeId] = connectionId;
         _connectionIdToNode[connectionId] = nodeId;
+
+        Interlocked.Increment(ref _mutationVersion);
         
         // Invalidate cache when connection changes
-        _cachedSnapshot = null;
+        Volatile.Write(ref _cachedSnapshot, null);
     }
 
     public bool TryGet(Guid nodeId, out string connectionId)
@@ -41,19 +48,37 @@ public sealed class AgentConnectionRegistry
     /// </summary>
     public Guid[] GetConnectedNodeIdsSnapshot()
     {
-        var now = DateTime.UtcNow;
-        
-        // Return cached snapshot if still valid (within last 5 seconds)
-        if (_cachedSnapshot != null && now - _snapshotTime < SnapshotTtl)
+        var nowTicks = DateTime.UtcNow.Ticks;
+        var currentVersion = Volatile.Read(ref _mutationVersion);
+
+        // Return cached snapshot if still valid and the registry hasn't changed.
+        var cached = Volatile.Read(ref _cachedSnapshot);
+        if (cached is not null)
         {
-            return _cachedSnapshot!;
+            var cachedTicks = Volatile.Read(ref _snapshotTimeTicksUtc);
+            var cachedVersion = Volatile.Read(ref _cachedSnapshotVersion);
+
+            if (cachedVersion == currentVersion && (nowTicks - cachedTicks) < SnapshotTtl.Ticks)
+            {
+                return cached;
+            }
         }
-        
-        // Create and cache new snapshot
-        // ConcurrentDictionary keys enumerations are thread-safe and represent a moment-in-time view.
-        _cachedSnapshot = _nodeToConnectionId.Keys.ToArray();
-        _snapshotTime = now;
-        return _cachedSnapshot!;
+
+        // Create a new snapshot.
+        // ConcurrentDictionary key enumeration is thread-safe and represents a moment-in-time view.
+        // We only cache if no mutations occurred during snapshot generation.
+        var startVersion = currentVersion;
+        var snapshot = _nodeToConnectionId.Keys.ToArray();
+        var endVersion = Volatile.Read(ref _mutationVersion);
+
+        if (endVersion == startVersion)
+        {
+            Volatile.Write(ref _cachedSnapshotVersion, endVersion);
+            Volatile.Write(ref _snapshotTimeTicksUtc, nowTicks);
+            Volatile.Write(ref _cachedSnapshot, snapshot);
+        }
+
+        return snapshot;
     }
 
     public bool TryRemoveByConnectionId(string connectionId, out Guid nodeId)
@@ -61,7 +86,8 @@ public sealed class AgentConnectionRegistry
         if (_connectionIdToNode.TryRemove(connectionId, out nodeId))
         {
             _nodeToConnectionId.TryRemove(nodeId, out _);
-            _cachedSnapshot = null; // Invalidate cache
+            Interlocked.Increment(ref _mutationVersion);
+            Volatile.Write(ref _cachedSnapshot, null); // Invalidate cache
             return true;
         }
 
@@ -75,6 +101,10 @@ public sealed class AgentConnectionRegistry
     {
         _nodeToConnectionId.Clear();
         _connectionIdToNode.Clear();
-        _cachedSnapshot = null;
+
+        Interlocked.Increment(ref _mutationVersion);
+        Volatile.Write(ref _cachedSnapshot, null);
+        Volatile.Write(ref _cachedSnapshotVersion, -1);
+        Volatile.Write(ref _snapshotTimeTicksUtc, 0);
     }
 }

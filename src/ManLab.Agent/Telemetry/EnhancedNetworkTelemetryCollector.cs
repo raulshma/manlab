@@ -36,7 +36,10 @@ internal sealed class EnhancedNetworkTelemetryCollector
 
     public NetworkTelemetry? Collect()
     {
-        if (!_config.EnableNetworkTelemetry)
+        // Enhanced network telemetry can be significantly more expensive than basic throughput stats
+        // (interface enumeration, connection listing, optional device discovery).
+        // Keep it behind its own explicit toggle.
+        if (!_config.EnableNetworkTelemetry || !_config.EnableEnhancedNetworkTelemetry)
         {
             return null;
         }
@@ -54,7 +57,7 @@ internal sealed class EnhancedNetworkTelemetryCollector
             // Collect connection summary
             telemetry.Connections = CollectConnectionsSummary();
 
-            // Device discovery (less frequent)
+            // Device discovery (less frequent, but can still be noisy on low-power networks)
             if (ShouldRunDeviceDiscovery())
             {
                 _discoveredDevices = DiscoverDevices();

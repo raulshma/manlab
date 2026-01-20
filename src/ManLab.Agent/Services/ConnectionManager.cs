@@ -424,7 +424,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("SendHeartbeat", _nodeId, data).ConfigureAwait(false);
+            await _connection.SendAsync("SendHeartbeat", _nodeId, data).ConfigureAwait(false);
             Log.HeartbeatSent(_logger);
             _heartbeatRetryManager.RecordSuccess();
         }
@@ -451,7 +451,7 @@ public sealed class ConnectionManager : IAsyncDisposable
         try
         {
             var (failures, _) = _heartbeatRetryManager.GetStatus();
-            await _connection.InvokeAsync(
+            await _connection.SendAsync(
                 "ReportBackoffStatus",
                 _nodeId,
                 failures,
@@ -480,7 +480,7 @@ public sealed class ConnectionManager : IAsyncDisposable
         {
             if (string.IsNullOrEmpty(logs) || logs.Length <= MaxOutboundTextChunkChars)
             {
-                await _connection.InvokeAsync("UpdateCommandStatus", commandId, status, logs).ConfigureAwait(false);
+                await _connection.SendAsync("UpdateCommandStatus", commandId, status, logs).ConfigureAwait(false);
             }
             else
             {
@@ -504,7 +504,7 @@ public sealed class ConnectionManager : IAsyncDisposable
                         ? (isLast ? status : intermediateStatus)
                         : status;
 
-                    await _connection.InvokeAsync("UpdateCommandStatus", commandId, chunkStatus, chunk).ConfigureAwait(false);
+                    await _connection.SendAsync("UpdateCommandStatus", commandId, chunkStatus, chunk).ConfigureAwait(false);
                 }
             }
             _logger.LogDebug("Command status updated: {CommandId} -> {Status}", commandId, status);
@@ -558,7 +558,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("SendServiceStatusSnapshots", _nodeId, snapshots.ToList()).ConfigureAwait(false);
+            await _connection.SendAsync("SendServiceStatusSnapshots", _nodeId, snapshots.ToList()).ConfigureAwait(false);
             _logger.LogDebug("Service status snapshots sent: {Count}", snapshots.Count);
         }
         catch (Exception ex)
@@ -585,7 +585,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("SendSmartDriveSnapshots", _nodeId, snapshots.ToList()).ConfigureAwait(false);
+            await _connection.SendAsync("SendSmartDriveSnapshots", _nodeId, snapshots.ToList()).ConfigureAwait(false);
             _logger.LogDebug("SMART drive snapshots sent: {Count}", snapshots.Count);
         }
         catch (Exception ex)
@@ -613,7 +613,7 @@ public sealed class ConnectionManager : IAsyncDisposable
                 output ??= string.Empty;
                 if (output.Length <= MaxOutboundTextChunkChars)
                 {
-                    await _connection.InvokeAsync("SendTerminalOutput", sessionId, output, isClosed).ConfigureAwait(false);
+                    await _connection.SendAsync("SendTerminalOutput", sessionId, output, isClosed).ConfigureAwait(false);
                 }
                 else
                 {
@@ -626,7 +626,7 @@ public sealed class ConnectionManager : IAsyncDisposable
                         offset += len;
 
                         var closedFlag = isClosed && offset >= output.Length;
-                        await _connection.InvokeAsync("SendTerminalOutput", sessionId, chunk, closedFlag).ConfigureAwait(false);
+                        await _connection.SendAsync("SendTerminalOutput", sessionId, chunk, closedFlag).ConfigureAwait(false);
                     }
                 }
 
@@ -664,7 +664,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         if (!File.Exists(filePath))
         {
-            await _connection.InvokeAsync("StreamFailed", streamId, $"File not found: {filePath}", cancellationToken)
+            await _connection.SendAsync("StreamFailed", streamId, $"File not found: {filePath}", cancellationToken)
                 .ConfigureAwait(false);
             return;
         }
@@ -676,7 +676,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             var etag = ChunkedFileReader.ComputeETag(filePath);
 
             // Send metadata to server so it can set Content-Length header
-            await _connection.InvokeAsync(
+            await _connection.SendAsync(
                 "StreamMetadata",
                 streamId,
                 metadata.Size,
@@ -702,14 +702,14 @@ public sealed class ConnectionManager : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // Send raw binary chunk (SignalR handles serialization)
-                await _connection.InvokeAsync("StreamChunk", streamId, chunk, cancellationToken)
+                await _connection.SendAsync("StreamChunk", streamId, chunk, cancellationToken)
                     .ConfigureAwait(false);
 
                 bytesTransferred += chunk.Length;
             }
 
             // Signal completion
-            await _connection.InvokeAsync("StreamComplete", streamId, cancellationToken)
+            await _connection.SendAsync("StreamComplete", streamId, cancellationToken)
                 .ConfigureAwait(false);
 
             _logger.LogInformation(
@@ -721,7 +721,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             _logger.LogInformation("File stream cancelled for {StreamId}", streamId);
             try
             {
-                await _connection.InvokeAsync("StreamFailed", streamId, "Operation cancelled", CancellationToken.None)
+                await _connection.SendAsync("StreamFailed", streamId, "Operation cancelled", CancellationToken.None)
                     .ConfigureAwait(false);
             }
             catch { /* Ignore cleanup failures */ }
@@ -732,7 +732,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             _logger.LogError(ex, "File stream failed for {StreamId}", streamId);
             try
             {
-                await _connection.InvokeAsync("StreamFailed", streamId, ex.Message, CancellationToken.None)
+                await _connection.SendAsync("StreamFailed", streamId, ex.Message, CancellationToken.None)
                     .ConfigureAwait(false);
             }
             catch { /* Ignore cleanup failures */ }
@@ -757,7 +757,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.InvokeAsync("StreamFailed", streamId, error, cancellationToken)
+            await _connection.SendAsync("StreamFailed", streamId, error, cancellationToken)
                 .ConfigureAwait(false);
             _logger.LogInformation("Reported stream failure for {StreamId}: {Error}", streamId, error);
         }
@@ -813,7 +813,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             _heartbeatRetryManager.Reset();
 
             // Notify server of ping success
-            await _connection.InvokeAsync("PingResponse", _nodeId, true, (DateTime?)null)
+            await _connection.SendAsync("PingResponse", _nodeId, true, (DateTime?)null)
                 .ConfigureAwait(false);
             
             _logger.LogInformation("Admin ping response sent successfully, backoff reset");
@@ -826,7 +826,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             {
                 // Notify server of ping failure with current backoff status
                 var (failures, nextRetry) = _heartbeatRetryManager.GetStatus();
-                await _connection.InvokeAsync("PingResponse", _nodeId, false, nextRetry)
+                await _connection.SendAsync("PingResponse", _nodeId, false, nextRetry)
                     .ConfigureAwait(false);
             }
             catch
@@ -1027,7 +1027,7 @@ public sealed class ConnectionManager : IAsyncDisposable
         {
             try
             {
-                await _connection.InvokeAsync("ReportErrorStatus", _nodeId, errorCode, errorMessage)
+                await _connection.SendAsync("ReportErrorStatus", _nodeId, errorCode, errorMessage)
                     .ConfigureAwait(false);
                 _logger.LogInformation("Error status reported to server successfully");
             }

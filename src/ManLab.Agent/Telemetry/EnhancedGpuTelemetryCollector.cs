@@ -30,7 +30,9 @@ internal sealed class EnhancedGpuTelemetryCollector
 
     public List<EnhancedGpuTelemetry>? Collect()
     {
-        if (!_config.EnableGpuTelemetry)
+        // Enhanced GPU telemetry can invoke external tools and read many sysfs nodes.
+        // Keep it behind its own explicit toggle.
+        if (!_config.EnableGpuTelemetry || !_config.EnableEnhancedGpuTelemetry)
         {
             return null;
         }

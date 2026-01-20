@@ -55,6 +55,9 @@ Options:
   --force              Overwrite existing installation
   --run-as-root        Run agent as root
   --uninstall          Remove agent installation
+    --prefer-github       Prefer downloading agent from GitHub Releases
+    --github-release-base-url <url>  GitHub releases download base URL (e.g. https://github.com/<owner>/<repo>/releases/download)
+    --github-version <tag>           GitHub release tag (e.g. v0.0.2-alpha)
   --help               Show this help
 
 Remote Tools (disabled by default):
@@ -90,17 +93,60 @@ detect_rid() {
 download() {
     local url="$1" out="$2"
     if command -v curl &>/dev/null; then
-        curl -fsSL "$url" -o "$out"
+        curl -fsSL --connect-timeout 30 --max-time 600 --retry 3 "$url" -o "$out"
     elif command -v wget &>/dev/null; then
-        wget -qO "$out" "$url"
+        wget -q --timeout=30 --tries=3 -O "$out" "$url"
     else
         log_error "curl or wget required"; exit 1
     fi
 }
 
+download_from_github() {
+    local rid="$1" out_file="$2"
+
+    [[ "$PREFER_GITHUB" -eq 1 ]] || return 1
+    [[ -n "$GITHUB_RELEASE_BASE_URL" ]] || return 1
+    [[ -n "$GITHUB_VERSION" ]] || return 1
+
+    if ! command -v tar &>/dev/null; then
+        log_warn "tar not found; cannot use GitHub archive download. Falling back to server."
+        return 1
+    fi
+
+    local archive_url archive_path temp_dir extracted
+    archive_url="${GITHUB_RELEASE_BASE_URL%/}/${GITHUB_VERSION}/manlab-agent-${rid}.tar.gz"
+    log_info "Attempting GitHub Releases download: $archive_url"
+
+    temp_dir="$(mktemp -d)"
+    archive_path="$temp_dir/agent.tar.gz"
+    trap 'rm -rf "$temp_dir"' RETURN
+
+    if ! download "$archive_url" "$archive_path"; then
+        log_warn "GitHub download failed; falling back to server"
+        return 1
+    fi
+
+    if ! tar -xzf "$archive_path" -C "$temp_dir"; then
+        log_warn "Failed to extract GitHub archive; falling back to server"
+        return 1
+    fi
+
+    extracted="$(find "$temp_dir" -type f -name 'manlab-agent' -print -quit 2>/dev/null || true)"
+    if [[ -z "$extracted" || ! -f "$extracted" ]]; then
+        log_warn "GitHub archive did not contain expected binary; falling back to server"
+        return 1
+    fi
+
+    cp -f "$extracted" "$out_file"
+    chmod +x "$out_file"
+    log_info "Downloaded agent from GitHub Releases successfully"
+    return 0
+}
+
 # Parse arguments
 SERVER="" TOKEN="" INSTALL_DIR="/opt/manlab-agent" FORCE=0 UNINSTALL=0 RUN_AS_ROOT=0
 ENABLE_LOG_VIEWER=0 ENABLE_SCRIPTS=0 ENABLE_TERMINAL=0 ENABLE_FILE_BROWSER=0
+PREFER_GITHUB=0 GITHUB_RELEASE_BASE_URL="" GITHUB_VERSION=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -109,6 +155,9 @@ while [[ $# -gt 0 ]]; do
         --install-dir)    INSTALL_DIR="$2"; shift 2 ;;
         --force)          FORCE=1; shift ;;
         --run-as-root)    RUN_AS_ROOT=1; shift ;;
+        --prefer-github)  PREFER_GITHUB=1; shift ;;
+        --github-release-base-url) GITHUB_RELEASE_BASE_URL="$2"; shift 2 ;;
+        --github-version) GITHUB_VERSION="$2"; shift 2 ;;
         --uninstall)      UNINSTALL=1; shift ;;
         --enable-log-viewer)   ENABLE_LOG_VIEWER=1; shift ;;
         --enable-scripts)      ENABLE_SCRIPTS=1; shift ;;
@@ -179,6 +228,8 @@ log_info "  Server: $SERVER"
 log_info "  RID:    $RID"
 log_info "  Dir:    $INSTALL_DIR"
 
+log_info "Fetching agent configuration from server..."
+
 # Check existing
 [[ -f "$INSTALL_DIR/manlab-agent" && "$FORCE" -ne 1 ]] && { 
     log_error "Already installed. Use --force"; exit 1
@@ -189,25 +240,44 @@ mkdir -p "$INSTALL_DIR"
 
 # Download binary
 log_info "Downloading agent..."
-download "${SERVER}/api/binaries/agent/${RID}" "$INSTALL_DIR/manlab-agent"
+
+if ! download_from_github "$RID" "$INSTALL_DIR/manlab-agent"; then
+    download "${SERVER}/api/binaries/agent/${RID}" "$INSTALL_DIR/manlab-agent"
+fi
+
 chmod +x "$INSTALL_DIR/manlab-agent"
 
-# Create appsettings.json
-cat > "$INSTALL_DIR/appsettings.json" <<EOF
+# Download appsettings.json template from the server.
+# This template is generated server-side and includes the Agent Defaults configured in the Web UI.
+APPSETTINGS_URL="${SERVER}/api/binaries/agent/${RID}/appsettings.json"
+if download "$APPSETTINGS_URL" "$INSTALL_DIR/appsettings.json"; then
+        chmod 0644 "$INSTALL_DIR/appsettings.json"
+else
+        log_warn "Failed to download appsettings.json template; falling back to minimal config"
+        cat > "$INSTALL_DIR/appsettings.json" <<EOF
 {
-  "Agent": {
-    "ServerUrl": "$HUB_URL",
-    "AuthToken": "$TOKEN",
-    "HeartbeatIntervalSeconds": 15,
-    "MaxReconnectDelaySeconds": 60,
-    "EnableLogViewer": $([ $ENABLE_LOG_VIEWER -eq 1 ] && echo true || echo false),
-    "EnableScripts": $([ $ENABLE_SCRIPTS -eq 1 ] && echo true || echo false),
-    "EnableTerminal": $([ $ENABLE_TERMINAL -eq 1 ] && echo true || echo false),
-    "EnableFileBrowser": $([ $ENABLE_FILE_BROWSER -eq 1 ] && echo true || echo false)
-  }
+    "Agent": {
+        "ServerUrl": "$HUB_URL",
+        "AuthToken": "",
+        "HeartbeatIntervalSeconds": 15,
+        "MaxReconnectDelaySeconds": 60,
+        "EnableLogViewer": $([ $ENABLE_LOG_VIEWER -eq 1 ] && echo true || echo false),
+        "EnableScripts": $([ $ENABLE_SCRIPTS -eq 1 ] && echo true || echo false),
+        "EnableTerminal": $([ $ENABLE_TERMINAL -eq 1 ] && echo true || echo false),
+        "EnableFileBrowser": $([ $ENABLE_FILE_BROWSER -eq 1 ] && echo true || echo false)
+    }
 }
 EOF
-chmod 0600 "$INSTALL_DIR/appsettings.json"
+        chmod 0644 "$INSTALL_DIR/appsettings.json"
+fi
+
+# Provide connection secrets via environment file (preferred over writing tokens into appsettings.json).
+ENV_FILE="/etc/manlab-agent.env"
+cat > "$ENV_FILE" <<EOF
+MANLAB_SERVER_URL=$HUB_URL
+MANLAB_AUTH_TOKEN=$TOKEN
+EOF
+chmod 0600 "$ENV_FILE"
 
 # Create systemd service
 cat > /etc/systemd/system/manlab-agent.service <<EOF
@@ -219,6 +289,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=$ENV_FILE
 ExecStart=$INSTALL_DIR/manlab-agent
 Restart=always
 RestartSec=5

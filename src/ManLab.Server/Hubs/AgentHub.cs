@@ -605,32 +605,53 @@ public class AgentHub : Hub
             throw new HubException("Unauthorized: agent must register before sending terminal output.");
         }
 
-        // Verify session belongs to the registered node
+        // Verify session belongs to the registered node.
+        // IMPORTANT: terminal output can arrive in many small chunks, so avoid a DB query per chunk.
+        // Prefer the in-memory session cache and only hit the DB as a fallback.
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
 
-        var session = await db.TerminalSessions
-            .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == sessionId);
+        var sessionService = scope.ServiceProvider.GetRequiredService<TerminalSessionService>();
 
-        if (session is null)
+        Guid sessionNodeId;
+        TerminalSessionStatus sessionStatus;
+
+        if (sessionService.TryGet(sessionId, out var cachedSession) && cachedSession is not null)
         {
-            _logger.UnknownTerminalSession(sessionId);
-            return;
+            sessionNodeId = cachedSession.NodeId;
+            // Cache only stores active sessions; treat as open for the isClosed transition below.
+            sessionStatus = TerminalSessionStatus.Open;
+        }
+        else
+        {
+            var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+            var session = await db.TerminalSessions
+                .AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => new { s.NodeId, s.Status })
+                .FirstOrDefaultAsync();
+
+            if (session is null)
+            {
+                _logger.UnknownTerminalSession(sessionId);
+                return;
+            }
+
+            sessionNodeId = session.NodeId;
+            sessionStatus = session.Status;
         }
 
-        if (session.NodeId != registeredNodeId)
+        if (sessionNodeId != registeredNodeId)
         {
             _logger.LogWarning(
                 "Rejected terminal output for session {SessionId}: session belongs to node {SessionNodeId} but connection is bound to {RegisteredNodeId}",
-                sessionId, session.NodeId, registeredNodeId);
+                sessionId, sessionNodeId, registeredNodeId);
             throw new HubException("Unauthorized: session does not belong to this agent.");
         }
 
         // Update session status if closed
-        if (isClosed && session.Status == TerminalSessionStatus.Open)
+        if (isClosed && sessionStatus == TerminalSessionStatus.Open)
         {
-            var sessionService = scope.ServiceProvider.GetRequiredService<TerminalSessionService>();
             await sessionService.MarkExpiredAsync(sessionId);
         }
 

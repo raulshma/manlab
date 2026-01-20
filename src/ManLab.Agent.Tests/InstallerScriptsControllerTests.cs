@@ -19,5 +19,10 @@ public sealed class InstallerScriptsControllerTests
         Assert.DoesNotContain("\r", content.Content);
         Assert.Contains("#!/usr/bin/env bash\n", content.Content);
         Assert.Contains("set -euo pipefail\n", content.Content);
+
+        // End-to-end config: the quick installer should fetch the server-generated appsettings template
+        // so Web-configured agent defaults apply during onboarding installs.
+        Assert.Contains("/api/binaries/agent/", content.Content);
+        Assert.Contains("appsettings.json", content.Content);
     }
 }

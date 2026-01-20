@@ -16,6 +16,13 @@ public static class SettingKeys
         public const string EnableGpuTelemetry = "Agent.EnableGpuTelemetry";
         public const string EnableUpsTelemetry = "Agent.EnableUpsTelemetry";
 
+        // Enhanced telemetry + APM (also used by the agent config and Web UI)
+        public const string EnableEnhancedNetworkTelemetry = "Agent.EnableEnhancedNetworkTelemetry";
+        public const string EnableEnhancedGpuTelemetry = "Agent.EnableEnhancedGpuTelemetry";
+        public const string EnableApmTelemetry = "Agent.EnableApmTelemetry";
+        public const string ApmHealthCheckEndpoints = "Agent.ApmHealthCheckEndpoints";
+        public const string ApmDatabaseEndpoints = "Agent.ApmDatabaseEndpoints";
+
         // Remote tools (security-sensitive)
         public const string EnableLogViewer = "Agent.EnableLogViewer";
         public const string EnableScripts = "Agent.EnableScripts";

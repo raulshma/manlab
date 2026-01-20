@@ -602,11 +602,14 @@ public sealed class SshProvisioningService
 
         var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, extraArgs);
 
+        // This step may take a while (downloads, package/user setup, service registration).
+        progress.Report("Installer running on target (may take a few minutes)...");
+
         string output;
         if (useInteractiveSudo)
         {
             // Use PTY-based execution for interactive sudo
-            output = ExecuteWithSudo(client, cmd, sudoPassword!, maxChars: 200_000, timeout: TimeSpan.FromMinutes(5));
+            output = ExecuteWithSudo(client, cmd, sudoPassword!, maxChars: 200_000, timeout: TimeSpan.FromMinutes(10));
         }
         else
         {
@@ -753,7 +756,7 @@ public sealed class SshProvisioningService
         if (useInteractiveSudo)
         {
             // Use PTY-based execution for interactive sudo
-            output = ExecuteWithSudo(client, cmd, sudoPassword!, maxChars: 200_000, timeout: TimeSpan.FromMinutes(5));
+            output = ExecuteWithSudo(client, cmd, sudoPassword!, maxChars: 200_000, timeout: TimeSpan.FromMinutes(10));
         }
         else
         {
@@ -1188,17 +1191,26 @@ public sealed class SshProvisioningService
         var output = new StringBuilder();
         var startTime = DateTime.UtcNow;
 
+        // Append an exit-code marker so we can reliably detect completion regardless of prompt customization.
+        // This avoids hangs where the command completes but we never see a prompt we recognize.
+        var exitMarker = $"__MANLAB_EXIT_CODE_{Guid.NewGuid():N}__";
+        var fullCommand = $"{commandText}; echo {exitMarker}$?{exitMarker}";
+
         // Wait for initial shell prompt
         Thread.Sleep(500);
         output.Append(ReadAvailable(stream));
 
         // Send the command
-        stream.WriteLine(commandText);
+        stream.WriteLine(fullCommand);
 
         // Look for sudo password prompt and respond
-        var sudoPromptDetected = false;
+        var sudoPromptCount = 0;
         var commandFinished = false;
-        var exitMarker = $"__EXIT_CODE_{Guid.NewGuid():N}__";
+
+        static bool LooksLikeSudoPrompt(string s)
+            => s.Contains("[sudo] password", StringComparison.OrdinalIgnoreCase)
+               || s.Contains("Password:", StringComparison.OrdinalIgnoreCase)
+               || s.Contains("password for", StringComparison.OrdinalIgnoreCase);
 
         while (!commandFinished && (DateTime.UtcNow - startTime) < timeout)
         {
@@ -1209,64 +1221,57 @@ public sealed class SshProvisioningService
             var currentOutput = output.ToString();
 
             // Detect sudo password prompt (various formats)
-            if (!sudoPromptDetected &&
-                (currentOutput.Contains("[sudo] password", StringComparison.OrdinalIgnoreCase) ||
-                 currentOutput.Contains("Password:", StringComparison.OrdinalIgnoreCase) ||
-                 currentOutput.Contains("password for", StringComparison.OrdinalIgnoreCase)))
+            if (LooksLikeSudoPrompt(currentOutput))
             {
-                sudoPromptDetected = true;
+                // Only respond a limited number of times to avoid looping forever on a wrong password.
+                if (sudoPromptCount >= 2)
+                {
+                    var result = output.ToString();
+                    if (result.Length > maxChars) result = result[..maxChars];
+                    throw new InvalidOperationException("Remote command requested sudo password multiple times. Check the password and sudo configuration. Output: " + result);
+                }
+
+                sudoPromptCount++;
                 stream.WriteLine(sudoPassword);
                 Thread.Sleep(500);
             }
 
-            // Simple heuristic: check if we've received a shell prompt indicating command completion
-            // Look for common prompt patterns at the end of output
-            if (currentOutput.TrimEnd().EndsWith("$") ||
-                currentOutput.TrimEnd().EndsWith("#") ||
-                currentOutput.TrimEnd().EndsWith(">"))
+            // Reliable completion detection: look for the exit marker we appended to the command.
+            if (currentOutput.Contains(exitMarker, StringComparison.Ordinal))
             {
-                // Wait a bit more to ensure command is truly done
-                Thread.Sleep(1000);
-                var moreOutput = ReadAvailable(stream);
-                if (string.IsNullOrWhiteSpace(moreOutput))
+                // Extract the last exit code occurrence.
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    currentOutput,
+                    $@"{exitMarker}(\d+){exitMarker}",
+                    System.Text.RegularExpressions.RegexOptions.RightToLeft);
+
+                if (!match.Success || !int.TryParse(match.Groups[1].Value, out var exitCode))
                 {
-                    // Get exit code
-                    stream.WriteLine($"echo {exitMarker}$?{exitMarker}");
-                    Thread.Sleep(500);
-                    var exitOutput = ReadAvailable(stream);
-                    output.Append(exitOutput);
+                    // Marker present but unparsable (should be rare). Keep reading until timeout.
+                    continue;
+                }
 
-                    // Try to extract exit code
-                    var exitMatch = System.Text.RegularExpressions.Regex.Match(
-                        exitOutput,
-                        $@"{exitMarker}(\d+){exitMarker}");
+                if (exitCode != 0)
+                {
+                    var result = output.ToString();
+                    if (result.Length > maxChars) result = result[..maxChars];
 
-                    if (exitMatch.Success && int.TryParse(exitMatch.Groups[1].Value, out var exitCode) && exitCode != 0)
+                    // Check for sudo-specific failures
+                    if (result.Contains("sudo: a password is required", StringComparison.OrdinalIgnoreCase) ||
+                        result.Contains("sudo: no password was provided", StringComparison.OrdinalIgnoreCase))
                     {
-                        var result = output.ToString();
-                        if (result.Length > maxChars) result = result[..maxChars];
-
-                        // Check for sudo-specific failures
-                        if (result.Contains("sudo: a password is required", StringComparison.OrdinalIgnoreCase) ||
-                            result.Contains("sudo: no password was provided", StringComparison.OrdinalIgnoreCase))
-                        {
-                            throw new InvalidOperationException($"Remote command failed (exit={exitCode}): sudo requires a password but none was accepted. Check that the password is correct.");
-                        }
-                        if (result.Contains("Sorry, try again", StringComparison.OrdinalIgnoreCase) ||
-                            result.Contains("incorrect password", StringComparison.OrdinalIgnoreCase))
-                        {
-                            throw new InvalidOperationException($"Remote command failed (exit={exitCode}): incorrect sudo password.");
-                        }
-
-                        throw new InvalidOperationException($"Remote command failed (exit={exitCode}): {result}");
+                        throw new InvalidOperationException($"Remote command failed (exit={exitCode}): sudo requires a password but none was accepted. Check that the password is correct.");
+                    }
+                    if (result.Contains("Sorry, try again", StringComparison.OrdinalIgnoreCase) ||
+                        result.Contains("incorrect password", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException($"Remote command failed (exit={exitCode}): incorrect sudo password.");
                     }
 
-                    commandFinished = true;
+                    throw new InvalidOperationException($"Remote command failed (exit={exitCode}): {result}");
                 }
-                else
-                {
-                    output.Append(moreOutput);
-                }
+
+                commandFinished = true;
             }
         }
 

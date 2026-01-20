@@ -191,20 +191,28 @@ Write-Info "Downloading agent..."
 $binUrl = "$Server/api/binaries/agent/$rid"
 (New-Object Net.WebClient).DownloadFile($binUrl, $exePath)
 
-# Create config
-$config = @{
-    Agent = @{
-        ServerUrl = $hubUrl
-        AuthToken = $AuthToken
-        HeartbeatIntervalSeconds = 15
-        MaxReconnectDelaySeconds = 60
-        EnableLogViewer = $EnableLogViewer -eq 'true'
-        EnableScripts = $EnableScripts -eq 'true'
-        EnableTerminal = $EnableTerminal -eq 'true'
-        EnableFileBrowser = $EnableFileBrowser -eq 'true'
+# Download server-generated appsettings.json template.
+# This includes Agent Defaults configured via the Web UI.
+Write-Info "Downloading agent configuration (appsettings.json)..."
+try {
+    $appsettingsUrl = "$Server/api/binaries/agent/$rid/appsettings.json"
+    (New-Object Net.WebClient).DownloadFile($appsettingsUrl, $configPath)
+} catch {
+    Write-Warn "Failed to download appsettings.json template; using minimal config"
+    $config = @{
+        Agent = @{
+            ServerUrl = $hubUrl
+            AuthToken = ""
+            HeartbeatIntervalSeconds = 15
+            MaxReconnectDelaySeconds = 60
+            EnableLogViewer = $EnableLogViewer -eq 'true'
+            EnableScripts = $EnableScripts -eq 'true'
+            EnableTerminal = $EnableTerminal -eq 'true'
+            EnableFileBrowser = $EnableFileBrowser -eq 'true'
+        }
     }
+    $config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
 }
-$config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
 
 # Create runner
 $runnerContent = @"

@@ -226,6 +226,26 @@ public sealed partial class BinariesController : ControllerBase
         static string? GetString(JsonObject obj, string name, string? fallback)
             => obj[name]?.GetValue<string?>() ?? fallback;
 
+        static JsonNode? GetJsonNode(JsonObject obj, string name)
+            => obj[name];
+
+        static JsonNode? TryParseJson(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            try
+            {
+                return JsonNode.Parse(raw);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         // Connection
         agent["HeartbeatIntervalSeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.HeartbeatIntervalSeconds, GetInt(agent, "HeartbeatIntervalSeconds", 15));
         agent["MaxReconnectDelaySeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.MaxReconnectDelaySeconds, GetInt(agent, "MaxReconnectDelaySeconds", 60));
@@ -237,6 +257,35 @@ public sealed partial class BinariesController : ControllerBase
         agent["EnablePingTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnablePingTelemetry, GetBool(agent, "EnablePingTelemetry", true));
         agent["EnableGpuTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableGpuTelemetry, GetBool(agent, "EnableGpuTelemetry", true));
         agent["EnableUpsTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableUpsTelemetry, GetBool(agent, "EnableUpsTelemetry", true));
+
+        // Enhanced telemetry + APM
+        agent["EnableEnhancedNetworkTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableEnhancedNetworkTelemetry, GetBool(agent, "EnableEnhancedNetworkTelemetry", true));
+        agent["EnableEnhancedGpuTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableEnhancedGpuTelemetry, GetBool(agent, "EnableEnhancedGpuTelemetry", true));
+        agent["EnableApmTelemetry"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableApmTelemetry, GetBool(agent, "EnableApmTelemetry", false));
+
+        // Endpoints are JSON arrays stored as strings in SystemSettings.
+        // Keep template defaults if setting is missing/invalid.
+        var apmHealthRaw = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.ApmHealthCheckEndpoints);
+        var apmHealthNode = TryParseJson(apmHealthRaw);
+        if (apmHealthNode is JsonArray)
+        {
+            agent["ApmHealthCheckEndpoints"] = apmHealthNode;
+        }
+        else
+        {
+            agent["ApmHealthCheckEndpoints"] = GetJsonNode(agent, "ApmHealthCheckEndpoints") ?? new JsonArray();
+        }
+
+        var apmDbRaw = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.ApmDatabaseEndpoints);
+        var apmDbNode = TryParseJson(apmDbRaw);
+        if (apmDbNode is JsonArray)
+        {
+            agent["ApmDatabaseEndpoints"] = apmDbNode;
+        }
+        else
+        {
+            agent["ApmDatabaseEndpoints"] = GetJsonNode(agent, "ApmDatabaseEndpoints") ?? new JsonArray();
+        }
 
         // Remote tools (security-sensitive)
         agent["EnableLogViewer"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.EnableLogViewer, GetBool(agent, "EnableLogViewer", false));
@@ -258,6 +307,11 @@ public sealed partial class BinariesController : ControllerBase
         agent["TerminalMaxOutputBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TerminalMaxOutputBytes, GetInt(agent, "TerminalMaxOutputBytes", 64 * 1024));
         agent["TerminalMaxDurationSeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TerminalMaxDurationSeconds, GetInt(agent, "TerminalMaxDurationSeconds", 10 * 60));
         agent["FileBrowserMaxBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.FileBrowserMaxBytes, GetInt(agent, "FileBrowserMaxBytes", 2 * 1024 * 1024));
+
+        // Agent self-logging
+        agent["AgentLogFilePath"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.AgentLogFilePath, GetString(agent, "AgentLogFilePath", string.Empty) ?? string.Empty);
+        agent["AgentLogFileMaxBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.AgentLogFileMaxBytes, GetInt(agent, "AgentLogFileMaxBytes", 5 * 1024 * 1024));
+        agent["AgentLogFileRetainedFiles"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.AgentLogFileRetainedFiles, GetInt(agent, "AgentLogFileRetainedFiles", 3));
     }
 
     private string GetDistributionRoot()
