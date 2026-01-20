@@ -19,17 +19,275 @@ public sealed partial class BinariesController : ControllerBase
     private readonly ILogger<BinariesController> _logger;
     private readonly IOptions<BinaryDistributionOptions> _options;
     private readonly ISettingsService _settingsService;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public BinariesController(
         IWebHostEnvironment env,
         ILogger<BinariesController> logger,
         IOptions<BinaryDistributionOptions> options,
-        ISettingsService settingsService)
+        ISettingsService settingsService,
+        IHttpClientFactory httpClientFactory)
     {
         _env = env;
         _logger = logger;
         _options = options;
         _settingsService = settingsService;
+        _httpClientFactory = httpClientFactory;
+    }
+
+    /// <summary>
+    /// Returns a combined catalog of locally staged/versioned agent builds and available GitHub release tags.
+    /// </summary>
+    /// <remarks>
+    /// - Local versions are inferred from the distribution folder structure.
+    ///   Supported layouts:
+    ///     1) {DistributionRoot}/agent/{channel}/{rid}/...            (treated as version "staged")
+    ///     2) {DistributionRoot}/agent/{channel}/{version}/{rid}/...  (versioned folders)
+    /// - GitHub release tags are returned when GitHub download settings are configured.
+    /// </remarks>
+    [HttpGet("agent/release-catalog")]
+    public async Task<ActionResult<AgentReleaseCatalogResponse>> GetAgentReleaseCatalog([FromQuery] string? channel = null)
+    {
+        var resolvedChannel = ResolveChannel(channel);
+
+        // Local releases
+        var local = GetLocalAgentReleases(resolvedChannel);
+
+        // GitHub releases (best-effort)
+        var githubEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
+        var githubBaseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
+        var githubLatest = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
+
+        IReadOnlyList<AgentGitHubReleaseItem> githubReleases = Array.Empty<AgentGitHubReleaseItem>();
+        string? githubRepo = null;
+        string? githubError = null;
+
+        if (githubEnabled && TryParseGitHubRepoFromReleaseBaseUrl(githubBaseUrl, out var repo))
+        {
+            githubRepo = repo;
+            try
+            {
+                githubReleases = await FetchGitHubReleasesAsync(repo, max: 50);
+            }
+            catch (Exception ex)
+            {
+                // Best-effort: do not fail the request if GitHub API is unavailable.
+                githubError = ex.Message;
+            }
+        }
+
+        return Ok(new AgentReleaseCatalogResponse(
+            Channel: resolvedChannel,
+            Local: local,
+            GitHub: new AgentGitHubReleaseCatalog(
+                Enabled: githubEnabled,
+                ReleaseBaseUrl: string.IsNullOrWhiteSpace(githubBaseUrl) ? null : githubBaseUrl,
+                ConfiguredLatestVersion: string.IsNullOrWhiteSpace(githubLatest) ? null : githubLatest,
+                Repo: githubRepo,
+                Releases: githubReleases,
+                Error: githubError)));
+    }
+
+    private IReadOnlyList<AgentLocalReleaseItem> GetLocalAgentReleases(string channel)
+    {
+        // NOTE: this is file-system based and intended for "local" distribution staging.
+        // It is safe because we only enumerate under DistributionRoot and apply simple name filtering.
+        var baseRoot = GetAgentRootBase();
+        var channelRoot = Path.Combine(baseRoot, channel);
+
+        var releases = new List<AgentLocalReleaseItem>();
+
+        // Layout 1 (legacy / default): {baseRoot}/{rid}
+        // Layout 1b (channel): {baseRoot}/{channel}/{rid}
+        // We treat these as a single implicit version "staged".
+        var stagedRoot = ResolveAgentRootForRead(channel);
+        if (Directory.Exists(stagedRoot))
+        {
+            var stagedRids = Directory.GetDirectories(stagedRoot)
+                .Select(Path.GetFileName)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n!)
+                .Where(IsRidSafe)
+                .OrderBy(n => n)
+                .ToArray();
+
+            if (stagedRids.Length > 0)
+            {
+                var lastWrite = GetMaxBinaryLastWriteTimeUtc(stagedRoot, stagedRids);
+                releases.Add(new AgentLocalReleaseItem(
+                    Version: "staged",
+                    Rids: stagedRids,
+                    BinaryLastWriteTimeUtc: lastWrite));
+            }
+        }
+
+        // Layout 2: {baseRoot}/{channel}/{version}/{rid}
+        // Only attempt this when the channel directory exists.
+        if (Directory.Exists(channelRoot))
+        {
+            foreach (var versionDir in Directory.GetDirectories(channelRoot))
+            {
+                var version = Path.GetFileName(versionDir);
+                if (string.IsNullOrWhiteSpace(version))
+                {
+                    continue;
+                }
+
+                // Skip if it looks like a RID (that would be layout 1).
+                if (IsRidSafe(version))
+                {
+                    continue;
+                }
+
+                // Keep version names bounded; ignore weird paths.
+                version = version.Trim();
+                if (version.Length > 128)
+                {
+                    continue;
+                }
+
+                var rids = Directory.GetDirectories(versionDir)
+                    .Select(Path.GetFileName)
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Select(n => n!)
+                    .Where(IsRidSafe)
+                    .OrderBy(n => n)
+                    .ToArray();
+
+                if (rids.Length == 0)
+                {
+                    continue;
+                }
+
+                var lastWrite = GetMaxBinaryLastWriteTimeUtc(versionDir, rids);
+                releases.Add(new AgentLocalReleaseItem(
+                    Version: version,
+                    Rids: rids,
+                    BinaryLastWriteTimeUtc: lastWrite));
+            }
+        }
+
+        // Ensure deterministic ordering: staged first, then version desc-ish.
+        return releases
+            .OrderByDescending(r => string.Equals(r.Version, "staged", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(r => r.BinaryLastWriteTimeUtc ?? DateTime.MinValue)
+            .ThenBy(r => r.Version, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static DateTime? GetMaxBinaryLastWriteTimeUtc(string root, IReadOnlyList<string> rids)
+    {
+        DateTime? max = null;
+        foreach (var rid in rids)
+        {
+            var fileName = GetAgentBinaryFileName(rid);
+            var path = Path.Combine(root, rid, fileName);
+            if (!System.IO.File.Exists(path))
+            {
+                continue;
+            }
+
+            var info = new FileInfo(path);
+            if (max is null || info.LastWriteTimeUtc > max.Value)
+            {
+                max = info.LastWriteTimeUtc;
+            }
+        }
+
+        return max;
+    }
+
+    private static bool TryParseGitHubRepoFromReleaseBaseUrl(string? baseUrl, out string repo)
+    {
+        // Expected: https://github.com/{owner}/{repo}/releases/download
+        repo = string.Empty;
+        if (string.IsNullOrWhiteSpace(baseUrl)) return false;
+
+        if (!Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (!string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var segments = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 4) return false;
+        if (!string.Equals(segments[2], "releases", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(segments[3], "download", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var owner = segments[0];
+        var name = segments[1];
+        if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(name)) return false;
+
+        repo = $"{owner}/{name}";
+        return true;
+    }
+
+    private async Task<IReadOnlyList<AgentGitHubReleaseItem>> FetchGitHubReleasesAsync(string repo, int max)
+    {
+        // GitHub API: https://api.github.com/repos/{owner}/{repo}/releases
+        // Requires a User-Agent header.
+        var client = _httpClientFactory.CreateClient();
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("ManLab/1.0");
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+
+        var url = $"https://api.github.com/repos/{repo}/releases?per_page={Math.Clamp(max, 1, 100)}";
+        using var response = await client.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        var doc = await JsonDocument.ParseAsync(stream);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<AgentGitHubReleaseItem>();
+        }
+
+        var list = new List<AgentGitHubReleaseItem>();
+        foreach (var el in doc.RootElement.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var tag = el.TryGetProperty("tag_name", out var tagEl) && tagEl.ValueKind == JsonValueKind.String
+                ? tagEl.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(tag))
+            {
+                continue;
+            }
+
+            var name = el.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String
+                ? nameEl.GetString()
+                : null;
+            var prerelease = el.TryGetProperty("prerelease", out var preEl) && preEl.ValueKind == JsonValueKind.True;
+            var draft = el.TryGetProperty("draft", out var draftEl) && draftEl.ValueKind == JsonValueKind.True;
+            DateTime? publishedAtUtc = null;
+            if (el.TryGetProperty("published_at", out var pubEl) && pubEl.ValueKind == JsonValueKind.String)
+            {
+                if (DateTime.TryParse(pubEl.GetString(), out var dt))
+                {
+                    publishedAtUtc = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+                }
+            }
+
+            list.Add(new AgentGitHubReleaseItem(
+                Tag: tag,
+                Name: string.IsNullOrWhiteSpace(name) ? null : name,
+                PublishedAtUtc: publishedAtUtc,
+                Prerelease: prerelease,
+                Draft: draft));
+        }
+
+        // Most-recent first (PublishedAt can be null for drafts).
+        return list
+            .OrderByDescending(r => r.PublishedAtUtc ?? DateTime.MinValue)
+            .ThenByDescending(r => r.Tag, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     [HttpGet("agent")]
@@ -56,15 +314,16 @@ public sealed partial class BinariesController : ControllerBase
     /// Expected layout: {DistributionRoot}/agent/{channel}/{rid}/manlab-agent[.exe]
     /// </summary>
     [HttpGet("agent/manifest")]
-    public ActionResult<AgentManifestResponse> GetAgentManifest([FromQuery] string? channel = null)
+    public ActionResult<AgentManifestResponse> GetAgentManifest([FromQuery] string? channel = null, [FromQuery] string? version = null)
     {
         var resolvedChannel = ResolveChannel(channel);
-        var agentRoot = ResolveAgentRootForRead(resolvedChannel);
+        var agentRoot = ResolveAgentRootForRead(resolvedChannel, version);
         if (!Directory.Exists(agentRoot))
         {
             return Ok(new AgentManifestResponse(
                 Channel: resolvedChannel,
                 GeneratedAtUtc: DateTime.UtcNow,
+                Version: NormalizeVersionOrNull(version),
                 Rids: Array.Empty<AgentRidManifestItem>()));
         }
 
@@ -115,6 +374,7 @@ public sealed partial class BinariesController : ControllerBase
         return Ok(new AgentManifestResponse(
             Channel: resolvedChannel,
             GeneratedAtUtc: DateTime.UtcNow,
+            Version: NormalizeVersionOrNull(version),
             Rids: items));
     }
 
@@ -123,7 +383,7 @@ public sealed partial class BinariesController : ControllerBase
     /// Expected layout: {DistributionRoot}/agent/{channel}/{rid}/manlab-agent[.exe]
     /// </summary>
     [HttpGet("agent/{rid}")]
-    public IActionResult DownloadAgentBinary([FromRoute] string rid, [FromQuery] string? channel = null)
+    public IActionResult DownloadAgentBinary([FromRoute] string rid, [FromQuery] string? channel = null, [FromQuery] string? version = null)
     {
         if (!IsRidSafe(rid))
         {
@@ -131,8 +391,9 @@ public sealed partial class BinariesController : ControllerBase
         }
 
         var resolvedChannel = ResolveChannel(channel);
+        var resolvedVersion = NormalizeVersionOrNull(version);
         var fileName = GetAgentBinaryFileName(rid);
-        var filePath = ResolveAgentFilePath(resolvedChannel, rid, fileName);
+        var filePath = ResolveAgentFilePath(resolvedChannel, resolvedVersion, rid, fileName);
 
         if (!System.IO.File.Exists(filePath))
         {
@@ -152,7 +413,7 @@ public sealed partial class BinariesController : ControllerBase
     /// Expected layout: {DistributionRoot}/agent/{channel}/{rid}/appsettings.json
     /// </summary>
     [HttpGet("agent/{rid}/appsettings.json")]
-    public async Task<IActionResult> DownloadAgentAppSettings([FromRoute] string rid, [FromQuery] string? channel = null)
+    public async Task<IActionResult> DownloadAgentAppSettings([FromRoute] string rid, [FromQuery] string? channel = null, [FromQuery] string? version = null)
     {
         if (!IsRidSafe(rid))
         {
@@ -160,7 +421,8 @@ public sealed partial class BinariesController : ControllerBase
         }
 
         var resolvedChannel = ResolveChannel(channel);
-        var filePath = ResolveAgentFilePath(resolvedChannel, rid, "appsettings.json");
+        var resolvedVersion = NormalizeVersionOrNull(version);
+        var filePath = ResolveAgentFilePath(resolvedChannel, resolvedVersion, rid, "appsettings.json");
         var hasStagedTemplate = System.IO.File.Exists(filePath);
 
         // Merge system settings (Agent defaults) into the staged template.
@@ -364,11 +626,22 @@ public sealed partial class BinariesController : ControllerBase
         return string.IsNullOrWhiteSpace(ch) ? "stable" : ch;
     }
 
-    private string ResolveAgentRootForRead(string? channel)
+    private string ResolveAgentRootForRead(string? channel, string? version = null)
     {
         var baseRoot = GetAgentRootBase();
         var resolvedChannel = ResolveChannel(channel);
         var channelRoot = Path.Combine(baseRoot, resolvedChannel);
+
+        var resolvedVersion = NormalizeVersionOrNull(version);
+        if (!string.IsNullOrWhiteSpace(resolvedVersion))
+        {
+            // Versioned layout: {DistributionRoot}/agent/{channel}/{version}/{rid}/...
+            var versionRoot = Path.Combine(channelRoot, resolvedVersion);
+            if (Directory.Exists(versionRoot))
+            {
+                return versionRoot;
+            }
+        }
 
         if (Directory.Exists(channelRoot))
         {
@@ -384,10 +657,21 @@ public sealed partial class BinariesController : ControllerBase
         return channelRoot;
     }
 
-    private string ResolveAgentFilePath(string channel, string rid, string fileName)
+    private string ResolveAgentFilePath(string channel, string? version, string rid, string fileName)
     {
         var baseRoot = GetAgentRootBase();
         var channelRoot = Path.Combine(baseRoot, channel);
+
+        // Versioned layout: {DistributionRoot}/agent/{channel}/{version}/{rid}/...
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            var versioned = Path.Combine(channelRoot, version, rid, fileName);
+            if (System.IO.File.Exists(versioned))
+            {
+                return versioned;
+            }
+        }
+
         var candidate = Path.Combine(channelRoot, rid, fileName);
         if (System.IO.File.Exists(candidate))
         {
@@ -401,6 +685,39 @@ public sealed partial class BinariesController : ControllerBase
         }
 
         return candidate;
+    }
+
+    private static string? NormalizeVersionOrNull(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return null;
+        }
+
+        version = version.Trim();
+        if (version.Length == 0)
+        {
+            return null;
+        }
+
+        // Treat the implicit staging layout as no explicit version.
+        if (string.Equals(version, "staged", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        // Basic hardening: keep the version a single path segment.
+        if (version.Contains('/') || version.Contains('\\'))
+        {
+            return null;
+        }
+
+        if (version.Length > 128)
+        {
+            return null;
+        }
+
+        return version;
     }
 
     private static bool IsRidSafe(string rid)
@@ -427,6 +744,7 @@ public sealed partial class BinariesController : ControllerBase
     public sealed record AgentManifestResponse(
         string Channel,
         DateTime GeneratedAtUtc,
+        string? Version,
         IReadOnlyList<AgentRidManifestItem> Rids);
 
     public sealed record AgentRidManifestItem(
@@ -464,6 +782,31 @@ public sealed partial class BinariesController : ControllerBase
         string ArchiveUrl,
         string BinaryUrl,
         string BinaryName);
+
+    public sealed record AgentReleaseCatalogResponse(
+        string Channel,
+        IReadOnlyList<AgentLocalReleaseItem> Local,
+        AgentGitHubReleaseCatalog GitHub);
+
+    public sealed record AgentLocalReleaseItem(
+        string Version,
+        IReadOnlyList<string> Rids,
+        DateTime? BinaryLastWriteTimeUtc);
+
+    public sealed record AgentGitHubReleaseCatalog(
+        bool Enabled,
+        string? ReleaseBaseUrl,
+        string? ConfiguredLatestVersion,
+        string? Repo,
+        IReadOnlyList<AgentGitHubReleaseItem> Releases,
+        string? Error);
+
+    public sealed record AgentGitHubReleaseItem(
+        string Tag,
+        string? Name,
+        DateTime? PublishedAtUtc,
+        bool Prerelease,
+        bool Draft);
 
     /// <summary>
     /// Returns GitHub release information for agent downloads.

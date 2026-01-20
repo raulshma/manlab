@@ -109,21 +109,21 @@ export function NodeHealthTab({ nodeId }: NodeHealthTabProps) {
             data={telemetry || []}
             metric="cpuUsage"
             label="CPU Usage"
-            color="hsl(var(--chart-1))"
+            color="var(--chart-1)"
             nodeId={nodeId}
           />
           <TelemetryChart
             data={telemetry || []}
             metric="ramUsage"
             label="RAM Usage"
-            color="hsl(var(--chart-2))"
+            color="var(--chart-2)"
             nodeId={nodeId}
           />
           <TelemetryChart
             data={telemetry || []}
             metric="diskUsage"
             label="Disk Usage"
-            color="hsl(var(--chart-3))"
+            color="var(--chart-3)"
             nodeId={nodeId}
           />
         </div>

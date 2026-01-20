@@ -173,6 +173,25 @@ public sealed class OnboardingController : ControllerBase
         return Ok(machines);
     }
 
+    /// <summary>
+    /// Fetches the onboarding machine linked to a specific node (if any).
+    /// This enables node-level actions (like reinstalling/updating the agent) without requiring
+    /// the UI to fetch the entire machines list.
+    /// </summary>
+    [HttpGet("nodes/{nodeId:guid}/machine")]
+    public async Task<ActionResult<OnboardingMachineDto>> GetMachineForNode(Guid nodeId, CancellationToken cancellationToken)
+    {
+        var machine = await _db.OnboardingMachines
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.LinkedNodeId == nodeId, cancellationToken);
+
+        if (machine is null)
+        {
+            return NotFound();
+        }
+
+        return Ok(ToDto(machine));
+    }
     public sealed record SuggestedServerBaseUrlResponse(string ServerBaseUrl, IReadOnlyList<string> AllServerUrls);
 
     [HttpPost("machines")]
@@ -525,6 +544,11 @@ public sealed class OnboardingController : ControllerBase
             Auth: auth,
             SudoPassword: sudoPassword ?? "",
             RunAsRoot: request.RunAsRoot,
+            AgentInstall: new ManLab.Server.Services.Ssh.SshProvisioningService.AgentInstallOptions(
+                Source: request.AgentSource,
+                Channel: request.AgentChannel,
+                Version: request.AgentVersion,
+                GitHubReleaseBaseUrl: request.GitHubReleaseBaseUrl),
             TrustOnFirstUse: request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
             ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
             Actor: User?.Identity?.Name,
@@ -892,6 +916,10 @@ public sealed class OnboardingController : ControllerBase
         bool Force,
         bool RunAsRoot,
         bool TrustHostKey,
+        string? AgentSource,
+        string? AgentChannel,
+        string? AgentVersion,
+        string? GitHubReleaseBaseUrl,
         string? Password,
         string? PrivateKeyPem,
         string? PrivateKeyPassphrase,

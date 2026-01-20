@@ -25,10 +25,16 @@ import {
   Network,
   Server,
   Zap,
+  Clock,
 } from "lucide-react";
 
-import type { Node, Telemetry } from "@/types";
-import { fetchNodeTelemetry, fetchNodes } from "@/api";
+import type { Node, NetworkTelemetryPoint, PingTelemetryPoint, Telemetry } from "@/types";
+import {
+  fetchNodeTelemetry,
+  fetchNodes,
+  fetchNodeNetworkTelemetry,
+  fetchNodePingTelemetry,
+} from "@/api";
 import { mapWithConcurrency } from "@/lib/async";
 
 import { Badge } from "@/components/ui/badge";
@@ -91,9 +97,36 @@ function formatShortTime(ts: string): string {
   }
 }
 
-type TelemetryPercentMetric = "cpuUsage" | "ramUsage" | "diskUsage";
+type TelemetryMetric =
+  | "cpuUsage"
+  | "ramUsage"
+  | "diskUsage"
+  | "temperature"
+  | "netRxBytesPerSec"
+  | "netTxBytesPerSec"
+  | "pingRttMs"
+  | "pingPacketLossPercent";
 
 type FleetLatestTelemetry = Record<string, Telemetry | null>;
+
+const TIME_RANGES = {
+  "1h": { label: "1 Hour", count: 360 }, // 10s interval * 360 = 3600s = 1h
+  "3h": { label: "3 Hours", count: 1080 },
+  "6h": { label: "6 Hours", count: 2160 },
+  "12h": { label: "12 Hours", count: 4320 },
+  "24h": { label: "24 Hours", count: 8640 },
+  "1w": { label: "1 Week", count: 60480 },
+  "1m": { label: "1 Month", count: 259200 },
+} as const;
+
+type TimeRangeKey = keyof typeof TIME_RANGES;
+
+type TelemetryComparePoint = Telemetry | NetworkTelemetryPoint | PingTelemetryPoint;
+
+function getMetricValue(point: TelemetryComparePoint, metric: TelemetryMetric): number | null {
+  const raw = (point as unknown as Record<string, unknown>)[metric];
+  return typeof raw === "number" ? raw : null;
+}
 
 async function fetchFleetLatestTelemetry(nodes: Node[]): Promise<FleetLatestTelemetry> {
   const ids = nodes.map((n) => n.id);
@@ -272,17 +305,21 @@ function NodeMultiSelect({
 }
 
 function mergeTelemetrySeries(
-  seriesByNode: Record<string, Telemetry[]>,
-  metric: TelemetryPercentMetric
+  seriesByNode: Record<string, TelemetryComparePoint[]>,
+  metric: TelemetryMetric
 ): Array<Record<string, number | string | null>> {
   // Build a union timeline.
-  const map = new Map<string, Record<string, number | string | null>>();
+  interface MergedTelemetryRow extends Record<string, number | string | null> {
+    timestamp: string;
+  }
+
+  const map = new Map<string, MergedTelemetryRow>();
 
   for (const [nodeId, series] of Object.entries(seriesByNode)) {
     for (const point of series) {
       const ts = point.timestamp;
-      const row = map.get(ts) ?? { timestamp: ts };
-      row[nodeId] = point[metric] ?? null;
+      const row: MergedTelemetryRow = map.get(ts) ?? { timestamp: ts };
+      row[nodeId] = getMetricValue(point, metric);
       map.set(ts, row);
     }
   }
@@ -299,7 +336,16 @@ export function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState<"fleet" | "node" | "compare">("fleet");
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [compareNodeIds, setCompareNodeIds] = useState<string[]>([]);
-  const [compareMetric, setCompareMetric] = useState<TelemetryPercentMetric>("cpuUsage");
+  const [compareMetric, setCompareMetric] = useState<TelemetryMetric>("cpuUsage");
+  
+  const [timeRange, setTimeRange] = useState<TimeRangeKey>(() => {
+    return (localStorage.getItem("analytics-time-range") as TimeRangeKey) || "1h";
+  });
+
+  const handleTimeRangeChange = (v: TimeRangeKey) => {
+    setTimeRange(v);
+    localStorage.setItem("analytics-time-range", v);
+  };
 
   const { data: nodes, isLoading: nodesLoading, isError: nodesError } = useQuery({
     queryKey: ["nodes"],
@@ -340,7 +386,7 @@ export function AnalyticsPage() {
       .map((n) => ({ node: n, telemetry: latestTelemetry?.[n.id] ?? null }))
       .filter((x) => x.telemetry !== null);
 
-    const avg = (metric: TelemetryPercentMetric): number | null => {
+    const avg = (metric: "cpuUsage" | "ramUsage" | "diskUsage"): number | null => {
       if (!rows.length) return null;
       const values = rows
         .map((r) => r.telemetry?.[metric])
@@ -382,13 +428,13 @@ export function AnalyticsPage() {
 
   const statusPie = useMemo(() => {
     const items = [
-      { name: "Online", value: fleetStats.online, color: "hsl(var(--chart-2))" },
-      { name: "Offline", value: fleetStats.offline, color: "hsl(var(--chart-5))" },
-      { name: "Error", value: fleetStats.error, color: "hsl(var(--destructive))" },
+      { name: "Online", value: fleetStats.online, color: "var(--chart-2)" },
+      { name: "Offline", value: fleetStats.offline, color: "var(--chart-5)" },
+      { name: "Error", value: fleetStats.error, color: "var(--destructive)" },
       {
         name: "Other",
         value: Math.max(0, fleetStats.total - fleetStats.online - fleetStats.offline - fleetStats.error),
-        color: "hsl(var(--muted-foreground))",
+        color: "var(--muted-foreground)",
       },
     ].filter((x) => x.value > 0);
 
@@ -396,20 +442,28 @@ export function AnalyticsPage() {
   }, [fleetStats]);
 
   const compareTelemetryQueries = useQuery({
-    queryKey: ["compareTelemetry", compareNodeIds, compareMetric],
+    queryKey: ["compareTelemetry", compareNodeIds, compareMetric, timeRange],
     enabled: compareNodeIds.length > 0,
     queryFn: async () => {
       const series = await mapWithConcurrency(
         compareNodeIds,
         async (nodeId) => {
-          const data = await fetchNodeTelemetry(nodeId, 60);
+          let data: TelemetryComparePoint[] = [];
+          const count = TIME_RANGES[timeRange].count;
+          if (["cpuUsage", "ramUsage", "diskUsage", "temperature"].includes(compareMetric)) {
+            data = await fetchNodeTelemetry(nodeId, count);
+          } else if (["netRxBytesPerSec", "netTxBytesPerSec"].includes(compareMetric)) {
+            data = await fetchNodeNetworkTelemetry(nodeId, count);
+          } else if (["pingRttMs", "pingPacketLossPercent"].includes(compareMetric)) {
+            data = await fetchNodePingTelemetry(nodeId, count);
+          }
           // Reversed by API (desc). We want oldest->newest.
           return [nodeId, [...data].reverse()] as const;
         },
         { concurrency: 4 }
       );
 
-      const byNode = Object.fromEntries(series) as Record<string, Telemetry[]>;
+      const byNode = Object.fromEntries(series) as Record<string, TelemetryComparePoint[]>;
       const merged = mergeTelemetrySeries(byNode, compareMetric);
       return { byNode, merged };
     },
@@ -419,11 +473,11 @@ export function AnalyticsPage() {
 
   const compareChartConfig: ChartConfig = useMemo(() => {
     const palette = [
-      "hsl(var(--chart-1))",
-      "hsl(var(--chart-2))",
-      "hsl(var(--chart-3))",
-      "hsl(var(--chart-4))",
-      "hsl(var(--chart-5))",
+      "var(--chart-1)",
+      "var(--chart-2)",
+      "var(--chart-3)",
+      "var(--chart-4)",
+      "var(--chart-5)",
     ];
 
     const cfg: ChartConfig = {
@@ -441,26 +495,37 @@ export function AnalyticsPage() {
     return cfg;
   }, [compareNodeIds, effectiveNodes]);
 
-  const compareMetricLabel = compareMetric === "cpuUsage" ? "CPU" : compareMetric === "ramUsage" ? "RAM" : "Disk";
+  const compareMetricLabel = 
+    compareMetric === "cpuUsage" ? "CPU" : 
+    compareMetric === "ramUsage" ? "RAM" : 
+    compareMetric === "diskUsage" ? "Disk" :
+    compareMetric === "temperature" ? "Temperature" :
+    compareMetric === "netRxBytesPerSec" ? "Network Download" :
+    compareMetric === "netTxBytesPerSec" ? "Network Upload" :
+    compareMetric === "pingRttMs" ? "Ping Latency" : "Ping Packet Loss";
 
   const fleetBarConfig: ChartConfig = {
-    cpu: { label: "CPU", color: "hsl(var(--chart-1))" },
-    ram: { label: "RAM", color: "hsl(var(--chart-2))" },
-    disk: { label: "Disk", color: "hsl(var(--chart-3))" },
+    cpu: { label: "CPU", color: "var(--chart-1)" },
+    ram: { label: "RAM", color: "var(--chart-2)" },
+    disk: { label: "Disk", color: "var(--chart-3)" },
   };
 
   const statusPieConfig: ChartConfig = {
-    Online: { label: "Online", color: "hsl(var(--chart-2))" },
-    Offline: { label: "Offline", color: "hsl(var(--chart-5))" },
-    Error: { label: "Error", color: "hsl(var(--destructive))" },
-    Other: { label: "Other", color: "hsl(var(--muted-foreground))" },
+    Online: { label: "Online", color: "var(--chart-2)" },
+    Offline: { label: "Offline", color: "var(--chart-5)" },
+    Error: { label: "Error", color: "var(--destructive)" },
+    Other: { label: "Other", color: "var(--muted-foreground)" },
   };
 
   const isValidTab = (v: string): v is "fleet" | "node" | "compare" =>
     v === "fleet" || v === "node" || v === "compare";
 
-  const isValidMetric = (v: string): v is TelemetryPercentMetric =>
-    v === "cpuUsage" || v === "ramUsage" || v === "diskUsage";
+  const isValidMetric = (v: string): v is TelemetryMetric =>
+    [
+      "cpuUsage", "ramUsage", "diskUsage", "temperature",
+      "netRxBytesPerSec", "netTxBytesPerSec",
+      "pingRttMs", "pingPacketLossPercent"
+    ].includes(v);
 
   const isStatusPayload = (x: unknown): x is { name: string; value: number } => {
     if (!x || typeof x !== "object") return false;
@@ -513,7 +578,7 @@ export function AnalyticsPage() {
                 </TabsTrigger>
                 <TabsTrigger value="compare" className="px-6 text-sm">
                    <BarChart3 className="h-4 w-4 mr-2 opacity-70" />
-                   Compare Metrics
+                   Telemetry History
                 </TabsTrigger>
              </TabsList>
              
@@ -798,7 +863,7 @@ export function AnalyticsPage() {
                          <label className="text-sm font-medium">Metric</label>
                          <Select
                            value={compareMetric}
-                           onValueChange={(v) => setCompareMetric(isValidMetric(v ?? "") ? (v as TelemetryPercentMetric) : "cpuUsage")}
+                           onValueChange={(v) => setCompareMetric(isValidMetric(v ?? "") ? (v as TelemetryMetric) : "cpuUsage")}
                          >
                            <SelectTrigger className="h-10">
                               <SelectValue />
@@ -813,6 +878,37 @@ export function AnalyticsPage() {
                               <SelectItem value="diskUsage">
                                  <div className="flex items-center gap-2"><HardDrive className="h-4 w-4 text-muted-foreground" /> Disk Usage</div>
                               </SelectItem>
+                              <SelectItem value="temperature">
+                                 <div className="flex items-center gap-2"><Zap className="h-4 w-4 text-muted-foreground" /> Temperature</div>
+                              </SelectItem>
+                              <SelectItem value="netRxBytesPerSec">
+                                 <div className="flex items-center gap-2"><Network className="h-4 w-4 text-muted-foreground" /> Network Download</div>
+                              </SelectItem>
+                              <SelectItem value="netTxBytesPerSec">
+                                 <div className="flex items-center gap-2"><Network className="h-4 w-4 text-muted-foreground" /> Network Upload</div>
+                              </SelectItem>
+                              <SelectItem value="pingRttMs">
+                                 <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-muted-foreground" /> Ping Latency</div>
+                              </SelectItem>
+                           </SelectContent>
+                         </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                         <label className="text-sm font-medium">Time Range</label>
+                         <Select
+                           value={timeRange}
+                           onValueChange={(v) => handleTimeRangeChange(v as TimeRangeKey)}
+                         >
+                           <SelectTrigger className="h-10">
+                              <SelectValue />
+                           </SelectTrigger>
+                           <SelectContent>
+                              {Object.entries(TIME_RANGES).map(([key, cfg]) => (
+                                <SelectItem key={key} value={key}>
+                                   <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" /> {cfg.label}</div>
+                                </SelectItem>
+                              ))}
                            </SelectContent>
                          </Select>
                       </div>
@@ -879,15 +975,31 @@ export function AnalyticsPage() {
                            <YAxis 
                               tickLine={false} 
                               axisLine={false} 
-                              domain={[0, 100]} 
+                              domain={[0, "auto"]} 
                               tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                              tickFormatter={(val) => {
+                                  if (compareMetric.includes("Usage") || compareMetric.includes("Loss")) return `${val}%`;
+                                  if (compareMetric === "pingRttMs") return `${val}ms`;
+                                  if (compareMetric.includes("Bytes")) return val > 1024*1024 ? `${(val/1024/1024).toFixed(0)}M` : `${(val/1024).toFixed(0)}K`;
+                                  return `${val}`;
+                              }}
                            />
                            <ChartTooltip
                              content={
                                <ChartTooltipContent
                                  labelKey="timestamp"
                                   labelFormatter={(v) => { try { if (typeof v === "string") return format(new Date(v), "PPp"); return String(v); } catch { return String(v); } }}
-                                 formatter={(value, name) => [percent(Number(value)), name]}
+                                 formatter={(value, name) => {
+                                     const val = Number(value);
+                                     if (compareMetric.includes("Usage") || compareMetric.includes("Loss")) return [percent(val), name];
+                                     if (compareMetric === "pingRttMs") return [`${val.toFixed(0)} ms`, name];
+                                     if (compareMetric === "temperature") return [`${val.toFixed(1)}°C`, name];
+                                     if (compareMetric.includes("Bytes")) {
+                                        if (val > 1024 * 1024) return [`${(val / 1024 / 1024).toFixed(2)} MB/s`, name];
+                                        return [`${(val / 1024).toFixed(2)} KB/s`, name];
+                                     }
+                                     return [`${val}`, name];
+                                 }}
                                />
                              }
                            />

@@ -55,6 +55,8 @@ Options:
   --force              Overwrite existing installation
   --run-as-root        Run agent as root
   --uninstall          Remove agent installation
+    --agent-channel <ch>  Local distribution channel for server downloads (e.g. stable, beta)
+    --agent-version <v>   Local distribution version folder (e.g. v1.2.3). Omit for staged.
     --prefer-github       Prefer downloading agent from GitHub Releases
     --github-release-base-url <url>  GitHub releases download base URL (e.g. https://github.com/<owner>/<repo>/releases/download)
     --github-version <tag>           GitHub release tag (e.g. v0.0.2-alpha)
@@ -147,6 +149,7 @@ download_from_github() {
 SERVER="" TOKEN="" INSTALL_DIR="/opt/manlab-agent" FORCE=0 UNINSTALL=0 RUN_AS_ROOT=0
 ENABLE_LOG_VIEWER=0 ENABLE_SCRIPTS=0 ENABLE_TERMINAL=0 ENABLE_FILE_BROWSER=0
 PREFER_GITHUB=0 GITHUB_RELEASE_BASE_URL="" GITHUB_VERSION=""
+AGENT_CHANNEL="" AGENT_VERSION=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -155,6 +158,8 @@ while [[ $# -gt 0 ]]; do
         --install-dir)    INSTALL_DIR="$2"; shift 2 ;;
         --force)          FORCE=1; shift ;;
         --run-as-root)    RUN_AS_ROOT=1; shift ;;
+        --agent-channel)  AGENT_CHANNEL="$2"; shift 2 ;;
+        --agent-version)  AGENT_VERSION="$2"; shift 2 ;;
         --prefer-github)  PREFER_GITHUB=1; shift ;;
         --github-release-base-url) GITHUB_RELEASE_BASE_URL="$2"; shift 2 ;;
         --github-version) GITHUB_VERSION="$2"; shift 2 ;;
@@ -242,7 +247,17 @@ mkdir -p "$INSTALL_DIR"
 log_info "Downloading agent..."
 
 if ! download_from_github "$RID" "$INSTALL_DIR/manlab-agent"; then
-    download "${SERVER}/api/binaries/agent/${RID}" "$INSTALL_DIR/manlab-agent"
+    BIN_URL="${SERVER}/api/binaries/agent/${RID}"
+    SEP="?"
+    if [[ -n "$AGENT_CHANNEL" ]]; then
+        BIN_URL="${BIN_URL}${SEP}channel=${AGENT_CHANNEL}"
+        SEP="&"
+    fi
+    if [[ -n "$AGENT_VERSION" ]]; then
+        BIN_URL="${BIN_URL}${SEP}version=${AGENT_VERSION}"
+        SEP="&"
+    fi
+    download "$BIN_URL" "$INSTALL_DIR/manlab-agent"
 fi
 
 chmod +x "$INSTALL_DIR/manlab-agent"
@@ -250,6 +265,15 @@ chmod +x "$INSTALL_DIR/manlab-agent"
 # Download appsettings.json template from the server.
 # This template is generated server-side and includes the Agent Defaults configured in the Web UI.
 APPSETTINGS_URL="${SERVER}/api/binaries/agent/${RID}/appsettings.json"
+SEP="?"
+if [[ -n "$AGENT_CHANNEL" ]]; then
+    APPSETTINGS_URL="${APPSETTINGS_URL}${SEP}channel=${AGENT_CHANNEL}"
+    SEP="&"
+fi
+if [[ -n "$AGENT_VERSION" ]]; then
+    APPSETTINGS_URL="${APPSETTINGS_URL}${SEP}version=${AGENT_VERSION}"
+    SEP="&"
+fi
 if download "$APPSETTINGS_URL" "$INSTALL_DIR/appsettings.json"; then
         chmod 0644 "$INSTALL_DIR/appsettings.json"
 else

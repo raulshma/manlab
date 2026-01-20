@@ -67,6 +67,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Terminal, Trash2, ChevronDown, Plus, X, Settings2, Key } from "lucide-react";
+import { AgentVersionPicker, type AgentVersionSelection } from "@/components/AgentVersionPicker";
 
 const EMPTY_MACHINES: OnboardingMachine[] = [];
 
@@ -126,6 +127,18 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const [forceInstall, setForceInstall] = useState(true);
   const [runAsRoot, setRunAsRoot] = useState(false);
   const [sudoPassword, setSudoPassword] = useState("");
+
+  // Agent version selection (used for installs from this modal)
+  const [agentChannel, setAgentChannel] = useState("stable");
+  const [agentSelection, setAgentSelection] = useState<AgentVersionSelection>({
+    source: "local",
+    version: "staged",
+    channel: "stable",
+  });
+
+  useEffect(() => {
+    setAgentSelection((prev) => ({ ...prev, channel: agentChannel }));
+  }, [agentChannel]);
 
   // Track configuration changes to auto-save them
   const prevTrustHostKey = useRef(trustHostKey);
@@ -661,6 +674,9 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         force: effectiveForce,
         runAsRoot,
         trustHostKey,
+        agentSource: agentSelection.source,
+        agentChannel,
+        agentVersion: agentSelection.version,
         password: useSavedAuth ? undefined : (password || undefined),
         privateKeyPem: useSavedAuth ? undefined : (privateKeyPem || undefined),
         privateKeyPassphrase: useSavedAuth ? undefined : (privateKeyPassphrase || undefined),
@@ -1379,24 +1395,69 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       confirmText={hasExistingAgent ? "Overwrite & Install" : "Install"}
                       isLoading={installMutation.isPending}
                       details={
-                        hasExistingAgent ? (
-                          <div className="space-y-3">
-                            <label className="flex items-center gap-2 text-xs cursor-pointer">
-                              <Checkbox
-                                checked={stopExistingAgentFirst}
-                                onCheckedChange={(c) => setStopExistingAgentFirst(c === true)}
-                                disabled={!existingNodeId}
-                              />
-                              <span>
-                                Stop the existing agent first (best-effort)
-                                {!existingNodeId ? " — no matching node id" : ""}
-                              </span>
-                            </label>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              Agent Version
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              <div className="space-y-1">
+                                <div className="text-xs text-muted-foreground">Channel</div>
+                                <Select
+                                  value={agentChannel}
+                                  onValueChange={(v) => {
+                                    if (!v) return;
+                                    setAgentChannel(v);
+                                  }}
+                                >
+                                  <SelectTrigger className="h-9">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="stable">stable</SelectItem>
+                                    <SelectItem value="beta">beta</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1">
+                                <div className="text-xs text-muted-foreground">&nbsp;</div>
+                                <div className="text-xs text-muted-foreground">
+                                  Used only for local (server-staged) downloads.
+                                </div>
+                              </div>
+                            </div>
+
+                            <AgentVersionPicker
+                              channel={agentChannel}
+                              value={agentSelection}
+                              onChange={setAgentSelection}
+                            />
+
                             <div className="text-xs text-muted-foreground">
-                              Tip: leave “Force Re-install” enabled when overwriting.
+                              Tip: use <span className="font-mono">staged</span> to install whatever the server currently has staged for that channel.
                             </div>
                           </div>
-                        ) : null
+
+                          {hasExistingAgent ? (
+                            <div className="space-y-3">
+                              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                                <Checkbox
+                                  checked={stopExistingAgentFirst}
+                                  onCheckedChange={(c) => setStopExistingAgentFirst(c === true)}
+                                  disabled={!existingNodeId}
+                                />
+                                <span>
+                                  Stop the existing agent first (best-effort)
+                                  {!existingNodeId ? " — no matching node id" : ""}
+                                </span>
+                              </label>
+                              <div className="text-xs text-muted-foreground">
+                                Tip: leave “Force Re-install” enabled when overwriting.
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                       }
                       onConfirm={async () => {
                         if (!validateCredentials()) return;

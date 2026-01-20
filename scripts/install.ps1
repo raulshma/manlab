@@ -22,7 +22,16 @@ param(
     [string]$EnableLogViewer,
     [string]$EnableScripts,
     [string]$EnableTerminal,
-    [string]$EnableFileBrowser
+    [string]$EnableFileBrowser,
+
+    # Agent download source selection
+    [string]$AgentChannel,
+    [string]$AgentVersion,
+
+    # GitHub
+    [switch]$PreferGitHub,
+    [string]$GitHubReleaseBaseUrl,
+    [string]$GitHubVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,6 +68,86 @@ function Get-Rid {
         'ARM64' { return 'win-arm64' }
         'AMD64|x86_64' { return 'win-x64' }
         default { throw "Unsupported: $effective" }
+    }
+}
+
+function New-UrlWithQuery {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseUrl,
+        [hashtable]$Query
+    )
+
+    if (-not $Query -or $Query.Count -eq 0) { return $BaseUrl }
+
+    $pairs = @()
+    foreach ($k in $Query.Keys) {
+        $v = $Query[$k]
+        if ([string]::IsNullOrWhiteSpace([string]$v)) { continue }
+        $pairs += ("{0}={1}" -f [Uri]::EscapeDataString([string]$k), [Uri]::EscapeDataString([string]$v))
+    }
+    if ($pairs.Count -eq 0) { return $BaseUrl }
+    return "$BaseUrl?" + ($pairs -join "&")
+}
+
+function Try-DownloadAgentFromGitHub {
+    param(
+        [Parameter(Mandatory = $true)][string]$Rid,
+        [Parameter(Mandatory = $true)][string]$OutFile
+    )
+
+    if (-not $PreferGitHub) { return $false }
+
+    $baseUrl = $GitHubReleaseBaseUrl
+    $version = $GitHubVersion
+
+    # If not explicitly provided, try to fetch from the server helper endpoint.
+    if ([string]::IsNullOrWhiteSpace($baseUrl) -or [string]::IsNullOrWhiteSpace($version)) {
+        try {
+            $infoUrl = "$Server/api/binaries/agent/github-release-info"
+            $raw = (Invoke-WebRequest -UseBasicParsing -Uri $infoUrl).Content
+            $info = $raw | ConvertFrom-Json
+            if ($info.Enabled -and $info.ReleaseBaseUrl -and $info.LatestVersion) {
+                $baseUrl = [string]$info.ReleaseBaseUrl
+                $version = [string]$info.LatestVersion
+            }
+        } catch {
+            # Ignore and fall back.
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($baseUrl) -or [string]::IsNullOrWhiteSpace($version)) {
+        return $false
+    }
+
+    try {
+        $baseUrl = $baseUrl.TrimEnd('/')
+        $archiveUrl = "$baseUrl/$version/manlab-agent-$Rid.zip"
+        Write-Info "Attempting GitHub Releases download: $archiveUrl"
+
+        $tmpDir = Join-Path $env:TEMP ([Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+        $zipPath = Join-Path $tmpDir "agent.zip"
+        (New-Object Net.WebClient).DownloadFile($archiveUrl, $zipPath)
+
+        $extractDir = Join-Path $tmpDir "extract"
+        Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+
+        $candidate = Get-ChildItem -Path $extractDir -Recurse -File -Filter "manlab-agent.exe" | Select-Object -First 1
+        if (-not $candidate) {
+            Write-Warn "GitHub archive did not contain manlab-agent.exe; falling back to server"
+            return $false
+        }
+
+        Copy-Item -Path $candidate.FullName -Destination $OutFile -Force
+        return $true
+    } catch {
+        Write-Warn "GitHub download failed; falling back to server. $_"
+        return $false
+    } finally {
+        if ($tmpDir -and (Test-Path $tmpDir)) {
+            Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -188,14 +277,16 @@ New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
 # Download binary
 Write-Info "Downloading agent..."
-$binUrl = "$Server/api/binaries/agent/$rid"
-(New-Object Net.WebClient).DownloadFile($binUrl, $exePath)
+if (-not (Try-DownloadAgentFromGitHub -Rid $rid -OutFile $exePath)) {
+    $binUrl = New-UrlWithQuery -BaseUrl "$Server/api/binaries/agent/$rid" -Query @{ channel = $AgentChannel; version = $AgentVersion }
+    (New-Object Net.WebClient).DownloadFile($binUrl, $exePath)
+}
 
 # Download server-generated appsettings.json template.
 # This includes Agent Defaults configured via the Web UI.
 Write-Info "Downloading agent configuration (appsettings.json)..."
 try {
-    $appsettingsUrl = "$Server/api/binaries/agent/$rid/appsettings.json"
+    $appsettingsUrl = New-UrlWithQuery -BaseUrl "$Server/api/binaries/agent/$rid/appsettings.json" -Query @{ channel = $AgentChannel; version = $AgentVersion }
     (New-Object Net.WebClient).DownloadFile($appsettingsUrl, $configPath)
 } catch {
     Write-Warn "Failed to download appsettings.json template; using minimal config"

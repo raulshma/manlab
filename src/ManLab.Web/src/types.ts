@@ -175,6 +175,39 @@ export interface StartUninstallResponse {
   status: OnboardingStatus;
 }
 
+/**
+ * Agent releases / versions
+ */
+
+export interface AgentLocalReleaseItem {
+  version: string; // e.g. "staged" or "v1.2.3"
+  rids: string[];
+  binaryLastWriteTimeUtc: string | null;
+}
+
+export interface AgentGitHubReleaseItem {
+  tag: string;
+  name: string | null;
+  publishedAtUtc: string | null;
+  prerelease: boolean;
+  draft: boolean;
+}
+
+export interface AgentGitHubReleaseCatalog {
+  enabled: boolean;
+  releaseBaseUrl: string | null;
+  configuredLatestVersion: string | null;
+  repo: string | null;
+  releases: AgentGitHubReleaseItem[];
+  error: string | null;
+}
+
+export interface AgentReleaseCatalogResponse {
+  channel: string;
+  local: AgentLocalReleaseItem[];
+  gitHub: AgentGitHubReleaseCatalog;
+}
+
 export interface InventorySection {
   label: string;
   items: string[];

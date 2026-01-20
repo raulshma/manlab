@@ -40,11 +40,12 @@
   --input: oklch(0.92 0 0);
   --ring: oklch(0.55 0.22 260);
 
-  --chart-1: oklch(0.55 0.22 260);
-  --chart-2: oklch(0.65 0.18 150);
-  --chart-3: oklch(0.65 0.18 30);
-  --chart-4: oklch(0.60 0.18 300);
-  --chart-5: oklch(0.65 0.18 80);
+  /* Vibrant Neon Palette */
+  --chart-1: oklch(0.6 0.25 250); /* Neon Blue */
+  --chart-2: oklch(0.65 0.25 150); /* Neon Green */
+  --chart-3: oklch(0.65 0.25 40); /* Neon Orange */
+  --chart-4: oklch(0.6 0.25 310); /* Neon Purple */
+  --chart-5: oklch(0.6 0.25 340); /* Neon Pink */
 
   /* Sidebar - Pure White to match Cards */
   --sidebar: oklch(1.0 0 0); 

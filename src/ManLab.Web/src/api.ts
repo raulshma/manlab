@@ -29,6 +29,7 @@ import type {
   StartInstallResponse,
   StartUninstallResponse,
   UninstallPreviewResponse,
+  AgentReleaseCatalogResponse,
   SaveCredentialsRequest,
   UpdateConfigurationRequest,
   SshAuthMode,
@@ -983,6 +984,10 @@ export async function installAgent(
     force: boolean;
     runAsRoot?: boolean;
     trustHostKey: boolean;
+    agentSource?: "local" | "github";
+    agentChannel?: string;
+    agentVersion?: string;
+    gitHubReleaseBaseUrl?: string;
     password?: string;
     privateKeyPem?: string;
     privateKeyPassphrase?: string;
@@ -1000,6 +1005,30 @@ export async function installAgent(
   );
   if (!response.ok) {
     throw new Error(`Install start failed: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function fetchAgentReleaseCatalog(channel?: string): Promise<AgentReleaseCatalogResponse> {
+  const url = new URL(`${API_BASE}/binaries/agent/release-catalog`, window.location.origin);
+  if (channel) {
+    url.searchParams.set("channel", channel);
+  }
+
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    throw new Error(`Failed to fetch agent release catalog: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function fetchOnboardingMachineForNode(nodeId: string): Promise<OnboardingMachine> {
+  const response = await fetch(`${API_BASE}/onboarding/nodes/${nodeId}/machine`);
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("No onboarding machine is linked to this node.");
+    }
+    throw new Error(`Failed to fetch linked machine: ${await response.text()}`);
   }
   return response.json();
 }

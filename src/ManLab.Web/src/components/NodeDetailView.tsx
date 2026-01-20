@@ -103,7 +103,7 @@ function NodeDetailHeader({ node, onBack, showBackButton = true }: { node: Node;
                 <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1 font-mono">
                     <span>{node.ipAddress || "No IP"}</span>
                     <span className="text-border">|</span>
-                    <span className="truncate max-w-[200px]" title={node.os ?? undefined}>{node.os || "Unknown OS"}</span>
+                    <span className="truncate max-w-50" title={node.os ?? undefined}>{node.os || "Unknown OS"}</span>
                     <span className="text-border">|</span>
                     <span>v{node.agentVersion || "?"}</span>
                     <span className="text-border">|</span>
@@ -202,7 +202,7 @@ export function NodeDetailView({ nodeId, onBack, showBackButton = true }: NodeDe
             </TabsList>
           </div>
 
-          <div className="pb-10 min-h-[500px]">
+          <div className="pb-10 min-h-125">
             <TabsContent value="overview" className="mt-0 focus-visible:outline-none">
                 <NodeOverviewTab 
                     nodeId={nodeId} 

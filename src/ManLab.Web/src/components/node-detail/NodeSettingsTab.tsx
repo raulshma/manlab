@@ -33,6 +33,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AlertCircle, Power, Activity, RefreshCw, Trash2, ToggleLeft, ToggleRight, Terminal, X, CheckCircle2 } from "lucide-react";
+import { NodeAgentUpdateModal } from "./NodeAgentUpdateModal";
 
 interface NodeSettingsTabProps {
   nodeId: string;
@@ -177,7 +178,7 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
                 }}
                 disabled={updateChannelMutation.isPending}
               >
-                <SelectTrigger className="h-9 w-[180px]">
+                <SelectTrigger className="h-9 w-45">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -203,6 +204,20 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
               <AlertDescription>Update channel saved.</AlertDescription>
             </Alert>
           )}
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle className="text-sm">Agent Version</CardTitle>
+              <CardDescription>
+                Pick a specific agent version from local staging or GitHub releases and reinstall/update this node.
+              </CardDescription>
+            </div>
+            <NodeAgentUpdateModal nodeId={nodeId} hostname={hostname} channel={currentChannel} />
+          </div>
         </CardHeader>
       </Card>
 

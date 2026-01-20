@@ -223,12 +223,22 @@ public sealed class SshProvisioningService
         }
     }
 
+    /// <summary>
+    /// Optional per-install override for where the agent binary should be sourced from.
+    /// </summary>
+    public sealed record AgentInstallOptions(
+        string? Source,
+        string? Channel,
+        string? Version,
+        string? GitHubReleaseBaseUrl);
+
     public async Task<(bool Success, string? HostKeyFingerprint, bool RequiresHostKeyTrust, string Logs)> InstallAgentAsync(
         ConnectionOptions options,
         Uri serverBaseUrl,
         string enrollmentToken,
         bool force,
         bool runAsRoot,
+        AgentInstallOptions? agentInstall,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -262,13 +272,13 @@ public sealed class SshProvisioningService
         if (string.Equals(target.OsFamily, "linux", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(target.OsFamily, "unix", StringComparison.OrdinalIgnoreCase))
         {
-            var logs = await InstallLinuxAsync(client, serverBaseUrl, enrollmentToken, force, runAsRoot, options.SudoPassword, enableLogViewer, enableScripts, enableTerminal, enableFileBrowser, progress, cancellationToken);
+            var logs = await InstallLinuxAsync(client, serverBaseUrl, enrollmentToken, force, runAsRoot, options.SudoPassword, enableLogViewer, enableScripts, enableTerminal, enableFileBrowser, agentInstall, progress, cancellationToken);
             client.Disconnect();
             return (true, hostKey.Fingerprint, false, logs);
         }
         else
         {
-            var logs = await InstallWindowsAsync(client, serverBaseUrl, enrollmentToken, force, enableLogViewer, enableScripts, enableTerminal, enableFileBrowser, progress, cancellationToken);
+            var logs = await InstallWindowsAsync(client, serverBaseUrl, enrollmentToken, force, enableLogViewer, enableScripts, enableTerminal, enableFileBrowser, agentInstall, progress, cancellationToken);
             client.Disconnect();
             return (true, hostKey.Fingerprint, false, logs);
         }
@@ -517,6 +527,7 @@ public sealed class SshProvisioningService
         bool enableScripts,
         bool enableTerminal,
         bool enableFileBrowser,
+        AgentInstallOptions? agentInstall,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -564,27 +575,57 @@ public sealed class SshProvisioningService
 
         var forceArg = force ? " --force" : string.Empty;
 
-        // If GitHub release downloads are enabled in server settings, pass the config directly to the installer.
-        // This avoids relying on python3/jq being installed on minimal Linux images to parse JSON.
+        // Source selection for agent binaries (local vs GitHub).
+        // If agentInstall is null, we preserve legacy behavior: use GitHub settings when enabled.
+        var selectedSource = (agentInstall?.Source ?? string.Empty).Trim().ToLowerInvariant();
+        var selectedChannel = (agentInstall?.Channel ?? string.Empty).Trim();
+        var selectedVersion = (agentInstall?.Version ?? string.Empty).Trim();
+        var selectedGitHubBaseUrl = (agentInstall?.GitHubReleaseBaseUrl ?? string.Empty).Trim();
+
         var githubEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
         var githubBaseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
         var githubVersion = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
 
-        progress.Report($"GitHub settings read: enabled={githubEnabled}, baseUrl={(string.IsNullOrWhiteSpace(githubBaseUrl) ? "<empty>" : githubBaseUrl.Trim())}, version={(string.IsNullOrWhiteSpace(githubVersion) ? "<empty>" : githubVersion.Trim())}.");
-
         var githubArgs = string.Empty;
-        if (githubEnabled && !string.IsNullOrWhiteSpace(githubBaseUrl) && !string.IsNullOrWhiteSpace(githubVersion))
+        var localArgs = string.Empty;
+
+        if (string.Equals(selectedSource, "local", StringComparison.Ordinal))
         {
-            progress.Report($"GitHub Releases download is enabled (base={githubBaseUrl.Trim().TrimEnd('/')}, version={githubVersion.Trim()}).");
-            // Match install.sh flags.
-            githubArgs =
-                " --prefer-github" +
-                $" --github-release-base-url '{EscapeSingleQuotes(githubBaseUrl.Trim())}'" +
-                $" --github-version '{EscapeSingleQuotes(githubVersion.Trim())}'";
+            // Explicit local selection: never pass GitHub flags.
+            // Match install.sh flags we add: --agent-channel / --agent-version.
+            if (!string.IsNullOrWhiteSpace(selectedChannel))
+            {
+                localArgs += $" --agent-channel '{EscapeSingleQuotes(selectedChannel)}'";
+            }
+            if (!string.IsNullOrWhiteSpace(selectedVersion) && !string.Equals(selectedVersion, "staged", StringComparison.OrdinalIgnoreCase))
+            {
+                localArgs += $" --agent-version '{EscapeSingleQuotes(selectedVersion)}'";
+            }
+
+            progress.Report($"Agent source override: local (channel={(string.IsNullOrWhiteSpace(selectedChannel) ? "<default>" : selectedChannel)}, version={(string.IsNullOrWhiteSpace(selectedVersion) ? "staged" : selectedVersion)}).");
         }
         else
         {
-            progress.Report("GitHub Releases download is not enabled (or missing base URL/version); installer may fall back to server-staged binaries.");
+            // GitHub selected OR legacy defaulting.
+            // Apply per-install overrides when provided; otherwise use global settings.
+            var useGitHub = string.Equals(selectedSource, "github", StringComparison.Ordinal) || (string.IsNullOrWhiteSpace(selectedSource) && githubEnabled);
+            var baseUrlToUse = !string.IsNullOrWhiteSpace(selectedGitHubBaseUrl) ? selectedGitHubBaseUrl : githubBaseUrl;
+            var versionToUse = !string.IsNullOrWhiteSpace(selectedVersion) ? selectedVersion : githubVersion;
+
+            progress.Report($"GitHub settings read: enabled={githubEnabled}, baseUrl={(string.IsNullOrWhiteSpace(githubBaseUrl) ? "<empty>" : githubBaseUrl.Trim())}, version={(string.IsNullOrWhiteSpace(githubVersion) ? "<empty>" : githubVersion.Trim())}." );
+
+            if (useGitHub && !string.IsNullOrWhiteSpace(baseUrlToUse) && !string.IsNullOrWhiteSpace(versionToUse))
+            {
+                progress.Report($"Using GitHub Releases for agent download (base={baseUrlToUse.Trim().TrimEnd('/')}, version={versionToUse.Trim()}).");
+                githubArgs =
+                    " --prefer-github" +
+                    $" --github-release-base-url '{EscapeSingleQuotes(baseUrlToUse.Trim())}'" +
+                    $" --github-version '{EscapeSingleQuotes(versionToUse.Trim())}'";
+            }
+            else
+            {
+                progress.Report("GitHub Releases download not selected/enabled (or missing base URL/version); installer will use server-staged binaries.");
+            }
         }
 
         // Add --run-as-root flag if requested
@@ -598,7 +639,7 @@ public sealed class SshProvisioningService
         if (enableFileBrowser) toolArgs += " --enable-file-browser";
 
         // Combine all extra installer arguments
-        var extraArgs = githubArgs + runAsRootArg + toolArgs;
+        var extraArgs = githubArgs + localArgs + runAsRootArg + toolArgs;
 
         var cmd = BuildLinuxInstallCommand(server, url, enrollmentToken, sudoPrefix, forceArg, extraArgs);
 
@@ -666,6 +707,7 @@ public sealed class SshProvisioningService
         bool enableScripts,
         bool enableTerminal,
         bool enableFileBrowser,
+        AgentInstallOptions? agentInstall,
         IProgress<string> progress,
         CancellationToken cancellationToken)
     {
@@ -698,12 +740,35 @@ public sealed class SshProvisioningService
         if (enableTerminal) toolArgs += " -EnableTerminal true";
         if (enableFileBrowser) toolArgs += " -EnableFileBrowser true";
 
+        // Agent source selection (local vs GitHub).
+        var agentArgs = string.Empty;
+        if (agentInstall is not null)
+        {
+            var source = (agentInstall.Source ?? string.Empty).Trim();
+            var channel = (agentInstall.Channel ?? string.Empty).Trim();
+            var version = (agentInstall.Version ?? string.Empty).Trim();
+            var baseUrl = (agentInstall.GitHubReleaseBaseUrl ?? string.Empty).Trim();
+
+            if (string.Equals(source, "local", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrWhiteSpace(channel)) agentArgs += $" -AgentChannel '{EscapeSingleQuotes(channel)}'";
+                if (!string.IsNullOrWhiteSpace(version) && !string.Equals(version, "staged", StringComparison.OrdinalIgnoreCase)) agentArgs += $" -AgentVersion '{EscapeSingleQuotes(version)}'";
+            }
+            else if (string.Equals(source, "github", StringComparison.OrdinalIgnoreCase))
+            {
+                // Base URL is optional; the installer can query server defaults when omitted.
+                agentArgs += " -PreferGitHub";
+                if (!string.IsNullOrWhiteSpace(baseUrl)) agentArgs += $" -GitHubReleaseBaseUrl '{EscapeSingleQuotes(baseUrl)}'";
+                if (!string.IsNullOrWhiteSpace(version)) agentArgs += $" -GitHubVersion '{EscapeSingleQuotes(version)}'";
+            }
+        }
+
         // Download to %TEMP% then execute with parameters.
         // Note: escaping is delicate. Use single quotes around literals where possible.
         var ps = "$ErrorActionPreference='Stop'; " +
                  "$p = Join-Path $env:TEMP 'manlab-install.ps1'; " +
                  $"Invoke-WebRequest -UseBasicParsing -Uri '{EscapeSingleQuotes(url)}' -OutFile $p; " +
-                 $"& $p -Server '{EscapeSingleQuotes(server)}' -AuthToken '{EscapeSingleQuotes(enrollmentToken)}'{forceArg}{toolArgs};";
+             $"& $p -Server '{EscapeSingleQuotes(server)}' -AuthToken '{EscapeSingleQuotes(enrollmentToken)}'{forceArg}{toolArgs}{agentArgs};";
 
         var cmd = $"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{EscapeDoubleQuotes(ps)}\"";
 
