@@ -131,8 +131,8 @@ function StatCard({
   trendLabel?: string;
 }) {
   return (
-    <Card className="relative overflow-hidden border-none shadow-lg bg-linear-to-br from-card to-card/50 backdrop-blur-xl transition-all hover:shadow-xl hover:scale-[1.01] group">
-      <div className="absolute top-0 right-0 -mt-4 -mr-4 h-24 w-24 rounded-full bg-primary/5 blur-3xl group-hover:bg-primary/10 transition-colors" />
+    <Card className="relative overflow-hidden border border-border shadow-sm bg-card transition-all hover:shadow-md hover:scale-[1.01] group">
+      <div className="absolute top-0 right-0 -mt-4 -mr-4 h-24 w-24 rounded-full bg-primary/5 group-hover:bg-primary/10 transition-colors" />
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
         <div className="p-2 rounded-full bg-primary/10 text-primary">
@@ -559,7 +559,7 @@ export function AnalyticsPage() {
             {/* Main Charts Area */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Top Nodes Chart */}
-              <Card className="lg:col-span-2 shadow-sm border-none bg-card/40">
+              <Card className="lg:col-span-2 shadow-sm border border-border bg-card">
                 <CardHeader>
                   <CardTitle>Resource Leaders</CardTitle>
                   <CardDescription>Nodes with the highest current CPU utilization.</CardDescription>
@@ -601,7 +601,7 @@ export function AnalyticsPage() {
               </Card>
 
               {/* Status Distribution */}
-              <Card className="shadow-sm border-none bg-card/40">
+              <Card className="shadow-sm border border-border bg-card">
                 <CardHeader>
                   <CardTitle>Fleet Health</CardTitle>
                   <CardDescription>Distribution of node statuses.</CardDescription>
