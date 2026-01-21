@@ -42,6 +42,18 @@ function pickDefaultSource(catalog: AgentReleaseCatalogResponse): AgentVersionSo
   return hasGitHub ? "github" : "local";
 }
 
+function isGitHubAvailable(catalog: AgentReleaseCatalogResponse, githubTags: string[]): boolean {
+  return (
+    catalog.gitHub.enabled &&
+    !!catalog.gitHub.releaseBaseUrl &&
+    (githubTags.length ?? 0) > 0
+  );
+}
+
+function isLocalAvailable(catalog: AgentReleaseCatalogResponse): boolean {
+  return (catalog.local?.length ?? 0) > 0;
+}
+
 export function AgentVersionPicker({ channel, value, onChange }: AgentVersionPickerProps) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["agentReleaseCatalog", channel],
@@ -65,7 +77,18 @@ export function AgentVersionPicker({ channel, value, onChange }: AgentVersionPic
   useEffect(() => {
     if (!data) return;
 
-    const desiredSource = value.source || pickDefaultSource(data);
+    // Treat the incoming selection as a preference, but never get stuck on a source
+    // that isn't actually available for the current catalog.
+    const preferredSource = value.source;
+    const canUseGitHub = isGitHubAvailable(data, githubTags);
+    const canUseLocal = isLocalAvailable(data);
+
+    const desiredSource: AgentVersionSource =
+      preferredSource === "github" && canUseGitHub
+        ? "github"
+        : preferredSource === "local" && canUseLocal
+          ? "local"
+          : pickDefaultSource(data);
 
     if (desiredSource === "github") {
       const defaultTag =

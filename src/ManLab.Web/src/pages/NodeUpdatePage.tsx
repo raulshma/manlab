@@ -381,8 +381,8 @@ export function NodeUpdatePage() {
   }
 
   const [agentSelectionCore, setAgentSelectionCore] = useState<Pick<AgentVersionSelection, "source" | "version">>({
-    source: "local",
-    version: "staged",
+    source: "github",
+    version: "",
   });
 
   const agentSelection: AgentVersionSelection = useMemo(

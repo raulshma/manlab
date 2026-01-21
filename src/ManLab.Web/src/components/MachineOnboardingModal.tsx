@@ -161,8 +161,8 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   // Agent version selection (used for installs from this modal)
   const [agentChannel, setAgentChannel] = useState("stable");
   const [agentSelection, setAgentSelection] = useState<AgentVersionSelection>({
-    source: "local",
-    version: "staged",
+    source: "github",
+    version: "",
     channel: "stable",
   });
 

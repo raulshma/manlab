@@ -341,6 +341,11 @@ public sealed class OnboardingJobRunner
                     await PublishLogAsync(machineId, $"Waiting for node to report agentVersion='{expectedVersion}'...");
                 }
 
+                var ready = false;
+                var lastReportedNormalized = (string?)null;
+                var lastMismatchLogUtc = DateTime.MinValue;
+                var mismatchLogInterval = TimeSpan.FromSeconds(15);
+
                 while (DateTime.UtcNow < deadline)
                 {
                     var node = await db.Nodes
@@ -349,13 +354,91 @@ public sealed class OnboardingJobRunner
 
                     if (node is not null && node.Status == NodeStatus.Online)
                     {
-                        if (string.IsNullOrWhiteSpace(expectedVersion) || string.Equals(NormalizeVersionString(node.AgentVersion), expectedVersion, StringComparison.OrdinalIgnoreCase))
+                        if (string.IsNullOrWhiteSpace(expectedVersion))
                         {
+                            ready = true;
                             break;
+                        }
+
+                        var reportedNormalized = NormalizeVersionString(node.AgentVersion);
+                        if (!string.IsNullOrWhiteSpace(reportedNormalized)
+                            && string.Equals(reportedNormalized, expectedVersion, StringComparison.OrdinalIgnoreCase))
+                        {
+                            ready = true;
+                            break;
+                        }
+
+                        // Reduce the "stuck" feeling: periodically emit the currently reported version.
+                        // Helpful when the target keeps reconnecting with an older build.
+                        var now = DateTime.UtcNow;
+                        if (now - lastMismatchLogUtc >= mismatchLogInterval)
+                        {
+                            var printable = string.IsNullOrWhiteSpace(node.AgentVersion) ? "<null>" : node.AgentVersion.Trim();
+                            var printableNormalized = string.IsNullOrWhiteSpace(reportedNormalized) ? "<unknown>" : reportedNormalized;
+                            if (!string.Equals(lastReportedNormalized, printableNormalized, StringComparison.OrdinalIgnoreCase))
+                            {
+                                await PublishLogAsync(
+                                    machineId,
+                                    $"Node is online but reports agentVersion='{printable}' (normalized='{printableNormalized}'); expected '{expectedVersion}'. Waiting for update to take effect..."
+                                );
+                                lastReportedNormalized = printableNormalized;
+                            }
+
+                            lastMismatchLogUtc = now;
                         }
                     }
 
                     await Task.Delay(TimeSpan.FromSeconds(3));
+                }
+
+                if (!ready)
+                {
+                    // The installer ran but the node never came online and/or never reported the expected version.
+                    // Fail loudly with diagnostics so the user isn't left waiting indefinitely.
+                    var latest = await db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == targetNodeId);
+                    var reported = latest?.AgentVersion;
+                    var reportedNormalized = NormalizeVersionString(reported);
+
+                    await PublishLogAsync(machineId, "Agent did not reach expected online/version state within timeout. Collecting diagnostics from target...");
+                    try
+                    {
+                        var diagnostics = await ssh.CollectAgentDiagnosticsAsync(connOptions, serverUri, CancellationToken.None);
+                        if (!string.IsNullOrWhiteSpace(diagnostics))
+                        {
+                            await PublishLogAsync(machineId, diagnostics);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        await PublishLogAsync(machineId, "WARNING: Failed to collect target diagnostics: " + ex.Message);
+                    }
+
+                    var err = latest is null
+                        ? "Target node not found after install completed."
+                        : latest.Status != NodeStatus.Online
+                            ? $"Target node did not come online within timeout (status={latest.Status})."
+                            : string.IsNullOrWhiteSpace(expectedVersion)
+                                ? "Target node did not come online within timeout."
+                                : $"Version mismatch after update: reported='{reported ?? "<null>"}' (normalized='{reportedNormalized ?? "<unknown>"}'), expected='{expectedVersion}'.";
+
+                    await FailAsync(db, machine, err, machineId);
+                    TryEmitUpdateCompleted(false, "Agent update failed", err);
+                    rateLimit.RecordFailure(request.RateLimitKey);
+                    await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                    {
+                        TimestampUtc = DateTime.UtcNow,
+                        Actor = request.Actor,
+                        ActorIp = request.ActorIp,
+                        Action = "ssh.install.result",
+                        MachineId = machineId,
+                        Host = machine.Host,
+                        Port = machine.Port,
+                        Username = machine.Username,
+                        HostKeyFingerprint = fingerprint,
+                        Success = false,
+                        Error = err
+                    });
+                    return;
                 }
             }
             else

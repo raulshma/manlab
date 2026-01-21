@@ -614,6 +614,15 @@ public sealed class SshProvisioningService
 
             progress.Report($"GitHub settings read: enabled={githubEnabled}, baseUrl={(string.IsNullOrWhiteSpace(githubBaseUrl) ? "<empty>" : githubBaseUrl.Trim())}, version={(string.IsNullOrWhiteSpace(githubVersion) ? "<empty>" : githubVersion.Trim())}." );
 
+            if (!string.IsNullOrWhiteSpace(selectedGitHubBaseUrl) || !string.IsNullOrWhiteSpace(selectedVersion))
+            {
+                progress.Report(
+                    "GitHub selection override: " +
+                    $"baseUrl={(string.IsNullOrWhiteSpace(selectedGitHubBaseUrl) ? "<default>" : selectedGitHubBaseUrl.Trim())}, " +
+                    $"version={(string.IsNullOrWhiteSpace(selectedVersion) ? "<default>" : selectedVersion.Trim())}."
+                );
+            }
+
             if (useGitHub && !string.IsNullOrWhiteSpace(baseUrlToUse) && !string.IsNullOrWhiteSpace(versionToUse))
             {
                 progress.Report($"Using GitHub Releases for agent download (base={baseUrlToUse.Trim().TrimEnd('/')}, version={versionToUse.Trim()}).");
@@ -757,13 +766,20 @@ public sealed class SshProvisioningService
                 if (!string.IsNullOrWhiteSpace(channel)) agentArgs += $" -AgentChannel '{EscapeSingleQuotes(channel)}'";
                 if (!string.IsNullOrWhiteSpace(version) && !string.Equals(version, "staged", StringComparison.OrdinalIgnoreCase)) agentArgs += $" -AgentVersion '{EscapeSingleQuotes(version)}'";
             }
-            else if (string.Equals(source, "github", StringComparison.OrdinalIgnoreCase))
+            else
             {
+                // Default to preferring GitHub for any non-local selection (including null/empty).
                 // Base URL is optional; the installer can query server defaults when omitted.
                 agentArgs += " -PreferGitHub";
                 if (!string.IsNullOrWhiteSpace(baseUrl)) agentArgs += $" -GitHubReleaseBaseUrl '{EscapeSingleQuotes(baseUrl)}'";
                 if (!string.IsNullOrWhiteSpace(version)) agentArgs += $" -GitHubVersion '{EscapeSingleQuotes(version)}'";
             }
+        }
+        else
+        {
+            // Preserve Linux behavior: prefer GitHub when server settings are enabled/configured,
+            // but allow the installer to fall back to server-staged binaries when not.
+            agentArgs += " -PreferGitHub";
         }
 
         // Download to %TEMP% then execute with parameters.
