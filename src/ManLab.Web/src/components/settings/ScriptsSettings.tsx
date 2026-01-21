@@ -189,7 +189,7 @@ export function ScriptsSettings() {
                 Add Script
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   {editingScriptId ? "Edit Script" : "Create Script"}

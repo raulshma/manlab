@@ -100,7 +100,7 @@ function NodeDetailHeader({ node, onBack, showBackButton = true }: { node: Node;
                         {node.status}
                     </Badge>
                 </div>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1 font-mono">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground mt-1 font-mono">
                     <span>{node.ipAddress || "No IP"}</span>
                     <span className="text-border">|</span>
                     <span className="truncate max-w-50" title={node.os ?? undefined}>{node.os || "Unknown OS"}</span>
@@ -161,14 +161,14 @@ export function NodeDetailView({ nodeId, onBack, showBackButton = true }: NodeDe
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <div className="max-w-7xl mx-auto w-full px-6 flex-1 flex flex-col">
+      <div className="max-w-7xl mx-auto w-full px-4 md:px-6 flex-1 flex flex-col">
         {/* Minimal Header */}
         <NodeDetailHeader node={node} onBack={onBack} showBackButton={showBackButton} />
 
         {/* Tabs Interface */}
         <Tabs defaultValue="overview" className="flex-1 flex flex-col space-y-6">
           <div className="border-b border-border">
-            <TabsList className="bg-transparent h-auto p-0 gap-6">
+            <TabsList className="bg-transparent h-auto p-0 gap-x-6 gap-y-2 flex-wrap justify-start">
               <TabsTrigger
                 value="overview"
                 className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-0 py-3 text-muted-foreground hover:text-foreground transition-all"

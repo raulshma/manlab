@@ -26,7 +26,10 @@ import {
   PanelLeft,
   PanelLeftClose,
   Server,
+  ArrowLeft,
 } from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 function StatusDot({ status }: { status: NodeStatus }) {
   const cls =
@@ -38,13 +41,14 @@ function StatusDot({ status }: { status: NodeStatus }) {
           ? "bg-yellow-500"
           : "bg-muted";
 
-  return <div className={`w-2 h-2 rounded-full flex-shrink-0 ${cls}`} />;
+  return <div className={`w-2 h-2 rounded-full shrink-0 ${cls}`} />;
 }
 
 export function FileBrowserPage() {
   const [query, setQuery] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const isMobile = useIsMobile();
 
   const {
     data: nodes,
@@ -75,7 +79,7 @@ export function FileBrowserPage() {
   const effectiveSelectedId =
     selectedNodeId && filtered.find((n) => n.id === selectedNodeId)
       ? selectedNodeId
-      : filtered.length > 0
+      : !isMobile && filtered.length > 0
         ? filtered[0].id
         : null;
 
@@ -84,16 +88,23 @@ export function FileBrowserPage() {
     return (nodes ?? []).find((n) => n.id === effectiveSelectedId) ?? null;
   }, [nodes, effectiveSelectedId]);
 
+  // If mobile and a node is selected, show details. Otherwise show list.
+  const showList = !isMobile || !effectiveSelectedId;
+  const showDetails = !isMobile || effectiveSelectedId;
+
   return (
-    <div className="flex h-[calc(100vh-5rem)] -m-4 -mb-8">
+    <div className="flex h-[calc(100vh-5rem)] -m-4 -mb-8 relative overflow-hidden">
       {/* Sidebar */}
       <div
-        className={`flex flex-col border-r border-border bg-sidebar transition-all duration-200 ${
-          sidebarCollapsed ? "w-12" : "w-80"
-        }`}
+        className={cn(
+          "flex flex-col border-r border-border bg-sidebar transition-all duration-300 absolute inset-0 z-20 md:relative md:z-0",
+          sidebarCollapsed ? "md:w-12" : "md:w-80",
+          showList ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+          !showList && isMobile && "invisible"
+        )}
       >
         <div className="flex items-center justify-between p-2 border-b border-border">
-          {!sidebarCollapsed ? (
+          {(!sidebarCollapsed || isMobile) ? (
             <div className="flex items-center gap-2 px-2">
               <Folder className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold">File Browser</h2>
@@ -104,21 +115,23 @@ export function FileBrowserPage() {
             </div>
           )}
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          >
-            {sidebarCollapsed ? (
-              <PanelLeft className="h-4 w-4" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4" />
-            )}
-          </Button>
+          {!isMobile && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeft className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </Button>
+          )}
         </div>
 
-        {!sidebarCollapsed && (
+        {(!sidebarCollapsed || isMobile) && (
           <div className="p-2 space-y-2 border-b border-border">
             <Input
               value={query}
@@ -130,11 +143,11 @@ export function FileBrowserPage() {
         )}
 
         <ScrollArea className="flex-1">
-          <div className={sidebarCollapsed ? "p-1" : "p-2 space-y-1"}>
+          <div className={sidebarCollapsed && !isMobile ? "p-1" : "p-2 space-y-1"}>
             {isLoading &&
               [...Array(6)].map((_, i) => (
-                <div key={i} className={`rounded-md ${sidebarCollapsed ? "p-1" : "p-2"}`}>
-                  {sidebarCollapsed ? (
+                <div key={i} className={`rounded-md ${sidebarCollapsed && !isMobile ? "p-1" : "p-2"}`}>
+                  {sidebarCollapsed && !isMobile ? (
                     <Skeleton className="w-8 h-8 rounded-md" />
                   ) : (
                     <div className="flex items-center gap-2">
@@ -148,7 +161,7 @@ export function FileBrowserPage() {
                 </div>
               ))}
 
-            {isError && !sidebarCollapsed && (
+            {isError && (!sidebarCollapsed || isMobile) && (
               <Alert variant="destructive" className="mx-1">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
@@ -158,7 +171,7 @@ export function FileBrowserPage() {
               </Alert>
             )}
 
-            {!isLoading && !isError && filtered.length === 0 && !sidebarCollapsed && (
+            {!isLoading && !isError && filtered.length === 0 && (!sidebarCollapsed || isMobile) && (
               <Empty className="py-8 border-0">
                 <EmptyMedia variant="icon">
                   <Server />
@@ -173,7 +186,7 @@ export function FileBrowserPage() {
               filtered.map((node: Node) => {
                 const isSelected = node.id === effectiveSelectedId;
 
-                if (sidebarCollapsed) {
+                if (sidebarCollapsed && !isMobile) {
                   return (
                     <button
                       key={node.id}
@@ -192,9 +205,10 @@ export function FileBrowserPage() {
                   <button
                     key={node.id}
                     onClick={() => setSelectedNodeId(node.id)}
-                    className={`w-full text-left p-2 rounded-md transition-colors flex items-center gap-2 ${
+                    className={cn(
+                      "w-full text-left p-2 rounded-md transition-colors flex items-center gap-2",
                       isSelected ? "bg-accent" : "hover:bg-accent/50"
-                    }`}
+                    )}
                   >
                     <StatusDot status={node.status} />
                     <div className="flex-1 min-w-0">
@@ -215,8 +229,24 @@ export function FileBrowserPage() {
       </div>
 
       {/* Main */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div
+        className={cn(
+          "flex-1 flex flex-col overflow-hidden bg-background transition-all duration-300 md:translate-x-0 relative",
+          isMobile && showDetails ? "translate-x-0" : isMobile ? "translate-x-full fixed inset-0 z-30" : ""
+        )}
+      >
         <div className="flex-1 overflow-auto p-4 pb-16">
+          {isMobile && selectedNode && (
+            <Button
+              variant="ghost"
+              onClick={() => setSelectedNodeId(null)}
+              className="mb-4 -ml-2 text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Nodes
+            </Button>
+          )}
+
           {selectedNode ? (
             <RemoteFileBrowser nodeId={selectedNode.id} nodeStatus={selectedNode.status} autoOpen />
           ) : (
@@ -238,3 +268,4 @@ export function FileBrowserPage() {
     </div>
   );
 }
+

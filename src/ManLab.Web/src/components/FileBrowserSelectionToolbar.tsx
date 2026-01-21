@@ -99,7 +99,7 @@ export function FileBrowserSelectionToolbar({
   }
 
   return (
-    <div className="flex items-center justify-between gap-4 rounded-md border border-border bg-muted/50 px-3 py-2">
+    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-4 rounded-md border border-border bg-muted/50 px-3 py-2">
       {/* Selection info - Requirements: 8.3 */}
       <div className="flex items-center gap-3">
         <Badge variant="secondary" className="text-xs">

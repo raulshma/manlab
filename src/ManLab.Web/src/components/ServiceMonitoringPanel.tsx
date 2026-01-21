@@ -257,7 +257,7 @@ export function ServiceMonitoringPanel({
                   Add Service
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-h-[85vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Add Service to Monitor</DialogTitle>
                   <DialogDescription>
@@ -424,7 +424,7 @@ export function ServiceMonitoringPanel({
 
         {/* Edit Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent>
+          <DialogContent className="max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit Service</DialogTitle>
               <DialogDescription>

@@ -535,7 +535,7 @@ export function AnalyticsPage() {
 
   return (
     <div className="min-h-screen bg-background/50">
-      <div className="mx-auto max-w-7xl space-y-8 p-6 lg:p-10">
+      <div className="mx-auto max-w-7xl space-y-8 p-4 md:p-6 lg:p-10">
         
         {/* Header Section */}
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -567,7 +567,7 @@ export function AnalyticsPage() {
           className="space-y-8"
         >
           <div className="flex items-center justify-between">
-             <TabsList className="h-11 items-stretch p-1 bg-muted/60 backdrop-blur-sm">
+             <TabsList className="h-auto flex-wrap gap-2 items-stretch p-1 bg-muted/60 backdrop-blur-sm">
                 <TabsTrigger value="fleet" className="px-6 text-sm">
                    <LayoutDashboard className="h-4 w-4 mr-2 opacity-70" />
                    Fleet Overview

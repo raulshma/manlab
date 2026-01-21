@@ -731,7 +731,7 @@ export function LocalAgentCard() {
       </Collapsible>
 
       <AlertDialog open={removeNodePrompt.open} onOpenChange={(open) => !open && closeRemoveNodePrompt()}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Remove the node too?</AlertDialogTitle>
             <AlertDialogDescription>

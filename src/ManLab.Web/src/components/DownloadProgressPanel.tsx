@@ -395,7 +395,7 @@ export function DownloadProgressPanel({
       open={isOpen}
       onOpenChange={setIsOpen}
       className={`border-t border-border bg-background ${
-        position === "bottom" ? "fixed bottom-0 left-0 right-0 z-50" : ""
+        position === "bottom" ? "absolute bottom-0 inset-x-0 z-50" : ""
       }`}
     >
       {/* Trigger header - Requirements: 7.1, 7.8 */}

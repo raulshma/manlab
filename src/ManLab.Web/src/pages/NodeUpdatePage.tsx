@@ -456,7 +456,7 @@ export function NodeUpdatePage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <div className="max-w-7xl mx-auto w-full px-6 flex-1 flex flex-col pt-6 pb-12">
+      <div className="max-w-7xl mx-auto w-full px-4 md:px-6 flex-1 flex flex-col pt-6 pb-12">
         {/* Header */}
         <div className="flex items-center gap-4 mb-8">
           <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="-ml-2">
@@ -761,7 +761,7 @@ export function NodeUpdatePage() {
             </Card>
 
             {/* Logs Card - Always visible if there are logs or status */}
-            <Card className="flex-1 flex flex-col min-h-125">
+            <Card className="flex-1 flex flex-col min-h-[300px] md:min-h-[500px]">
                 <CardHeader className="py-4">
                     <div className="flex items-center justify-between">
                          <CardTitle className="text-lg flex items-center gap-2">
@@ -788,7 +788,7 @@ export function NodeUpdatePage() {
                        <div className="w-2.5 h-2.5 rounded-full bg-green-500/20 border border-green-500/50" />
                        <div className="ml-2 text-xs font-mono text-muted-foreground">bash — ssh session</div>
                      </div>
-                     <ScrollArea className="flex-1 h-125">
+                     <ScrollArea className="flex-1 h-[300px] md:h-[500px]">
                         <div ref={logScrollRef} className="p-4 font-mono text-xs leading-relaxed">
                              {logs.length === 0 ? (
                                 <div className="h-full flex flex-col items-center justify-center text-muted-foreground/40 gap-2 min-h-50">

@@ -44,7 +44,7 @@ function StatsCards() {
   const offlineNodes = nodes?.filter((n) => n.status === "Offline").length ?? 0;
 
   return (
-    <div className="flex w-full flex-col gap-6 sm:flex-row sm:items-center sm:gap-10 border-b pb-6">
+    <div className="grid grid-cols-3 gap-4 w-full sm:flex sm:flex-row sm:items-center sm:gap-10 border-b pb-6">
       <StatsItem label="Total Nodes" value={totalNodes} icon={Server} />
       <div className="hidden h-10 w-px bg-border sm:block" />
       <StatsItem label="Online" value={onlineNodes} icon={Laptop} />
@@ -58,7 +58,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 p-6">
+    <div className="mx-auto max-w-6xl space-y-8 p-4 md:p-6">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>

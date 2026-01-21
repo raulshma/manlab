@@ -374,7 +374,7 @@ export function AuditLogsPage() {
         </div>
 
         <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-          <DialogContent className="max-w-3xl">
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="font-mono text-sm">{selected?.eventName}</DialogTitle>
               <DialogDescription>

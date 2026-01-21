@@ -78,7 +78,7 @@ export function LogViewerPage() {
             <Skeleton className="h-10 w-64" />
           ) : (
             <Select value={selectedNodeId} onValueChange={(v) => setNodeId(v ?? "")}>
-              <SelectTrigger className="w-72">
+              <SelectTrigger className="w-full md:w-72">
                 <SelectValue>
                   {selectedNode
                     ? `${selectedNode.hostname} (${selectedNode.status})`

@@ -56,7 +56,7 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="space-y-6 container mx-auto max-w-4xl pb-10">
+    <div className="space-y-6 container mx-auto max-w-4xl pb-10 px-4 md:px-6">
       <div>
         <h3 className="text-lg font-medium">Settings</h3>
         <p className="text-sm text-muted-foreground">
@@ -64,7 +64,7 @@ export function SettingsPage() {
         </p>
       </div>
       <Tabs defaultValue="general" className="w-full">
-        <TabsList>
+        <TabsList className="w-full flex-wrap h-auto">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="scripts">Scripts</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>

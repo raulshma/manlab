@@ -1279,7 +1279,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       >
         <DialogTitle className="sr-only">Machine Onboarding</DialogTitle>
         {/* Left Sidebar: Compact Machine List */}
-        <div className="w-full md:w-64 shrink-0 flex flex-col border-r bg-muted/5">
+        <div className="w-full md:w-64 shrink-0 flex flex-col border-r bg-muted/5 max-h-[35%] md:max-h-full">
           <div className="px-3 py-2 border-b flex items-center justify-between bg-background">
             <h2 className="font-semibold text-xs tracking-tight">Machines</h2>
             <div className="flex items-center gap-1">
@@ -1425,7 +1425,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         </div>
 
         {/* Right Content: Selected Machine Details */}
-        <div className="flex-1 flex flex-col h-full bg-background relative">
+        <div className="flex-1 flex flex-col min-h-0 bg-background relative">
           {!selected ? (
             <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-6">
               <div className="w-12 h-12 rounded-full bg-muted/30 flex items-center justify-center mb-3 text-xl">⚡</div>

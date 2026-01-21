@@ -24,6 +24,8 @@ import { MachineOnboardingModal } from "@/components/MachineOnboardingModal";
 import { NodeDetailView } from "@/components/NodeDetailView";
 import { fetchNodes } from "@/api";
 import type { Node, NodeStatus } from "@/types";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 function StatusPill({ status }: { status: NodeStatus | "All" }) {
   if (status === "All") return <Badge variant="outline">All</Badge>;
@@ -52,6 +54,7 @@ export function NodesPage() {
   const [status, setStatus] = useState<NodeStatus | "All">("All");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const isMobile = useIsMobile();
 
   const {
     data: nodes,
@@ -81,25 +84,32 @@ export function NodesPage() {
       });
   }, [nodes, query, status]);
 
-  // Auto-select first node if none is selected
+  // Auto-select first node if none is selected (Desktop only)
   const effectiveSelectedId =
     selectedNodeId && filtered.find((n) => n.id === selectedNodeId)
       ? selectedNodeId
-      : filtered.length > 0
+      : !isMobile && filtered.length > 0
       ? filtered[0].id
       : null;
 
+  // If mobile and a node is selected, show details. Otherwise show list.
+  const showList = !isMobile || !effectiveSelectedId;
+  const showDetails = !isMobile || effectiveSelectedId;
+
   return (
-    <div className="flex h-[calc(100vh-5rem)] -m-4 -mb-8">
+    <div className="flex h-[calc(100vh-5rem)] -m-4 -mb-8 relative overflow-hidden">
       {/* Sidebar Panel */}
       <div
-        className={`flex flex-col border-r border-border bg-sidebar transition-all duration-200 ${
-          sidebarCollapsed ? "w-12" : "w-80"
-        }`}
+        className={cn(
+          "flex flex-col border-r border-border bg-sidebar transition-all duration-300 absolute inset-0 z-20 md:relative md:z-0",
+          sidebarCollapsed ? "md:w-12" : "md:w-80",
+          showList ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+          !showList && isMobile && "invisible" // Hide from access tree when offscreen on mobile
+        )}
       >
         {/* Sidebar Header */}
         <div className="flex items-center justify-between p-2 border-b border-border">
-          {!sidebarCollapsed && (
+          {(!sidebarCollapsed || isMobile) && (
             <>
               <h2 className="text-sm font-semibold px-2">Nodes</h2>
               <div className="flex items-center gap-1">
@@ -113,22 +123,24 @@ export function NodesPage() {
               </div>
             </>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          >
-            {sidebarCollapsed ? (
-              <PanelLeft className="h-4 w-4" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4" />
-            )}
-          </Button>
+          {!isMobile && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeft className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </Button>
+          )}
         </div>
 
-        {/* Filter Controls - hidden when collapsed */}
-        {!sidebarCollapsed && (
+        {/* Filter Controls - hidden when collapsed (Desktop) */}
+        {(!sidebarCollapsed || isMobile) && (
           <div className="p-2 space-y-2 border-b border-border">
             <Input
               value={query}
@@ -156,15 +168,17 @@ export function NodesPage() {
 
         {/* Node List */}
         <ScrollArea className="flex-1">
-          <div className={sidebarCollapsed ? "p-1" : "p-2 space-y-1"}>
+          <div className={sidebarCollapsed && !isMobile ? "p-1" : "p-2 space-y-1"}>
             {/* Loading Skeletons */}
             {isLoading &&
               [...Array(5)].map((_, i) => (
                 <div
                   key={i}
-                  className={`rounded-md ${sidebarCollapsed ? "p-1" : "p-2"}`}
+                  className={`rounded-md ${
+                    sidebarCollapsed && !isMobile ? "p-1" : "p-2"
+                  }`}
                 >
-                  {sidebarCollapsed ? (
+                  {sidebarCollapsed && !isMobile ? (
                     <Skeleton className="w-8 h-8 rounded-md" />
                   ) : (
                     <div className="flex items-center gap-2">
@@ -179,7 +193,7 @@ export function NodesPage() {
               ))}
 
             {/* Error State */}
-            {isError && !sidebarCollapsed && (
+            {isError && (!sidebarCollapsed || isMobile) && (
               <Alert variant="destructive" className="mx-1">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
@@ -192,17 +206,20 @@ export function NodesPage() {
             )}
 
             {/* Empty State */}
-            {!isLoading && !isError && filtered.length === 0 && !sidebarCollapsed && (
-              <Empty className="py-8 border-0">
-                <EmptyMedia variant="icon">
-                  <Server />
-                </EmptyMedia>
-                <EmptyTitle>No nodes found</EmptyTitle>
-                <EmptyDescription>
-                  Try adjusting your search or filters
-                </EmptyDescription>
-              </Empty>
-            )}
+            {!isLoading &&
+              !isError &&
+              filtered.length === 0 &&
+              (!sidebarCollapsed || isMobile) && (
+                <Empty className="py-8 border-0">
+                  <EmptyMedia variant="icon">
+                    <Server />
+                  </EmptyMedia>
+                  <EmptyTitle>No nodes found</EmptyTitle>
+                  <EmptyDescription>
+                    Try adjusting your search or filters
+                  </EmptyDescription>
+                </Empty>
+              )}
 
             {/* Node List Items */}
             {!isLoading &&
@@ -218,7 +235,7 @@ export function NodesPage() {
                     ? "bg-yellow-500"
                     : "bg-muted";
 
-                if (sidebarCollapsed) {
+                if (sidebarCollapsed && !isMobile) {
                   // Collapsed view - just status indicator
                   return (
                     <button
@@ -247,11 +264,10 @@ export function NodesPage() {
                   <button
                     key={node.id}
                     onClick={() => setSelectedNodeId(node.id)}
-                    className={`w-full text-left p-2 rounded-md transition-colors flex items-center gap-2 ${
-                      isSelected
-                        ? "bg-accent"
-                        : "hover:bg-accent/50"
-                    }`}
+                    className={cn(
+                      "w-full text-left p-2 rounded-md transition-colors flex items-center gap-2",
+                      isSelected ? "bg-accent" : "hover:bg-accent/50"
+                    )}
                   >
                     <div
                       className={`w-2 h-2 rounded-full shrink-0 ${statusColor} ${
@@ -290,7 +306,7 @@ export function NodesPage() {
         </ScrollArea>
 
         {/* Sidebar Footer */}
-        {!isLoading && !isError && !sidebarCollapsed && (
+        {!isLoading && !isError && (!sidebarCollapsed || isMobile) && (
           <div className="p-2 border-t border-border text-xs text-muted-foreground text-center">
             {filtered.length} of {nodes?.length ?? 0} nodes
           </div>
@@ -298,12 +314,18 @@ export function NodesPage() {
       </div>
 
       {/* Main Content - Node Details */}
-      <div className="flex-1 overflow-auto">
+      <div
+        className={cn(
+          "flex-1 overflow-auto bg-background transition-all duration-300 md:translate-x-0",
+          // Mobile: slide in when details shown
+          isMobile && showDetails ? "translate-x-0" : isMobile ? "translate-x-full fixed inset-0 z-30" : ""
+        )}
+      >
         {effectiveSelectedId ? (
           <NodeDetailView
             nodeId={effectiveSelectedId}
             onBack={() => setSelectedNodeId(null)}
-            showBackButton={false}
+            showBackButton={isMobile}
           />
         ) : (
           <Empty className="h-full border-0">
@@ -321,3 +343,4 @@ export function NodesPage() {
     </div>
   );
 }
+
