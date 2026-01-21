@@ -3,7 +3,7 @@
  * Shows script selector, run button, and history with output tails.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchScripts,
@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { ConfirmationModal } from "@/components/ConfirmationModal";
 import {
   Collapsible,
   CollapsibleContent,
@@ -122,6 +123,13 @@ export function ScriptRunnerPanel({
     refetchInterval: 5000,
   });
 
+  const activeRuns = useMemo(() => {
+    const list = runs ?? [];
+    return list.filter(
+      (r) => r.status === "Queued" || r.status === "Sent" || r.status === "InProgress"
+    );
+  }, [runs]);
+
   // Create script run mutation
   const runMutation = useMutation({
     mutationFn: () => createScriptRun(nodeId, selectedScriptId),
@@ -133,6 +141,32 @@ export function ScriptRunnerPanel({
   // Cancel script run mutation
   const cancelMutation = useMutation({
     mutationFn: (runId: string) => cancelScriptRun(runId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["scriptRuns", nodeId] });
+    },
+  });
+
+  const cancelAllRunningMutation = useMutation({
+    mutationFn: async (runIds: string[]) => {
+      const succeeded: string[] = [];
+      const failed: Array<{ id: string; error: unknown }> = [];
+
+      for (const id of runIds)
+      {
+        try
+        {
+          // eslint-disable-next-line no-await-in-loop
+          await cancelScriptRun(id);
+          succeeded.push(id);
+        }
+        catch (error)
+        {
+          failed.push({ id, error });
+        }
+      }
+
+      return { succeeded, failed };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scriptRuns", nodeId] });
     },
@@ -201,18 +235,85 @@ export function ScriptRunnerPanel({
               ))}
             </SelectContent>
           </Select>
-          <Button
-            onClick={handleRun}
-            disabled={!selectedScriptId || !isOnline || runMutation.isPending}
-          >
-            {runMutation.isPending ? (
-              <Spinner className="h-4 w-4 mr-2" />
-            ) : (
-              <Play className="h-4 w-4 mr-2" />
-            )}
-            Run
-          </Button>
+
+          {activeRuns.length > 0 ? (
+            <ConfirmationModal
+              trigger={
+                <Button
+                  disabled={!selectedScriptId || !isOnline || runMutation.isPending}
+                >
+                  {runMutation.isPending ? (
+                    <Spinner className="h-4 w-4 mr-2" />
+                  ) : (
+                    <Play className="h-4 w-4 mr-2" />
+                  )}
+                  Run
+                </Button>
+              }
+              title="Scripts already running"
+              message={`This node has ${activeRuns.length} running/queued script run(s). You can cancel them (force close) before starting a new script.`}
+              confirmText="Cancel running scripts & Run"
+              isDestructive
+              isLoading={cancelAllRunningMutation.isPending || runMutation.isPending}
+              details={
+                <div className="space-y-2">
+                  <div className="text-xs text-muted-foreground">
+                    Active runs:
+                  </div>
+                  <ul className="list-disc pl-5 text-xs">
+                    {activeRuns.map((r) => (
+                      <li key={r.id} className="font-mono">
+                        {getScriptName(r.scriptId)} — {r.status} — {r.id.slice(0, 8)}
+                      </li>
+                    ))}
+                  </ul>
+                  {cancelAllRunningMutation.isError ? (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        {cancelAllRunningMutation.error instanceof Error
+                          ? cancelAllRunningMutation.error.message
+                          : "Failed to cancel one or more running scripts"}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                </div>
+              }
+              onConfirm={async () => {
+                const runIds = activeRuns.map((r) => r.id);
+                const result = await cancelAllRunningMutation.mutateAsync(runIds);
+
+                if (result.failed.length > 0)
+                {
+                  // Best-effort: still allow the user to try running; the agent/server may deny if concurrency is not allowed.
+                  // Surface failures via error toast-like UI in the panel (mutation error is handled above).
+                }
+
+                handleRun();
+              }}
+            />
+          ) : (
+            <Button
+              onClick={handleRun}
+              disabled={!selectedScriptId || !isOnline || runMutation.isPending}
+            >
+              {runMutation.isPending ? (
+                <Spinner className="h-4 w-4 mr-2" />
+              ) : (
+                <Play className="h-4 w-4 mr-2" />
+              )}
+              Run
+            </Button>
+          )}
         </div>
+
+        {activeRuns.length > 0 && (
+          <Alert className="mb-4">
+            <AlertDescription>
+              {activeRuns.length} script run(s) currently running/queued. Use “Run” to cancel them before starting a new script.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {runMutation.isError && (
           <Alert variant="destructive" className="mb-4">

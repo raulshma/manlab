@@ -72,15 +72,14 @@ export function ConfirmationModal({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription className="space-y-3">
-            <div>{message}</div>
-            {details ? (
-              <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                {details}
-              </div>
-            ) : null}
-          </AlertDialogDescription>
+          <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
+
+        {details ? (
+          <div className="rounded-md border bg-muted/30 p-3 text-sm">
+            {details}
+          </div>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={loading}>{cancelText}</AlertDialogCancel>
           <AlertDialogAction

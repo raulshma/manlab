@@ -16,12 +16,20 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import {
   fetchNode,
   fetchOnboardingMachineForNode,
   fetchSuggestedServerBaseUrl,
   installAgent,
+  updateMachineConfiguration,
   fetchNodeSettings,
   fetchAuditEvents,
 } from "@/api";
@@ -194,11 +202,127 @@ export function NodeUpdatePage() {
     staleTime: 60_000,
   });
 
-  const effectiveServerBaseUrl = useMemo(() => {
-    const suggested = suggestedUrlQuery.data?.serverBaseUrl ?? "";
-    if (!machine) return suggested;
-    return machine.serverBaseUrlOverride ?? suggested;
-  }, [machine, suggestedUrlQuery.data]);
+  // The installer expects a *server base URL* (origin), not an API URL and not a hub URL.
+  // Examples:
+  //   ✅ http://192.168.1.10:5247
+  //   ❌ http://192.168.1.10:5247/api
+  //   ❌ http://192.168.1.10:5247/hubs/agent
+  const normalizeAgentServerBaseUrl = (value: string): string => {
+    const trimmed = (value ?? "").trim();
+    if (!trimmed) return "";
+
+    const toUrl = (v: string): URL | null => {
+      try {
+        if (/^https?:\/\//i.test(v)) return new URL(v);
+        if (v.startsWith("//")) return new URL(`${window.location.protocol}${v}`);
+        if (v.startsWith("/")) return new URL(v, window.location.origin);
+        // Back-compat: host[:port] without scheme
+        return new URL(`http://${v}`);
+      } catch {
+        return null;
+      }
+    };
+
+    // If it's a URL, always reduce to origin; paths like /api or /hubs/agent are not valid for installers.
+    const u = toUrl(trimmed);
+    if (u) return u.origin;
+
+    // Fallback: try to strip common suffixes in non-URL inputs.
+    return trimmed
+      .replace(/\/+$/, "")
+      .replace(/\/(api|hubs\/agent)(\/.*)?$/i, "")
+      .trim();
+  };
+
+  // Server URL selection (mirrors onboarding behavior; persisted to the linked onboarding machine)
+  // Local override that takes precedence over persisted machine config once the user edits.
+  // We avoid hydrating state from an effect; instead we derive defaults from `machine` unless the user changes it.
+  const [serverBaseUrlOverride, setServerBaseUrlOverride] = useState<string | null>(null);
+  const [useCustomServerUrl, setUseCustomServerUrl] = useState(false);
+  const [serverBaseUrlDirty, setServerBaseUrlDirty] = useState(false);
+
+  // Persisted preference from onboarding machine (set during install/update and editable via configuration endpoint)
+  const persistedServerBaseUrlOverride = machine?.serverBaseUrlOverride ?? null;
+
+  // Current effective override value: local (if user changed) else persisted.
+  const selectedServerBaseUrlOverride = useMemo(() => {
+    if (serverBaseUrlDirty) return serverBaseUrlOverride;
+    return persistedServerBaseUrlOverride;
+  }, [persistedServerBaseUrlOverride, serverBaseUrlOverride, serverBaseUrlDirty]);
+
+  // Compute serverBaseUrl as a derived value.
+  // Priority: user override > env var > suggested URL from backend > window origin
+  const serverBaseUrl = useMemo(() => {
+    if (selectedServerBaseUrlOverride !== null) {
+      return selectedServerBaseUrlOverride;
+    }
+    if (import.meta.env.VITE_SERVER_BASE_URL) {
+      return import.meta.env.VITE_SERVER_BASE_URL as string;
+    }
+    const suggested = suggestedUrlQuery.data?.serverBaseUrl?.trim();
+    if (suggested) {
+      return suggested;
+    }
+    return import.meta.env.VITE_API_URL ?? window.location.origin;
+  }, [selectedServerBaseUrlOverride, suggestedUrlQuery.data]);
+
+  const effectiveServerBaseUrl = useMemo(
+    () => normalizeAgentServerBaseUrl(serverBaseUrl),
+    [serverBaseUrl]
+  );
+
+  const availableServerUrls = useMemo(() => {
+    const urlSet = new Set<string>();
+
+    if (suggestedUrlQuery.data?.allServerUrls) {
+      for (const url of suggestedUrlQuery.data.allServerUrls) {
+        const normalized = normalizeAgentServerBaseUrl(url);
+        if (normalized) urlSet.add(normalized);
+      }
+    }
+
+    if (import.meta.env.VITE_SERVER_BASE_URL) {
+      const normalized = normalizeAgentServerBaseUrl(import.meta.env.VITE_SERVER_BASE_URL as string);
+      if (normalized) urlSet.add(normalized);
+    }
+
+    const originNormalized = normalizeAgentServerBaseUrl(window.location.origin);
+    if (originNormalized) urlSet.add(originNormalized);
+
+    if (selectedServerBaseUrlOverride) {
+      const normalized = normalizeAgentServerBaseUrl(selectedServerBaseUrlOverride);
+      if (normalized) urlSet.add(normalized);
+    }
+
+    return Array.from(urlSet);
+  }, [suggestedUrlQuery.data, selectedServerBaseUrlOverride]);
+
+  const updateConfigurationMutation = useMutation({
+    mutationFn: async (input: { serverBaseUrlOverride?: string | null }) => {
+      if (!machine) throw new Error("No onboarding machine linked to this node.");
+      return updateMachineConfiguration(machine.id, input);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["onboardingMachineForNode", nodeId] });
+      // Keep local state aligned with persisted server config.
+      setServerBaseUrlDirty(false);
+      setServerBaseUrlOverride(null);
+    },
+    onError: (err) => {
+      toast.error("Failed to save server URL preference", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    },
+  });
+
+  const handleServerBaseUrlChange = (value: string) => {
+    setServerBaseUrlDirty(true);
+    setServerBaseUrlOverride(value);
+    // Persist the chosen URL so the next update starts with this selection.
+    updateConfigurationMutation.mutate({ serverBaseUrlOverride: value });
+  };
+
+  // (effectiveServerBaseUrl is now derived from the selector above)
 
   // --- SignalR for Logs ---
   useEffect(() => {
@@ -276,6 +400,20 @@ export function NodeUpdatePage() {
       }
 
       resetProgress();
+
+      // Ensure the selected server URL is persisted before starting an update.
+      // NOTE: The server-side configuration endpoint treats empty string as "clear override".
+      if (serverBaseUrlDirty) {
+        const desired = (serverBaseUrlOverride ?? "").trim();
+        const persisted = (persistedServerBaseUrlOverride ?? "").trim();
+        if (desired !== persisted)
+        {
+          await updateMachineConfiguration(machine.id, { serverBaseUrlOverride: desired });
+          await queryClient.invalidateQueries({ queryKey: ["onboardingMachineForNode", nodeId] });
+          setServerBaseUrlDirty(false);
+          setServerBaseUrlOverride(null);
+        }
+      }
 
       return await installAgent(machine.id, {
         serverBaseUrl: effectiveServerBaseUrl,
@@ -398,6 +536,98 @@ export function NodeUpdatePage() {
                                     onChange={(next) => setAgentSelectionCore({ source: next.source, version: next.version })}
                                     />
                                 </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="text-sm font-medium">Server URL (for agent install/update)</div>
+                              <div className="text-xs text-muted-foreground">
+                                Pick the ManLab <span className="font-mono">origin</span> the agent should connect to (e.g., <span className="font-mono">http://host:8080</span>).
+                              </div>
+
+                              {availableServerUrls.length > 1 && !useCustomServerUrl ? (
+                                <div className="flex gap-2">
+                                  <Select
+                                    value={effectiveServerBaseUrl || ""}
+                                    onValueChange={(val) => {
+                                      if (val === null) return;
+                                      if (val === "__custom__") {
+                                        setUseCustomServerUrl(true);
+                                        // Start from the currently effective URL when switching to custom.
+                                        handleServerBaseUrlChange(effectiveServerBaseUrl || "");
+                                      } else {
+                                        setUseCustomServerUrl(false);
+                                        handleServerBaseUrlChange(val);
+                                      }
+                                    }}
+                                  >
+                                    <SelectTrigger className="font-mono text-xs h-9 flex-1">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {availableServerUrls.map((url) => (
+                                        <SelectItem key={url} value={url} className="font-mono text-xs">
+                                          {url}
+                                        </SelectItem>
+                                      ))}
+                                      <SelectItem value="__custom__" className="text-xs">
+                                        Custom...
+                                      </SelectItem>
+                                    </SelectContent>
+                                  </Select>
+
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={updateConfigurationMutation.isPending}
+                                    onClick={() => {
+                                      // Revert to suggested URL by clearing the override (persist empty -> null).
+                                      setServerBaseUrlDirty(true);
+                                      setUseCustomServerUrl(false);
+                                      setServerBaseUrlOverride(null);
+                                      updateConfigurationMutation.mutate({ serverBaseUrlOverride: "" });
+                                    }}
+                                  >
+                                    Reset
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={(serverBaseUrlOverride ?? selectedServerBaseUrlOverride ?? "")}
+                                    onChange={(e) => {
+                                      setServerBaseUrlOverride(e.target.value);
+                                      setServerBaseUrlDirty(true);
+                                    }}
+                                    onBlur={() => {
+                                      // Persist on blur to avoid saving a half-typed URL on every keystroke.
+                                      handleServerBaseUrlChange((serverBaseUrlOverride ?? selectedServerBaseUrlOverride ?? "") );
+                                    }}
+                                    placeholder={suggestedUrlQuery.data?.serverBaseUrl ?? window.location.origin}
+                                    className="font-mono text-xs h-9"
+                                  />
+                                  {availableServerUrls.length > 0 ? (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                        setUseCustomServerUrl(false);
+                                      }}
+                                    >
+                                      Pick
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              )}
+
+                              {!effectiveServerBaseUrl ? (
+                                <Alert variant="destructive" className="py-2">
+                                  <AlertDescription className="text-xs">
+                                    Please enter a valid server base URL (origin), like <span className="font-mono">http://192.168.1.10:8080</span>.
+                                  </AlertDescription>
+                                </Alert>
+                              ) : null}
                             </div>
                             
                             <Collapsible open={isOptionsOpen} onOpenChange={setIsOptionsOpen} className="space-y-2">
@@ -531,7 +761,7 @@ export function NodeUpdatePage() {
             </Card>
 
             {/* Logs Card - Always visible if there are logs or status */}
-            <Card className="flex-1 flex flex-col min-h-[500px]">
+            <Card className="flex-1 flex flex-col min-h-125">
                 <CardHeader className="py-4">
                     <div className="flex items-center justify-between">
                          <CardTitle className="text-lg flex items-center gap-2">
@@ -558,10 +788,10 @@ export function NodeUpdatePage() {
                        <div className="w-2.5 h-2.5 rounded-full bg-green-500/20 border border-green-500/50" />
                        <div className="ml-2 text-xs font-mono text-muted-foreground">bash — ssh session</div>
                      </div>
-                     <ScrollArea className="flex-1 h-[500px]">
+                     <ScrollArea className="flex-1 h-125">
                         <div ref={logScrollRef} className="p-4 font-mono text-xs leading-relaxed">
                              {logs.length === 0 ? (
-                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground/40 gap-2 min-h-[200px]">
+                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground/40 gap-2 min-h-50">
                                     <Terminal className="w-12 h-12 opacity-20" />
                                     <span className="text-sm">Ready to receive logs...</span>
                                 </div>
@@ -655,7 +885,7 @@ export function NodeUpdatePage() {
                                             {statusLabel}
                                           </Badge>
                                           {item.error && (
-                                            <div className="text-xs text-red-500 mt-1 max-w-[300px] truncate" title={item.error}>
+                                            <div className="text-xs text-red-500 mt-1 max-w-75 truncate" title={item.error}>
                                               {item.error}
                                             </div>
                                           )}

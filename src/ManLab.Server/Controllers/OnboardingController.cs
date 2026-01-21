@@ -4,6 +4,7 @@ using ManLab.Server.Data.Enums;
 using ManLab.Server.Services;
 using ManLab.Server.Services.Audit;
 using ManLab.Server.Services.Ssh;
+using ManLab.Shared;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -289,24 +290,53 @@ public sealed class OnboardingController : ControllerBase
             return NotFound();
         }
 
-        // Encrypt and save credentials based on auth mode
-        if (machine.AuthMode == SshAuthMode.Password && !string.IsNullOrWhiteSpace(request.Password))
+        // Encrypt and save credentials based on auth mode.
+        // NOTE: This endpoint supports partial updates so the UI can update sudo password
+        // without re-sending SSH auth credentials, as long as the machine already has saved
+        // auth credentials for its configured auth mode.
+        if (machine.AuthMode == SshAuthMode.Password)
         {
-            machine.EncryptedSshPassword = await _encryptionService.EncryptAsync(request.Password, cancellationToken);
-            machine.EncryptedPrivateKeyPem = null;
-            machine.EncryptedPrivateKeyPassphrase = null;
+            if (!string.IsNullOrWhiteSpace(request.Password))
+            {
+                machine.EncryptedSshPassword = await _encryptionService.EncryptAsync(request.Password, cancellationToken);
+                // Clear any private-key fields when switching/setting password credentials.
+                machine.EncryptedPrivateKeyPem = null;
+                machine.EncryptedPrivateKeyPassphrase = null;
+            }
+            else if (string.IsNullOrWhiteSpace(machine.EncryptedSshPassword))
+            {
+                return BadRequest("Missing password for Password auth mode.");
+            }
         }
-        else if (machine.AuthMode == SshAuthMode.PrivateKey && !string.IsNullOrWhiteSpace(request.PrivateKeyPem))
+        else if (machine.AuthMode == SshAuthMode.PrivateKey)
         {
-            machine.EncryptedSshPassword = null;
-            machine.EncryptedPrivateKeyPem = await _encryptionService.EncryptAsync(request.PrivateKeyPem, cancellationToken);
-            machine.EncryptedPrivateKeyPassphrase = string.IsNullOrWhiteSpace(request.PrivateKeyPassphrase)
-                ? null
-                : await _encryptionService.EncryptAsync(request.PrivateKeyPassphrase, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(request.PrivateKeyPem))
+            {
+                machine.EncryptedSshPassword = null;
+                machine.EncryptedPrivateKeyPem = await _encryptionService.EncryptAsync(request.PrivateKeyPem, cancellationToken);
+
+                // Passphrase handling: if caller supplies a new key but no passphrase, clear.
+                machine.EncryptedPrivateKeyPassphrase = string.IsNullOrWhiteSpace(request.PrivateKeyPassphrase)
+                    ? null
+                    : await _encryptionService.EncryptAsync(request.PrivateKeyPassphrase, cancellationToken);
+            }
+            else
+            {
+                // Allow passphrase-only updates when a key is already saved.
+                if (string.IsNullOrWhiteSpace(machine.EncryptedPrivateKeyPem))
+                {
+                    return BadRequest("Missing private key for PrivateKey auth mode.");
+                }
+
+                if (!string.IsNullOrWhiteSpace(request.PrivateKeyPassphrase))
+                {
+                    machine.EncryptedPrivateKeyPassphrase = await _encryptionService.EncryptAsync(request.PrivateKeyPassphrase, cancellationToken);
+                }
+            }
         }
         else
         {
-            return BadRequest("Invalid credentials for the machine's auth mode.");
+            return BadRequest("Invalid auth mode.");
         }
 
         // Save sudo password if provided
@@ -566,6 +596,18 @@ public sealed class OnboardingController : ControllerBase
             return Conflict("Unable to start install (already running).");
         }
 
+        // Persist the server base URL that will be used for this install/update.
+        // This enables the update UI to preselect the same URL next time.
+        if (ServerBaseUrl.TryNormalizeInstallerOrigin(request.ServerBaseUrl, out var origin, out _, out _) && origin is not null)
+        {
+            machine.ServerBaseUrlOverride = origin.ToString();
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ServerBaseUrl))
+        {
+            // Best-effort fallback; job runner will validate and may fail later.
+            machine.ServerBaseUrlOverride = request.ServerBaseUrl.Trim();
+        }
+
         machine.Status = OnboardingStatus.Running;
         machine.LastError = null;
         machine.UpdatedAt = DateTime.UtcNow;
@@ -603,6 +645,7 @@ public sealed class OnboardingController : ControllerBase
                     hostname = machine.Host,
                     port = machine.Port,
                     username = machine.Username,
+                    serverBaseUrl = machine.ServerBaseUrlOverride,
                     agentSource = request.AgentSource,
                     agentChannel = request.AgentChannel,
                     agentVersion = request.AgentVersion
@@ -895,7 +938,7 @@ public sealed class OnboardingController : ControllerBase
         // Indicates whether a saved sudo password is available
         bool HasSavedSudoPassword = false,
         // Saved configuration preferences
-        bool TrustHostKey = false,
+        bool TrustHostKey = true,
         bool ForceInstall = true,
         bool RunAsRoot = false,
         string? ServerBaseUrlOverride = null);
@@ -908,7 +951,7 @@ public sealed class OnboardingController : ControllerBase
         // Allow frontend to specify whether to save credentials for new machines
         bool RememberCredentials = false,
         // Configuration preferences to save
-        bool TrustHostKey = false,
+        bool TrustHostKey = true,
         bool ForceInstall = true,
         bool RunAsRoot = false,
         string? ServerBaseUrlOverride = null);

@@ -73,7 +73,7 @@ public sealed class OnboardingMachine
     /// <summary>
     /// Whether the user prefers to trust this host key automatically.
     /// </summary>
-    public bool TrustHostKey { get; set; } = false;
+    public bool TrustHostKey { get; set; } = true;
 
     /// <summary>
     /// Whether the user prefers to force re-installation.

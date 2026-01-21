@@ -71,6 +71,36 @@ import { AgentVersionPicker, type AgentVersionSelection } from "@/components/Age
 
 const EMPTY_MACHINES: OnboardingMachine[] = [];
 
+const INSTALL_TARGET_NEW = "__new__";
+
+const normalizeHostKey = (value: string | null | undefined) =>
+  (value ?? "").trim().toLowerCase();
+
+const getAssociatedNodesForMachine = (machine: OnboardingMachine, nodes: Node[]): Node[] => {
+  const hostKey = normalizeHostKey(machine.host);
+  const linkedNodeId = machine.linkedNodeId;
+
+  const matches = nodes.filter((n) => {
+    if (linkedNodeId && n.id === linkedNodeId) return true;
+    if (!hostKey) return false;
+    if (normalizeHostKey(n.hostname) === hostKey) return true;
+    if (normalizeHostKey(n.ipAddress) === hostKey) return true;
+    return false;
+  });
+
+  // De-dupe by id while preserving stable ordering.
+  const seen = new Set<string>();
+  const unique: Node[] = [];
+  for (const n of matches)
+  {
+    if (seen.has(n.id)) continue;
+    seen.add(n.id);
+    unique.push(n);
+  }
+
+  return unique;
+};
+
 function getStatusVariant(
   status: OnboardingStatus
 ): "default" | "destructive" | "secondary" | "outline" {
@@ -170,14 +200,33 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
   const pendingUninstallMachineIdRef = useRef<string | null>(null);
   const pendingUninstallLinkedNodeIdRef = useRef<string | null>(null);
   const pendingUninstallHostRef = useRef<string | null>(null);
-  const [removeNodePromptOpen, setRemoveNodePromptOpen] = useState(false);
-  const [removeNodePrompt, setRemoveNodePrompt] = useState<{
+  // Track the status transition so we don't prompt immediately if the machine was already Succeeded
+  // from a previous operation (e.g., install).
+  const pendingUninstallSawRunningRef = useRef(false);
+  const pendingUninstallInitialStatusRef = useRef<OnboardingStatus | null>(null);
+
+  const [removeNodesPromptOpen, setRemoveNodesPromptOpen] = useState(false);
+  const [removeNodesPrompt, setRemoveNodesPrompt] = useState<{
     machineId: string;
     host: string;
-    nodeId: string;
+    nodeIds: string[];
+    linkedNodeId: string | null;
   } | null>(null);
+  const [removeNodesSelectedIds, setRemoveNodesSelectedIds] = useState<string[]>([]);
 
   const [stopExistingAgentFirst, setStopExistingAgentFirst] = useState(true);
+  // Allows the user to attach an install to an existing node identity (update mode).
+  // Default behavior: create a new node identity unless the machine is already linked.
+  const [installTargetNodeId, setInstallTargetNodeId] = useState<string>(INSTALL_TARGET_NEW);
+  const installTargetDirtyRef = useRef(false);
+
+  useEffect(() => {
+    // Reset per-machine selection edits.
+    installTargetDirtyRef.current = false;
+  }, [selected?.id]);
+
+  const MASKED_SECRET = "•••••";
+  const isMaskedSecret = (value: string | null | undefined) => (value ?? "") === MASKED_SECRET;
 
   const nodesQuery = useQuery<Node[]>({
     queryKey: ["nodes"],
@@ -200,6 +249,95 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       null
     );
   }, [nodesQuery.data, selected]);
+
+  const nodeLinkOwners = useMemo(() => {
+    // Map nodeId -> onboarding machine that claims it.
+    const m = new Map<string, OnboardingMachine>();
+    for (const machine of machines)
+    {
+      if (!machine.linkedNodeId) continue;
+      m.set(machine.linkedNodeId, machine);
+    }
+    return m;
+  }, [machines]);
+
+  const isNodeEligibleForInstallTarget = useMemo(() => {
+    const selectedMachineId = selected?.id;
+    return (nodeId: string): boolean => {
+      const owner = nodeLinkOwners.get(nodeId);
+      if (!owner) return true;
+      return owner.id === selectedMachineId;
+    };
+  }, [nodeLinkOwners, selected?.id]);
+
+  // Pick a sensible default target:
+  // - if machine already linked, keep that
+  // - else if we detected a matching node for this host and it's eligible, suggest it
+  // - else create a new node
+  useEffect(() => {
+    if (!selected)
+    {
+      setInstallTargetNodeId(INSTALL_TARGET_NEW);
+      return;
+    }
+
+    if (installTargetDirtyRef.current)
+    {
+      return;
+    }
+
+    const linked = selected.linkedNodeId;
+    if (linked)
+    {
+      setInstallTargetNodeId(linked);
+      return;
+    }
+
+    const detected = existingNode?.id;
+    if (detected && isNodeEligibleForInstallTarget(detected))
+    {
+      setInstallTargetNodeId(detected);
+      return;
+    }
+
+    setInstallTargetNodeId(INSTALL_TARGET_NEW);
+  }, [existingNode?.id, isNodeEligibleForInstallTarget, selected, selected?.id, selected?.linkedNodeId]);
+
+  const eligibleInstallTargetNodes = useMemo(() => {
+    const nodes = nodesQuery.data ?? [];
+    if (!selected) return [];
+
+    return nodes
+      .filter((n) => isNodeEligibleForInstallTarget(n.id))
+      .sort((a, b) => {
+        // Prefer detected node first, then hostname.
+        const detectedId = existingNode?.id;
+        if (detectedId && a.id === detectedId && b.id !== detectedId) return -1;
+        if (detectedId && b.id === detectedId && a.id !== detectedId) return 1;
+
+        const ah = (a.hostname ?? "").toLowerCase();
+        const bh = (b.hostname ?? "").toLowerCase();
+        return ah.localeCompare(bh);
+      });
+  }, [existingNode?.id, isNodeEligibleForInstallTarget, nodesQuery.data, selected]);
+
+  const ineligibleInstallTargetNodes = useMemo(() => {
+    const nodes = nodesQuery.data ?? [];
+    if (!selected) return [];
+    return nodes
+      .filter((n) => !isNodeEligibleForInstallTarget(n.id))
+      .sort((a, b) => {
+        const ah = (a.hostname ?? "").toLowerCase();
+        const bh = (b.hostname ?? "").toLowerCase();
+        return ah.localeCompare(bh);
+      });
+  }, [isNodeEligibleForInstallTarget, nodesQuery.data, selected]);
+
+  const installTargetNode = useMemo(() => {
+    if (installTargetNodeId === INSTALL_TARGET_NEW) return null;
+    const nodes = nodesQuery.data ?? [];
+    return nodes.find((n) => n.id === installTargetNodeId) ?? null;
+  }, [installTargetNodeId, nodesQuery.data]);
 
   const existingNodeId = useMemo(() => {
     if (!selected) return null;
@@ -543,6 +681,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     setSelectedId(id);
     setLogs([]);
     setLastTest(null);
+    setRemoteUninstallPreview(null);
     setCredErrors({});
 
     if (!machine) return;
@@ -557,15 +696,26 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
 
     // Load saved configuration preferences
     // Default Trust Host Key to true for a better first-run experience.
-    setTrustHostKey(machine.trustHostKey ?? true);
-    setForceInstall(machine.forceInstall ?? true);
+    const nextTrustHostKey = machine.trustHostKey ?? true;
+    const nextForceInstall = machine.forceInstall ?? true;
     // If sudo password is saved, ensure runAsRoot is also checked
-    const runAsRootValue = machine.hasSavedSudoPassword ? true : (machine.runAsRoot ?? false);
-    setRunAsRoot(runAsRootValue);
+    const nextRunAsRoot = machine.hasSavedSudoPassword ? true : (machine.runAsRoot ?? false);
+    const nextServerBaseUrlOverride = machine.serverBaseUrlOverride ?? null;
+
+    // IMPORTANT: prevent the auto-save effect from firing just because we hydrated state
+    // from another machine. We sync the "prev" refs to the hydrated values here.
+    prevTrustHostKey.current = nextTrustHostKey;
+    prevForceInstall.current = nextForceInstall;
+    prevRunAsRoot.current = nextRunAsRoot;
+    prevServerBaseUrlOverride.current = nextServerBaseUrlOverride;
+
+    setTrustHostKey(nextTrustHostKey);
+    setForceInstall(nextForceInstall);
+    setRunAsRoot(nextRunAsRoot);
 
     // Load saved serverBaseUrl override
-    if (machine.serverBaseUrlOverride) {
-      setServerBaseUrlOverride(machine.serverBaseUrlOverride);
+    if (nextServerBaseUrlOverride) {
+      setServerBaseUrlOverride(nextServerBaseUrlOverride);
       serverBaseUrlDirtyRef.current = true;
     } else {
       setServerBaseUrlOverride(null);
@@ -641,12 +791,76 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         toast.success("SSH Connection Verified", {
           description: `Connected as ${res.whoAmI} on ${res.osHint}`,
         });
+
+        // Auto-save credentials when the user opted into remembering them.
+        // This avoids a separate manual "Save Credentials" step after verification.
+        if (rememberCredentials && selected) {
+          const payload: SaveCredentialsRequest = {
+            password:
+              selected.authMode === "Password" && password && !isMaskedSecret(password)
+                ? password
+                : undefined,
+            privateKeyPem:
+              selected.authMode === "PrivateKey" && privateKeyPem && !isMaskedSecret(privateKeyPem)
+                ? privateKeyPem
+                : undefined,
+            privateKeyPassphrase:
+              selected.authMode === "PrivateKey" && privateKeyPassphrase
+                ? privateKeyPassphrase
+                : undefined,
+            sudoPassword:
+              sudoPassword && !isMaskedSecret(sudoPassword)
+                ? sudoPassword
+                : undefined,
+          };
+
+          const hasAnythingToSave = Boolean(
+            payload.password ||
+              payload.privateKeyPem ||
+              payload.privateKeyPassphrase ||
+              payload.sudoPassword
+          );
+
+          // If there is nothing new to save, skip.
+          if (hasAnythingToSave) {
+            autoSaveCredentialsMutation.mutate(payload);
+          }
+        }
       } else {
         toast.error("SSH Connection Failed", { description: res.error });
       }
     },
     onError: (err) => {
       toast.error("Test connection request failed", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    },
+  });
+
+  // A dedicated mutation for auto-save (silent success to avoid toast spam).
+  const autoSaveCredentialsMutation = useMutation({
+    mutationFn: async (input: SaveCredentialsRequest) => {
+      if (!selected) throw new Error("No machine selected");
+      return saveMachineCredentials(selected.id, input);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["onboardingMachines"] });
+
+      // Reflect saved state in the UI.
+      if (selected?.authMode === "Password") {
+        if (password && !isMaskedSecret(password)) setPassword(MASKED_SECRET);
+      } else {
+        if (privateKeyPem && !isMaskedSecret(privateKeyPem)) setPrivateKeyPem(MASKED_SECRET);
+      }
+
+      if (sudoPassword && !isMaskedSecret(sudoPassword)) {
+        setSudoPassword(MASKED_SECRET);
+        setRunAsRoot(true);
+      }
+    },
+    onError: (err) => {
+      // Non-blocking: verification succeeded, but saving failed.
+      toast.warning("SSH verified but credentials were not saved", {
         description: err instanceof Error ? err.message : "Unknown error",
       });
     },
@@ -671,6 +885,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       const effectiveForce = hasExistingAgent ? true : forceInstall;
       return installAgent(selected.id, {
         serverBaseUrl: effectiveServerBaseUrl,
+        targetNodeId: installTargetNodeId !== INSTALL_TARGET_NEW ? installTargetNodeId : undefined,
         force: effectiveForce,
         runAsRoot,
         trustHostKey,
@@ -744,32 +959,70 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     },
   });
 
-  const deleteLinkedNodeMutation = useMutation({
-    mutationFn: async (nodeId: string) => {
-      await deleteNode(nodeId);
+  const deleteAssociatedNodesMutation = useMutation({
+    mutationFn: async (nodeIds: string[]) => {
+      const succeeded: string[] = [];
+      const failed: Array<{ id: string; error: unknown }> = [];
+
+      for (const id of nodeIds)
+      {
+        try
+        {
+          await deleteNode(id);
+          succeeded.push(id);
+        }
+        catch (error)
+        {
+          failed.push({ id, error });
+        }
+      }
+
+      return { succeeded, failed };
     },
-    onSuccess: async () => {
-      // Node deletion also removes linked onboarding machine server-side.
+    onSuccess: async (result) => {
+      // Node deletion may also remove linked onboarding machine server-side.
       await queryClient.invalidateQueries({ queryKey: ["nodes"] });
       await queryClient.invalidateQueries({ queryKey: ["onboardingMachines"] });
-      toast.success("Node removed");
 
-      // If we just deleted the selected machine's linked node, selection may disappear; reset.
-      if (removeNodePrompt?.machineId && selectedId === removeNodePrompt.machineId) {
+      if (result.succeeded.length > 0)
+      {
+        toast.success(
+          result.succeeded.length === 1 ? "Node removed" : `Removed ${result.succeeded.length} nodes`
+        );
+      }
+
+      if (result.failed.length > 0)
+      {
+        toast.error("Some nodes could not be removed", {
+          description: `${result.failed.length} failed. You can retry removing the remaining nodes.`,
+        });
+        setRemoveNodesSelectedIds(result.failed.map((x) => x.id));
+        return;
+      }
+
+      // If we deleted the linked node for the selected machine, selection may disappear; reset.
+      if (
+        removeNodesPrompt?.machineId &&
+        selectedId === removeNodesPrompt.machineId &&
+        removeNodesPrompt.linkedNodeId &&
+        result.succeeded.includes(removeNodesPrompt.linkedNodeId)
+      )
+      {
         setSelectedId(null);
       }
 
-      setRemoveNodePromptOpen(false);
-      setRemoveNodePrompt(null);
+      setRemoveNodesPromptOpen(false);
+      setRemoveNodesPrompt(null);
+      setRemoveNodesSelectedIds([]);
     },
     onError: (err) => {
-      toast.error("Failed to delete node", {
+      toast.error("Failed to delete node(s)", {
         description: err instanceof Error ? err.message : "Unknown error",
       });
     },
   });
 
-  // When an uninstall we started completes successfully, prompt to delete the linked node.
+  // When an uninstall we started completes successfully, prompt to delete associated node(s).
   useEffect(() => {
     const machineId = pendingUninstallMachineIdRef.current;
     if (!machineId) return;
@@ -777,12 +1030,30 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     const m = machines.find((x) => x.id === machineId);
     if (!m) return;
 
+    if (m.status === "Running")
+    {
+      pendingUninstallSawRunningRef.current = true;
+      return;
+    }
+
     if (m.status === "Failed") {
       pendingUninstallMachineIdRef.current = null;
+      pendingUninstallLinkedNodeIdRef.current = null;
+      pendingUninstallHostRef.current = null;
+      pendingUninstallSawRunningRef.current = false;
+      pendingUninstallInitialStatusRef.current = null;
       return;
     }
 
     if (m.status !== "Succeeded") return;
+
+    // Avoid a false-positive prompt if the machine was already "Succeeded" before uninstall started
+    // and we haven't observed the uninstall job transition through Running.
+    const initialStatus = pendingUninstallInitialStatusRef.current;
+    if (initialStatus === "Succeeded" && pendingUninstallSawRunningRef.current !== true)
+    {
+      return;
+    }
 
     pendingUninstallMachineIdRef.current = null;
 
@@ -791,13 +1062,49 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
 
     pendingUninstallLinkedNodeIdRef.current = null;
     pendingUninstallHostRef.current = null;
+    pendingUninstallSawRunningRef.current = false;
+    pendingUninstallInitialStatusRef.current = null;
 
-    // Only prompt if there is an associated node.
-    if (linkedNodeId) {
-      setRemoveNodePrompt({ machineId: m.id, host, nodeId: linkedNodeId });
-      setRemoveNodePromptOpen(true);
+    const nodes = nodesQuery.data;
+    const associatedNodeIds = (() => {
+      // Prefer a full association scan when nodes are available.
+      if (nodes && nodes.length > 0)
+      {
+        const associatedNodes = getAssociatedNodesForMachine(m, nodes);
+        const ids = associatedNodes.map((n) => n.id);
+        // Always include linked node id if present, even if it wasn't in the list.
+        if (linkedNodeId && !ids.includes(linkedNodeId)) ids.unshift(linkedNodeId);
+        return ids;
+      }
+
+      // Fallback: if we at least know the linked node, prompt with that.
+      if (linkedNodeId)
+      {
+        return [linkedNodeId];
+      }
+
+      return [];
+    })();
+
+    // Only prompt if there is at least one associated node.
+    if (associatedNodeIds.length > 0)
+    {
+      setRemoveNodesPrompt({
+        machineId: m.id,
+        host,
+        nodeIds: associatedNodeIds,
+        linkedNodeId: linkedNodeId ?? null,
+      });
+
+      // Preselect the linked node if present; otherwise select all.
+      const initialSelected =
+        linkedNodeId && associatedNodeIds.includes(linkedNodeId)
+          ? [linkedNodeId]
+          : associatedNodeIds;
+      setRemoveNodesSelectedIds(initialSelected);
+      setRemoveNodesPromptOpen(true);
     }
-  }, [machines]);
+  }, [machines, nodesQuery.data]);
 
   // Machine to delete is now managed by the ConfirmationModal's open state per machine.
 
@@ -914,6 +1221,8 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
     saveCredentialsMutation.isPending ||
     clearCredentialsMutation.isPending ||
     updateConfigurationMutation.isPending;
+
+  const isRemovingNodes = deleteAssociatedNodesMutation.isPending;
 
   // Form Validation State for "Add Machine"
   const [addMachineErrors, setAddMachineErrors] = useState<{
@@ -1233,11 +1542,39 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                             className="w-full h-7 text-xs mt-1"
                             disabled={saveCredentialsMutation.isPending || isBusy}
                             onClick={() => {
+                              const payload: SaveCredentialsRequest = {
+                                password:
+                                  selected?.authMode === "Password" && password && !isMaskedSecret(password)
+                                    ? password
+                                    : undefined,
+                                privateKeyPem:
+                                  selected?.authMode === "PrivateKey" && privateKeyPem && !isMaskedSecret(privateKeyPem)
+                                    ? privateKeyPem
+                                    : undefined,
+                                privateKeyPassphrase:
+                                  selected?.authMode === "PrivateKey" && privateKeyPassphrase
+                                    ? privateKeyPassphrase
+                                    : undefined,
+                                sudoPassword:
+                                  sudoPassword && !isMaskedSecret(sudoPassword)
+                                    ? sudoPassword
+                                    : undefined,
+                              };
+
+                              const hasAnythingToSave = Boolean(
+                                payload.password ||
+                                  payload.privateKeyPem ||
+                                  payload.privateKeyPassphrase ||
+                                  payload.sudoPassword
+                              );
+
+                              if (!hasAnythingToSave) {
+                                toast.info("No new credentials to save");
+                                return;
+                              }
+
                               saveCredentialsMutation.mutate({
-                                password: selected?.authMode === "Password" ? password : undefined,
-                                privateKeyPem: selected?.authMode === "PrivateKey" ? privateKeyPem : undefined,
-                                privateKeyPassphrase: selected?.authMode === "PrivateKey" ? privateKeyPassphrase : undefined,
-                                sudoPassword: sudoPassword || undefined,
+                                ...payload,
                               });
                             }}
                           >
@@ -1379,7 +1716,15 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                       }
                       title={hasExistingAgent ? "Overwrite Existing Agent" : "Install ManLab Agent"}
                       message={(() => {
-                        if (!hasExistingAgent) return `Install agent on ${selected.host}?`;
+                        if (!hasExistingAgent)
+                        {
+                          if (installTargetNodeId !== INSTALL_TARGET_NEW)
+                          {
+                            return `Install agent on ${selected.host} and link to existing node ${installTargetNodeId}?`;
+                          }
+
+                          return `Install agent on ${selected.host}?`;
+                        }
 
                         const parts: string[] = [];
                         parts.push(`An existing agent/node was detected for ${selected.host}.`);
@@ -1389,7 +1734,17 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                         if (lastTest?.hasExistingInstallation) {
                           parts.push("A ManLab agent installation appears to already exist on the target machine.");
                         }
-                        parts.push("Continuing will stop/overwrite the existing installation and may replace the existing node identity.");
+
+                        if (installTargetNodeId !== INSTALL_TARGET_NEW)
+                        {
+                          parts.push(`This install will be linked to existing node ${installTargetNodeId} (update mode).`);
+                        }
+                        else
+                        {
+                          parts.push("This install will create a new node identity.");
+                        }
+
+                        parts.push("Continuing will stop/overwrite the existing installation.");
                         return parts.join(" ");
                       })()}
                       confirmText={hasExistingAgent ? "Overwrite & Install" : "Install"}
@@ -1438,6 +1793,89 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                               Tip: use <span className="font-mono">staged</span> to install whatever the server currently has staged for that channel.
                             </div>
                           </div>
+
+                            <div className="space-y-2">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Node Link
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Attach this install to an existing node identity (update mode). Nodes already linked to another onboarding machine are shown as disabled.
+                              </div>
+
+                              <Select
+                                value={installTargetNodeId}
+                                onValueChange={(v) => {
+                                  if (!v) return;
+                                  installTargetDirtyRef.current = true;
+                                  setInstallTargetNodeId(v);
+                                }}
+                                disabled={nodesQuery.isLoading}
+                              >
+                                <SelectTrigger className="h-9">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value={INSTALL_TARGET_NEW}>Create new node</SelectItem>
+
+                                  {eligibleInstallTargetNodes.length > 0 ? (
+                                    eligibleInstallTargetNodes.map((n) => {
+                                      const label =
+                                        (n.hostname ?? "").trim() ||
+                                        (n.ipAddress ?? "").trim() ||
+                                        n.id;
+                                      return (
+                                        <SelectItem key={n.id} value={n.id}>
+                                          {label} ({n.status}) — {n.id.slice(0, 8)}
+                                        </SelectItem>
+                                      );
+                                    })
+                                  ) : (
+                                    <SelectItem value="__none__" disabled>
+                                      No eligible nodes found
+                                    </SelectItem>
+                                  )}
+
+                                  {ineligibleInstallTargetNodes.length > 0 ? (
+                                    ineligibleInstallTargetNodes.map((n) => {
+                                      const owner = nodeLinkOwners.get(n.id);
+                                      const label =
+                                        (n.hostname ?? "").trim() ||
+                                        (n.ipAddress ?? "").trim() ||
+                                        n.id;
+
+                                      const ownerLabel = owner
+                                        ? `${owner.username}@${owner.host}:${owner.port}`
+                                        : "another onboarding machine";
+
+                                      return (
+                                        <SelectItem key={n.id} value={n.id} disabled>
+                                          {label} ({n.status}) — linked to {ownerLabel}
+                                        </SelectItem>
+                                      );
+                                    })
+                                  ) : null}
+                                </SelectContent>
+                              </Select>
+
+                              {installTargetNodeId !== INSTALL_TARGET_NEW ? (
+                                <div className="text-xs text-muted-foreground">
+                                  Selected node will be preserved: <span className="font-mono">{installTargetNodeId}</span>
+                                  {installTargetNode
+                                    ? ` (${(installTargetNode.hostname ?? "").trim() || installTargetNode.ipAddress || "unknown"})`
+                                    : ""}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-muted-foreground">
+                                  A new node identity will be created on first connect.
+                                </div>
+                              )}
+
+                              {nodesQuery.isError ? (
+                                <div className="text-xs text-destructive">
+                                  Failed to load nodes. You can still install using “Create new node”.
+                                </div>
+                              ) : null}
+                            </div>
 
                           {hasExistingAgent ? (
                             <div className="space-y-3">
@@ -1498,6 +1936,8 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
                         pendingUninstallMachineIdRef.current = selected?.id ?? null;
                         pendingUninstallLinkedNodeIdRef.current = selected?.linkedNodeId ?? null;
                         pendingUninstallHostRef.current = selected?.host ?? null;
+                        pendingUninstallSawRunningRef.current = false;
+                        pendingUninstallInitialStatusRef.current = selected?.status ?? null;
                         await uninstallMutation.mutateAsync();
                       }}
                     />
@@ -1559,34 +1999,187 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
         </div>
       </DialogContent>
 
-      <AlertDialog open={removeNodePromptOpen} onOpenChange={setRemoveNodePromptOpen}>
+      <AlertDialog
+        open={removeNodesPromptOpen}
+        onOpenChange={(next) => {
+          setRemoveNodesPromptOpen(next);
+          if (!next)
+          {
+            setRemoveNodesPrompt(null);
+            setRemoveNodesSelectedIds([]);
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove the node too?</AlertDialogTitle>
+            <AlertDialogTitle>Remove node(s) too?</AlertDialogTitle>
             <AlertDialogDescription>
               The agent uninstall completed successfully.
-              {removeNodePrompt ? (
+              {removeNodesPrompt ? (
                 <>
                   <br />
-                  Do you also want to remove the associated node for <span className="font-mono">{removeNodePrompt.host}</span>?
-                  This deletes telemetry, settings, and command history.
+                  Do you also want to remove the associated node(s) for <span className="font-mono">{removeNodesPrompt.host}</span>?
+                  This deletes telemetry, settings, and command history for the selected node(s).
                 </>
               ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteLinkedNodeMutation.isPending}>Keep Node</AlertDialogCancel>
+            <AlertDialogCancel
+              disabled={isRemovingNodes}
+              onClick={() => {
+                setRemoveNodesPromptOpen(false);
+                setRemoveNodesPrompt(null);
+                setRemoveNodesSelectedIds([]);
+              }}
+            >
+              Keep Node(s)
+            </AlertDialogCancel>
+
             <AlertDialogAction
               onClick={() => {
-                if (!removeNodePrompt) return;
-                deleteLinkedNodeMutation.mutate(removeNodePrompt.nodeId);
+                if (!removeNodesPrompt) return;
+                const ids = removeNodesSelectedIds;
+                if (!ids || ids.length === 0) return;
+                deleteAssociatedNodesMutation.mutate(ids);
               }}
-              disabled={!removeNodePrompt || deleteLinkedNodeMutation.isPending}
+              disabled={!removeNodesPrompt || isRemovingNodes || removeNodesSelectedIds.length === 0}
               variant="destructive"
             >
-              {deleteLinkedNodeMutation.isPending ? "Removing…" : "Remove Node"}
+              {isRemovingNodes
+                ? "Removing…"
+                : removeNodesSelectedIds.length === 1
+                ? "Remove Node"
+                : `Remove ${removeNodesSelectedIds.length} Nodes`}
             </AlertDialogAction>
           </AlertDialogFooter>
+
+          {removeNodesPrompt ? (
+            <div className="mt-4 space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Associated nodes
+              </div>
+
+              <div className="space-y-2 rounded-md border p-3">
+                {(() => {
+                  const nodes = nodesQuery.data ?? [];
+                  const byId = new Map(nodes.map((n) => [n.id, n] as const));
+                  const missingIds = removeNodesPrompt.nodeIds.filter((id) => !byId.has(id));
+
+                  return (
+                    <>
+                      {nodes
+                        .filter((n) => removeNodesPrompt.nodeIds.includes(n.id))
+                        .map((n) => {
+                    const checked = removeNodesSelectedIds.includes(n.id);
+                    const labelHost = (n.hostname ?? "").trim() || (n.ipAddress ?? "").trim() || n.id;
+                    const isLinked = removeNodesPrompt.linkedNodeId === n.id;
+
+                    return (
+                      <label key={n.id} className="flex items-start gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={checked}
+                          disabled={isRemovingNodes}
+                          onCheckedChange={(v) => {
+                            const nextChecked = v === true;
+                            setRemoveNodesSelectedIds((prev) => {
+                              const set = new Set(prev);
+                              if (nextChecked) set.add(n.id);
+                              else set.delete(n.id);
+                              return Array.from(set);
+                            });
+                          }}
+                        />
+                        <span className="flex-1">
+                          <span className="font-mono">{labelHost}</span>
+                          {isLinked ? (
+                            <Badge variant="secondary" className="ml-2 text-[10px]">
+                              linked
+                            </Badge>
+                          ) : null}
+                          <div className="mt-0.5 text-xs text-muted-foreground font-mono break-all">
+                            {n.id} • {n.status}
+                            {n.ipAddress ? ` • ${n.ipAddress}` : ""}
+                          </div>
+                        </span>
+                      </label>
+                    );
+                  })}
+
+                      {missingIds.map((id) => {
+                        const checked = removeNodesSelectedIds.includes(id);
+                        const isLinked = removeNodesPrompt.linkedNodeId === id;
+
+                        return (
+                          <label key={id} className="flex items-start gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={checked}
+                              disabled={isRemovingNodes}
+                              onCheckedChange={(v) => {
+                                const nextChecked = v === true;
+                                setRemoveNodesSelectedIds((prev) => {
+                                  const set = new Set(prev);
+                                  if (nextChecked) set.add(id);
+                                  else set.delete(id);
+                                  return Array.from(set);
+                                });
+                              }}
+                            />
+                            <span className="flex-1">
+                              <span className="font-mono">{id}</span>
+                              {isLinked ? (
+                                <Badge variant="secondary" className="ml-2 text-[10px]">
+                                  linked
+                                </Badge>
+                              ) : null}
+                              <div className="mt-0.5 text-xs text-muted-foreground">
+                                Node details not loaded yet.
+                              </div>
+                            </span>
+                          </label>
+                        );
+                      })}
+
+                      {(nodesQuery.data ?? []).length === 0 ? (
+                        <div className="text-xs text-muted-foreground">
+                          Loading node details…
+                        </div>
+                      ) : null}
+                    </>
+                  );
+                })()}
+
+                {removeNodesPrompt.nodeIds.length > 1 ? (
+                  <div className="pt-2 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={isRemovingNodes}
+                      onClick={() => {
+                        setRemoveNodesSelectedIds(removeNodesPrompt.nodeIds);
+                      }}
+                    >
+                      Select all
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={isRemovingNodes}
+                      onClick={() => {
+                        setRemoveNodesSelectedIds([]);
+                      }}
+                    >
+                      Select none
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
