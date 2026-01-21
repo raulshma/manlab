@@ -1348,6 +1348,7 @@ export interface FetchAuditEventsParams {
   eventName?: string;
   nodeId?: string;
   commandId?: string;
+  machineId?: string;
   take?: number;
 }
 
@@ -1368,6 +1369,7 @@ export async function fetchAuditEvents(params?: FetchAuditEventsParams): Promise
   add("eventName", params?.eventName);
   add("nodeId", params?.nodeId);
   add("commandId", params?.commandId);
+  add("machineId", params?.machineId);
   if (params?.take !== undefined) {
     add("take", Math.max(1, Math.min(2000, Math.floor(params.take))));
   }
@@ -1460,6 +1462,8 @@ export async function getTerminalSession(
   }
   return response.json();
 }
+
+
 
 // ==========================================
 // SSH File Download API

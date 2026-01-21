@@ -785,12 +785,20 @@ public class DevicesController : ControllerBase
                 message: "Uninstall queued for connected agent"));
         }
 
-        // Also remove any associated OnboardingMachine
-        var linkedOnboardingMachine = await _dbContext.OnboardingMachines
-            .FirstOrDefaultAsync(m => m.LinkedNodeId == id);
-        if (linkedOnboardingMachine != null)
+        // Do NOT delete associated onboarding machines here.
+        // Users may want to keep the machine configuration/credentials and optionally uninstall via SSH.
+        // Instead, unlink any machines pointing at this node.
+        var linkedMachines = await _dbContext.OnboardingMachines
+            .Where(m => m.LinkedNodeId == id)
+            .ToListAsync();
+
+        if (linkedMachines.Count > 0)
         {
-            _dbContext.OnboardingMachines.Remove(linkedOnboardingMachine);
+            foreach (var m in linkedMachines)
+            {
+                m.LinkedNodeId = null;
+                m.UpdatedAt = DateTime.UtcNow;
+            }
         }
 
         _dbContext.Nodes.Remove(node);

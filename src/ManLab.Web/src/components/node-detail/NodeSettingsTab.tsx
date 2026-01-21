@@ -12,6 +12,10 @@ import {
   disableAgentTask,
   shutdownAgent,
   deleteNode,
+  fetchAuditEvents,
+  fetchOnboardingMachineForNode,
+  fetchSuggestedServerBaseUrl,
+  uninstallAgent,
 } from "../../api";
 import { useSignalR } from "../../SignalRContext";
 import { ConfirmationModal } from "../ConfirmationModal";
@@ -31,9 +35,11 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AlertCircle, Power, Activity, RefreshCw, Trash2, ToggleLeft, ToggleRight, Terminal, X, CheckCircle2 } from "lucide-react";
-import { NodeAgentUpdateModal } from "./NodeAgentUpdateModal";
+import { toast } from "sonner";
+
 
 interface NodeSettingsTabProps {
   nodeId: string;
@@ -54,6 +60,137 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
   const currentChannel =
     nodeSettings?.find((s) => s.key === "agent.update.channel")?.value ??
     "stable";
+
+  // Linked onboarding machine (for uninstall-on-delete)
+  const linkedMachineQuery = useQuery({
+    queryKey: ["onboardingMachineForNode", nodeId],
+    queryFn: () => fetchOnboardingMachineForNode(nodeId),
+    retry: false,
+  });
+
+  const suggestedUrlQuery = useQuery({
+    queryKey: ["suggestedServerBaseUrl"],
+    queryFn: fetchSuggestedServerBaseUrl,
+    staleTime: 60_000,
+  });
+
+  const linkedMachine = linkedMachineQuery.data ?? null;
+  const canUninstallFromMachine = !!linkedMachine && linkedMachine.hasSavedCredentials === true;
+
+  const effectiveServerBaseUrlForMachine = useMemo(() => {
+    const suggested = suggestedUrlQuery.data?.serverBaseUrl ?? "";
+    if (!linkedMachine) return suggested;
+    return linkedMachine.serverBaseUrlOverride ?? suggested;
+  }, [linkedMachine, suggestedUrlQuery.data]);
+
+  const [deleteAlsoUninstall, setDeleteAlsoUninstall] = useState(false);
+
+  // Agent update history (durable audit events)
+  const updateHistoryQuery = useQuery({
+    queryKey: ["nodeAgentUpdateHistory", nodeId],
+    queryFn: async () => {
+      const events = await fetchAuditEvents({
+        nodeId,
+        category: "agents",
+        take: 200,
+      });
+
+      return events
+        .filter((e) => e.eventName === "agent.update.start" || e.eventName === "agent.update.completed")
+        .sort((a, b) => new Date(a.timestampUtc).getTime() - new Date(b.timestampUtc).getTime());
+    },
+    staleTime: 10_000,
+  });
+
+  type UpdateAttempt = {
+    startedAtUtc: string;
+    completedAtUtc?: string;
+    success?: boolean | null;
+    actorName?: string | null;
+    machineId?: string | null;
+    agentSource?: string | null;
+    agentChannel?: string | null;
+    agentVersion?: string | null;
+    reportedAgentVersion?: string | null;
+    error?: string | null;
+  };
+
+  const updateAttempts: UpdateAttempt[] = useMemo(() => {
+    const events = updateHistoryQuery.data ?? [];
+    const starts = events.filter((e) => e.eventName === "agent.update.start");
+    const completeds = events.filter((e) => e.eventName === "agent.update.completed");
+
+    const parseData = (dataJson: string | null) => {
+      if (!dataJson) return {} as Record<string, unknown>;
+      try {
+        return JSON.parse(dataJson) as Record<string, unknown>;
+      } catch {
+        return {} as Record<string, unknown>;
+      }
+    };
+
+    const usedCompleted = new Set<string>();
+    const attempts: UpdateAttempt[] = [];
+
+    for (const s of starts) {
+      const sData = parseData(s.dataJson);
+      const sMachineId = s.machineId;
+      const startTs = s.timestampUtc;
+
+      let match: (typeof completeds)[number] | undefined;
+      for (const c of completeds) {
+        if (usedCompleted.has(c.id)) continue;
+        if (sMachineId && c.machineId && c.machineId !== sMachineId) continue;
+        if (new Date(c.timestampUtc).getTime() < new Date(startTs).getTime()) continue;
+        match = c;
+        break;
+      }
+
+      if (match) {
+        usedCompleted.add(match.id);
+      }
+
+      const cData = match ? parseData(match.dataJson) : {};
+      const agentSource = (cData.agentSource ?? sData.agentSource) as string | undefined;
+      const agentChannel = (cData.agentChannel ?? sData.agentChannel) as string | undefined;
+      const agentVersion = (cData.agentVersion ?? sData.agentVersion) as string | undefined;
+      const reportedAgentVersion = (cData.reportedAgentVersion as string | undefined) ?? undefined;
+
+      attempts.push({
+        startedAtUtc: startTs,
+        completedAtUtc: match?.timestampUtc,
+        success: match?.success,
+        actorName: s.actorName ?? match?.actorName,
+        machineId: sMachineId ?? match?.machineId,
+        agentSource: agentSource ?? null,
+        agentChannel: agentChannel ?? null,
+        agentVersion: agentVersion ?? null,
+        reportedAgentVersion: reportedAgentVersion ?? null,
+        error: match?.error ?? null,
+      });
+    }
+
+    for (const c of completeds) {
+      if (usedCompleted.has(c.id)) continue;
+      const cData = parseData(c.dataJson);
+      attempts.push({
+        startedAtUtc: c.timestampUtc,
+        completedAtUtc: c.timestampUtc,
+        success: c.success,
+        actorName: c.actorName,
+        machineId: c.machineId,
+        agentSource: (cData.agentSource as string | undefined) ?? null,
+        agentChannel: (cData.agentChannel as string | undefined) ?? null,
+        agentVersion: (cData.agentVersion as string | undefined) ?? null,
+        reportedAgentVersion: (cData.reportedAgentVersion as string | undefined) ?? null,
+        error: c.error,
+      });
+    }
+
+    return attempts
+      .sort((a, b) => new Date(b.startedAtUtc).getTime() - new Date(a.startedAtUtc).getTime())
+      .slice(0, 20);
+  }, [updateHistoryQuery.data]);
 
   const updateChannelMutation = useMutation({
     mutationFn: (channel: string) =>
@@ -148,7 +285,25 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
 
   const navigate = useNavigate();
   const deleteNodeMutation = useMutation({
-    mutationFn: () => deleteNode(nodeId),
+    mutationFn: async () => {
+      if (deleteAlsoUninstall && linkedMachine) {
+        if (!canUninstallFromMachine) {
+          throw new Error("This node has a linked machine, but it does not have saved credentials. Save credentials in Onboarding first to uninstall via SSH.");
+        }
+
+        await uninstallAgent(linkedMachine.id, {
+          serverBaseUrl: effectiveServerBaseUrlForMachine,
+          trustHostKey: linkedMachine.trustHostKey ?? true,
+          useSavedCredentials: true,
+        });
+
+        toast.info("Agent uninstall started", {
+          description: `Uninstall job started for ${linkedMachine.username}@${linkedMachine.host}:${linkedMachine.port}.`,
+        });
+      }
+
+      await deleteNode(nodeId);
+    },
     onSuccess: () => {
       // Navigate back to dashboard after successful deletion
       queryClient.invalidateQueries({ queryKey: ["nodes"] });
@@ -216,9 +371,103 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
                 Pick a specific agent version from local staging or GitHub releases and reinstall/update this node.
               </CardDescription>
             </div>
-            <NodeAgentUpdateModal nodeId={nodeId} hostname={hostname} channel={currentChannel} />
+            <Button variant="secondary" onClick={() => navigate(`/nodes/${nodeId}/update`)}>
+              Update Agent Version...
+            </Button>
           </div>
         </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle className="text-sm">Agent Update History</CardTitle>
+              <CardDescription>
+                Recent agent update attempts for this node.
+              </CardDescription>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => queryClient.invalidateQueries({ queryKey: ["nodeAgentUpdateHistory", nodeId] })}
+              disabled={updateHistoryQuery.isFetching}
+            >
+              {updateHistoryQuery.isFetching ? "Refreshing…" : "Refresh"}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {updateHistoryQuery.isLoading ? (
+            <div className="text-sm text-muted-foreground">Loading update history…</div>
+          ) : updateHistoryQuery.isError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {updateHistoryQuery.error instanceof Error
+                  ? updateHistoryQuery.error.message
+                  : "Failed to load update history"}
+              </AlertDescription>
+            </Alert>
+          ) : updateAttempts.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No update history yet.</div>
+          ) : (
+            <ScrollArea className="h-64 rounded border">
+              <div className="divide-y">
+                {updateAttempts.map((a) => {
+                  const running = !a.completedAtUtc;
+                  const succeeded = a.success === true;
+                  const failed = a.success === false;
+
+                  const statusLabel = running ? "Running" : succeeded ? "Succeeded" : failed ? "Failed" : "Completed";
+
+                  const selection = [a.agentSource, a.agentChannel, a.agentVersion]
+                    .filter((x) => typeof x === "string" && x.length > 0)
+                    .join(" / ");
+
+                  return (
+                    <div key={`${a.startedAtUtc}-${a.machineId ?? "none"}`} className="p-3 text-sm">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={
+                              running
+                                ? "text-muted-foreground"
+                                : succeeded
+                                  ? "text-green-600"
+                                  : failed
+                                    ? "text-red-600"
+                                    : "text-foreground"
+                            }
+                          >
+                            {statusLabel}
+                          </span>
+                          {selection ? <span className="text-muted-foreground">• {selection}</span> : null}
+                          {a.reportedAgentVersion ? (
+                            <span className="text-muted-foreground">• reported {a.reportedAgentVersion}</span>
+                          ) : null}
+                        </div>
+
+                        <div className="text-xs text-muted-foreground">
+                          Started: {new Date(a.startedAtUtc).toLocaleString()}
+                          {a.completedAtUtc ? ` • Completed: ${new Date(a.completedAtUtc).toLocaleString()}` : ""}
+                        </div>
+
+                        {a.actorName ? (
+                          <div className="text-xs text-muted-foreground">By: {a.actorName}</div>
+                        ) : null}
+
+                        {a.error ? (
+                          <div className="text-xs text-red-600">{a.error}</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          )}
+        </CardContent>
       </Card>
 
       {/* System Actions */}
@@ -587,6 +836,43 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
               }
               title="Delete Node"
               message={`Are you sure you want to permanently delete "${hostname}"? This will remove all telemetry data, settings, and command history. If the agent is connected, it will be uninstalled. This action cannot be undone.`}
+              details={
+                <div className="space-y-3">
+                  {linkedMachine ? (
+                    <div className="text-xs text-muted-foreground">
+                      Linked machine: <span className="font-mono">{linkedMachine.username}@{linkedMachine.host}:{linkedMachine.port}</span>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">
+                      No linked onboarding machine found for this node.
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="delete-also-uninstall"
+                      checked={deleteAlsoUninstall}
+                      onCheckedChange={(v) => setDeleteAlsoUninstall(Boolean(v))}
+                      disabled={!canUninstallFromMachine}
+                    />
+                    <label htmlFor="delete-also-uninstall" className="text-sm">
+                      Also uninstall agent from the linked machine (via SSH)
+                    </label>
+                  </div>
+
+                  {deleteAlsoUninstall && !linkedMachine ? (
+                    <div className="text-xs text-muted-foreground">
+                      (No linked machine available; SSH uninstall will be skipped.)
+                    </div>
+                  ) : null}
+
+                  {!canUninstallFromMachine && linkedMachine ? (
+                    <div className="text-xs text-muted-foreground">
+                      To enable uninstall via SSH here, save credentials for this machine in Onboarding first.
+                    </div>
+                  ) : null}
+                </div>
+              }
               confirmText="Delete Permanently"
               isDestructive
               isLoading={deleteNodeMutation.isPending}
