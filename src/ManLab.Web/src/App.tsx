@@ -13,6 +13,7 @@ import { FileBrowserPage } from "./pages/FileBrowserPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { NodeUpdatePage } from "./pages/NodeUpdatePage";
+import { NetworkScannerPage } from "./pages/NetworkScannerPage";
 import { Toaster } from "@/components/ui/sonner";
 
 // Create a client
@@ -37,6 +38,7 @@ function AppRoutes() {
         <Route path="/files" element={<FileBrowserPage />} />
         <Route path="/logs" element={<AuditLogsPage />} />
         <Route path="/node-logs" element={<LogViewerPage />} />
+        <Route path="/network" element={<NetworkScannerPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

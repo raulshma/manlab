@@ -109,6 +109,37 @@ builder.Services.AddSingleton<INotificationService>(sp => sp.GetRequiredService<
 // Agent connection tracking + command dispatch
 builder.Services.AddSingleton<AgentConnectionRegistry>();
 builder.Services.AddSingleton<IWakeOnLanService, WakeOnLanService>();
+
+// Network scanning services
+builder.Services.AddSingleton<ManLab.Server.Services.Network.IOuiDatabase, ManLab.Server.Services.Network.OuiDatabase>();
+if (OperatingSystem.IsWindows())
+{
+    builder.Services.AddSingleton<ManLab.Server.Services.Network.IArpService, ManLab.Server.Services.Network.WindowsArpService>();
+}
+else if (OperatingSystem.IsLinux())
+{
+    builder.Services.AddSingleton<ManLab.Server.Services.Network.IArpService, ManLab.Server.Services.Network.LinuxArpService>();
+}
+builder.Services.AddSingleton<ManLab.Server.Services.Network.INetworkScannerService, ManLab.Server.Services.Network.NetworkScannerService>();
+
+// mDNS/UPnP device discovery
+builder.Services.AddSingleton<ManLab.Server.Services.Network.IDeviceDiscoveryService, ManLab.Server.Services.Network.DeviceDiscoveryService>();
+
+// WiFi scanner (platform-specific)
+if (OperatingSystem.IsWindows())
+{
+    builder.Services.AddSingleton<ManLab.Server.Services.Network.IWifiScannerService, ManLab.Server.Services.Network.WindowsWifiScannerService>();
+}
+else if (OperatingSystem.IsLinux())
+{
+    builder.Services.AddSingleton<ManLab.Server.Services.Network.IWifiScannerService, ManLab.Server.Services.Network.LinuxWifiScannerService>();
+}
+else
+{
+    // Fallback for unsupported platforms - use a no-op implementation
+    builder.Services.AddSingleton<ManLab.Server.Services.Network.IWifiScannerService, ManLab.Server.Services.Network.UnsupportedWifiScannerService>();
+}
+
 builder.Services.AddHostedService<CommandDispatchService>();
 
 // Background services
@@ -216,6 +247,7 @@ app.MapScalarApiReference();
 
 app.MapControllers();
 app.MapHub<AgentHub>("/hubs/agent");
+app.MapHub<ManLab.Server.Hubs.NetworkHub>("/hubs/network");
 
 app.Run();
 
