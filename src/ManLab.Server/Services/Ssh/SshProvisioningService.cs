@@ -676,6 +676,9 @@ public sealed class SshProvisioningService
         var safeServer = EscapeSingleQuotes(server);
         var safeUrl = EscapeSingleQuotes(url);
         var safeToken = EscapeSingleQuotes(enrollmentToken);
+        var tokenArg = string.IsNullOrWhiteSpace(enrollmentToken)
+            ? string.Empty
+            : $" --token '{safeToken}'";
 
         var script =
             "set -euo pipefail; " +
@@ -693,7 +696,7 @@ public sealed class SshProvisioningService
             "if command -v sed >/dev/null 2>&1; then sed -i 's/\r$//' \"$TMP\" 2>/dev/null || true; " +
             "else tr -d '\\r' < \"$TMP\" > \"$TMP.clean\" && mv -f \"$TMP.clean\" \"$TMP\"; fi; " +
             "chmod +x \"$TMP\"; " +
-            $"{sudoPrefix}bash \"$TMP\" --server '{safeServer}' --token '{safeToken}'{forceArg}{(string.IsNullOrWhiteSpace(extraInstallerArgs) ? string.Empty : extraInstallerArgs)}";
+            $"{sudoPrefix}bash \"$TMP\" --server '{safeServer}'{tokenArg}{forceArg}{(string.IsNullOrWhiteSpace(extraInstallerArgs) ? string.Empty : extraInstallerArgs)}";
 
         return $"bash -lc '{EscapeSingleQuotes(script)}'";
     }
@@ -765,10 +768,13 @@ public sealed class SshProvisioningService
 
         // Download to %TEMP% then execute with parameters.
         // Note: escaping is delicate. Use single quotes around literals where possible.
+        var authArg = string.IsNullOrWhiteSpace(enrollmentToken)
+            ? string.Empty
+            : $" -AuthToken '{EscapeSingleQuotes(enrollmentToken)}'";
         var ps = "$ErrorActionPreference='Stop'; " +
                  "$p = Join-Path $env:TEMP 'manlab-install.ps1'; " +
                  $"Invoke-WebRequest -UseBasicParsing -Uri '{EscapeSingleQuotes(url)}' -OutFile $p; " +
-             $"& $p -Server '{EscapeSingleQuotes(server)}' -AuthToken '{EscapeSingleQuotes(enrollmentToken)}'{forceArg}{toolArgs}{agentArgs};";
+             $"& $p -Server '{EscapeSingleQuotes(server)}'{authArg}{forceArg}{toolArgs}{agentArgs};";
 
         var cmd = $"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{EscapeDoubleQuotes(ps)}\"";
 

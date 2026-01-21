@@ -264,6 +264,26 @@ $configPath = Join-Path $InstallDir 'appsettings.json'
 $runnerPath = Join-Path $InstallDir 'run-agent.ps1'
 $logPath = Join-Path $InstallDir 'agent.log'
 
+# Update-mode safety: if no token was provided, try to preserve the existing one.
+if ([string]::IsNullOrWhiteSpace($AuthToken) -and (Test-Path $runnerPath)) {
+    try {
+        $content = Get-Content $runnerPath -Raw -ErrorAction Stop
+        $m = [Regex]::Match($content, "MANLAB_AUTH_TOKEN\s*=\s*'([^']*)'")
+        if ($m.Success) {
+            $existing = $m.Groups[1].Value
+            if (-not [string]::IsNullOrWhiteSpace($existing)) {
+                $AuthToken = $existing
+            }
+        }
+    } catch {
+        # Best-effort.
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($AuthToken)) {
+    throw "Auth token required. Use -AuthToken (or set MANLAB_AUTH_TOKEN)."
+}
+
 Write-Info "Installing ManLab Agent"
 Write-Info "  Server: $Server"
 Write-Info "  RID:    $rid"
@@ -306,9 +326,23 @@ try {
 }
 
 # Create runner
+$effectiveAgentVersion = $null
+if (-not [string]::IsNullOrWhiteSpace($AgentVersion) -and $AgentVersion -ne 'staged') {
+    $effectiveAgentVersion = $AgentVersion
+} elseif (-not [string]::IsNullOrWhiteSpace($GitHubVersion)) {
+    $effectiveAgentVersion = $GitHubVersion
+}
+
 $runnerContent = @"
 `$env:MANLAB_SERVER_URL = '$hubUrl'
 `$env:MANLAB_AUTH_TOKEN = '$AuthToken'
+"@
+
+if ($effectiveAgentVersion) {
+    $runnerContent += "`$env:MANLAB_AGENT_VERSION = '$effectiveAgentVersion'`r`n"
+}
+
+$runnerContent += @"
 `$exe = Join-Path `$PSScriptRoot 'manlab-agent.exe'
 `$log = Join-Path `$PSScriptRoot 'agent.log'
 "[`$(Get-Date -Format o)] Starting" | Add-Content `$log

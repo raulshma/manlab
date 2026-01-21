@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
+import { useSignalR } from "@/SignalRContext";
 
 interface NodeAgentUpdateModalProps {
   nodeId: string;
@@ -32,7 +33,24 @@ interface NodeAgentUpdateModalProps {
 
 export function NodeAgentUpdateModal({ nodeId, hostname, channel }: NodeAgentUpdateModalProps) {
   const queryClient = useQueryClient();
+  const { connection } = useSignalR();
   const [open, setOpen] = useState(false);
+
+  const [logs, setLogs] = useState<Array<{ ts: string; msg: string }>>([]);
+  const [status, setStatus] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+
+  const resetProgress = () => {
+    setLogs([]);
+    setStatus(null);
+    setLastError(null);
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    // Clear any previous run's logs/status so each update attempt starts fresh.
+    resetProgress();
+  };
 
   const machineQuery = useQuery({
     queryKey: ["onboardingMachineForNode", nodeId],
@@ -49,6 +67,39 @@ export function NodeAgentUpdateModal({ nodeId, hostname, channel }: NodeAgentUpd
   });
 
   const machine = machineQuery.data ?? null;
+
+  useEffect(() => {
+    if (!connection) return;
+    if (!open) return;
+    if (!machine) return;
+
+    const handleLog = (machineId: string, timestamp: string, message: string) => {
+      if (machineId !== machine.id) return;
+
+      setLogs((old) => {
+        const next = [...old, { ts: timestamp, msg: message }];
+        return next.slice(-300);
+      });
+    };
+
+    const handleStatus = (machineId: string, newStatus: string, error: string | null) => {
+      if (machineId !== machine.id) return;
+
+      setStatus(newStatus);
+      setLastError(error);
+
+      queryClient.invalidateQueries({ queryKey: ["onboardingMachines"] });
+      queryClient.invalidateQueries({ queryKey: ["onboardingMachineForNode", nodeId] });
+    };
+
+    connection.on("OnboardingLog", handleLog);
+    connection.on("OnboardingStatusChanged", handleStatus);
+
+    return () => {
+      connection.off("OnboardingLog", handleLog);
+      connection.off("OnboardingStatusChanged", handleStatus);
+    };
+  }, [connection, machine, nodeId, open, queryClient]);
 
   const effectiveServerBaseUrl = useMemo(() => {
     const suggested = suggestedUrlQuery.data?.serverBaseUrl ?? "";
@@ -102,6 +153,7 @@ export function NodeAgentUpdateModal({ nodeId, hostname, channel }: NodeAgentUpd
         force,
         runAsRoot,
         trustHostKey,
+        targetNodeId: nodeId,
         agentSource: agentSelection.source,
         agentChannel: agentSelection.channel,
         agentVersion: agentSelection.version,
@@ -117,11 +169,10 @@ export function NodeAgentUpdateModal({ nodeId, hostname, channel }: NodeAgentUpd
     },
     onSuccess: async () => {
       toast.info("Agent update started", {
-        description: "Check the Onboarding logs for progress.",
+        description: "Live progress will appear in this dialog.",
       });
       await queryClient.invalidateQueries({ queryKey: ["onboardingMachines"] });
       await queryClient.invalidateQueries({ queryKey: ["onboardingMachineForNode", nodeId] });
-      setOpen(false);
     },
     onError: (err) => {
       toast.error("Failed to start agent update", {
@@ -133,7 +184,7 @@ export function NodeAgentUpdateModal({ nodeId, hostname, channel }: NodeAgentUpd
   const noLinkedMachine = machineQuery.isError;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button variant="secondary">Update Agent Version…</Button>
       </DialogTrigger>
@@ -248,6 +299,33 @@ export function NodeAgentUpdateModal({ nodeId, hostname, channel }: NodeAgentUpd
                   />
                 </div>
               ) : null}
+            </div>
+
+            <div className="rounded border p-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-muted-foreground">Progress</div>
+                <div className="text-xs font-mono">{status ?? machine.status}</div>
+              </div>
+
+              {lastError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{lastError}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="rounded bg-muted p-2">
+                <div className="max-h-64 overflow-auto font-mono text-xs whitespace-pre-wrap">
+                  {logs.length === 0 ? (
+                    <span className="text-muted-foreground">Start an update to see live logs here.</span>
+                  ) : (
+                    logs.map((l, idx) => (
+                      <div key={idx}>
+                        <span className="text-muted-foreground">[{l.ts}]</span> {l.msg}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         ) : null}

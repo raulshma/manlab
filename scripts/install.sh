@@ -177,6 +177,25 @@ done
 [[ -z "$SERVER" ]] && SERVER="${MANLAB_SERVER_BASE_URL:-${MANLAB_SERVER:-}}"
 [[ -z "$TOKEN" ]] && TOKEN="${MANLAB_AUTH_TOKEN:-}"
 
+# Update-mode safety: if no token was provided, try to preserve the existing token.
+# This prevents accidental identity churn (new node) or lockout (empty token).
+if [[ -z "$TOKEN" && -f /etc/manlab-agent.env ]]; then
+    existing_token="$(grep -E '^MANLAB_AUTH_TOKEN=' /etc/manlab-agent.env 2>/dev/null | head -n 1 | cut -d= -f2- || true)"
+    existing_token="${existing_token//$'\r'/}"
+    existing_token="${existing_token//$'\n'/}"
+    if [[ -n "$existing_token" ]]; then
+        TOKEN="$existing_token"
+    fi
+fi
+
+# Persisted agent version override (optional). Helps keep dashboard-reported version stable.
+EFFECTIVE_AGENT_VERSION=""
+if [[ -n "$AGENT_VERSION" && ! "$AGENT_VERSION" =~ ^[Ss][Tt][Aa][Gg][Ee][Dd]$ ]]; then
+    EFFECTIVE_AGENT_VERSION="$AGENT_VERSION"
+elif [[ -n "$GITHUB_VERSION" ]]; then
+    EFFECTIVE_AGENT_VERSION="$GITHUB_VERSION"
+fi
+
 # Validate
 require_root
 
@@ -297,10 +316,15 @@ fi
 
 # Provide connection secrets via environment file (preferred over writing tokens into appsettings.json).
 ENV_FILE="/etc/manlab-agent.env"
-cat > "$ENV_FILE" <<EOF
-MANLAB_SERVER_URL=$HUB_URL
-MANLAB_AUTH_TOKEN=$TOKEN
-EOF
+{
+    echo "MANLAB_SERVER_URL=$HUB_URL"
+    if [[ -n "$TOKEN" ]]; then
+        echo "MANLAB_AUTH_TOKEN=$TOKEN"
+    fi
+    if [[ -n "$EFFECTIVE_AGENT_VERSION" ]]; then
+        echo "MANLAB_AGENT_VERSION=$EFFECTIVE_AGENT_VERSION"
+    fi
+} > "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
 
 # Create systemd service

@@ -984,6 +984,7 @@ export async function installAgent(
     force: boolean;
     runAsRoot?: boolean;
     trustHostKey: boolean;
+    targetNodeId?: string;
     agentSource?: "local" | "github";
     agentChannel?: string;
     agentVersion?: string;

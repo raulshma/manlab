@@ -3,11 +3,13 @@ using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Hubs;
+using ManLab.Server.Services.Audit;
 using ManLab.Server.Services.Security;
 using ManLab.Server.Services.Ssh;
 using ManLab.Shared;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace ManLab.Server.Services;
 
@@ -18,12 +20,14 @@ public sealed class OnboardingJobRunner
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<AgentHub> _hub;
     private readonly ILogger<OnboardingJobRunner> _logger;
+    private readonly IAuditLog _auditLog;
 
-    public OnboardingJobRunner(IServiceScopeFactory scopeFactory, IHubContext<AgentHub> hub, ILogger<OnboardingJobRunner> logger)
+    public OnboardingJobRunner(IServiceScopeFactory scopeFactory, IHubContext<AgentHub> hub, ILogger<OnboardingJobRunner> logger, IAuditLog auditLog)
     {
         _scopeFactory = scopeFactory;
         _hub = hub;
         _logger = logger;
+        _auditLog = auditLog;
     }
 
     public bool IsRunning(Guid machineId) => _running.ContainsKey(machineId);
@@ -57,6 +61,7 @@ public sealed class OnboardingJobRunner
         string? SudoPassword,
         bool RunAsRoot,
         SshProvisioningService.AgentInstallOptions? AgentInstall,
+        Guid? TargetNodeId,
         bool TrustOnFirstUse,
         string? ExpectedHostKeyFingerprint,
         string? Actor,
@@ -77,6 +82,36 @@ public sealed class OnboardingJobRunner
     {
         try
         {
+            void TryEmitUpdateCompleted(bool success, string message, string? error)
+            {
+                if (request.TargetNodeId is not Guid targetNodeId)
+                {
+                    return;
+                }
+
+                _auditLog.TryEnqueue(new AuditEvent
+                {
+                    Kind = "activity",
+                    EventName = "agent.update.completed",
+                    Category = "agents",
+                    Source = "system",
+                    ActorType = "dashboard",
+                    ActorName = request.Actor,
+                    ActorIp = request.ActorIp,
+                    NodeId = targetNodeId,
+                    MachineId = machineId,
+                    Success = success,
+                    Message = message,
+                    Error = error,
+                    DataJson = JsonSerializer.Serialize(new
+                    {
+                        agentSource = request.AgentInstall?.Source,
+                        agentChannel = request.AgentInstall?.Channel,
+                        agentVersion = request.AgentInstall?.Version
+                    })
+                });
+            }
+
             await PublishStatusAsync(machineId, OnboardingStatus.Running, null);
             await PublishLogAsync(machineId, "Starting onboarding job...");
 
@@ -91,6 +126,7 @@ public sealed class OnboardingJobRunner
             if (machine is null)
             {
                 await PublishStatusAsync(machineId, OnboardingStatus.Failed, "Machine not found.");
+                TryEmitUpdateCompleted(false, "Agent update failed", "Machine not found");
                 return;
             }
 
@@ -103,6 +139,7 @@ public sealed class OnboardingJobRunner
                 || serverUri is null)
             {
                 await FailAsync(db, machine, serverUrlError ?? "Invalid serverBaseUrl (must be an absolute URL).", machineId);
+                TryEmitUpdateCompleted(false, "Agent update failed", serverUrlError ?? "Invalid serverBaseUrl (must be an absolute URL).");
                 rateLimit.RecordFailure(request.RateLimitKey);
                 await audit.RecordAsync(new Data.Entities.SshAuditEvent
                 {
@@ -146,6 +183,7 @@ public sealed class OnboardingJobRunner
 
                 await PublishLogAsync(machineId, "ERROR: " + msg);
                 await FailAsync(db, machine, msg, machineId);
+                TryEmitUpdateCompleted(false, "Agent update failed", msg);
                 rateLimit.RecordFailure(request.RateLimitKey);
                 await audit.RecordAsync(new Data.Entities.SshAuditEvent
                 {
@@ -164,11 +202,65 @@ public sealed class OnboardingJobRunner
                 return;
             }
 
-            // Create an enrollment token (plain + hashed in DB)
-            var (plainToken, tokenEntity) = await tokenService.CreateAsync(machineId);
-            var tokenHash = tokenEntity.TokenHash;
+            // If a target node is specified, we treat this as an update-in-place.
+            // IMPORTANT: do NOT mint a new token in update mode; doing so would create a new node identity.
+            var updateMode = request.TargetNodeId.HasValue;
+            string enrollmentToken;
+            string? tokenHash = null;
 
-            await PublishLogAsync(machineId, "Generated enrollment token.");
+            if (updateMode)
+            {
+                var targetNodeId = request.TargetNodeId!.Value;
+                var existingNode = await db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == targetNodeId);
+                if (existingNode is null)
+                {
+                    await FailAsync(db, machine, $"Target node not found: {targetNodeId}", machineId);
+                    TryEmitUpdateCompleted(false, "Agent update failed", "Target node not found");
+                    rateLimit.RecordFailure(request.RateLimitKey);
+                    await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                    {
+                        TimestampUtc = DateTime.UtcNow,
+                        Actor = request.Actor,
+                        ActorIp = request.ActorIp,
+                        Action = "ssh.install.result",
+                        MachineId = machineId,
+                        Host = machine.Host,
+                        Port = machine.Port,
+                        Username = machine.Username,
+                        HostKeyFingerprint = machine.HostKeyFingerprint,
+                        Success = false,
+                        Error = "Target node not found"
+                    });
+                    return;
+                }
+
+                // Keep link stable.
+                if (machine.LinkedNodeId.HasValue && machine.LinkedNodeId.Value != targetNodeId)
+                {
+                    await FailAsync(db, machine, "This onboarding machine is linked to a different node; refusing to update to avoid creating/overwriting identities.", machineId);
+                    TryEmitUpdateCompleted(false, "Agent update failed", "Onboarding machine linked to a different node");
+                    rateLimit.RecordFailure(request.RateLimitKey);
+                    return;
+                }
+
+                machine.LinkedNodeId = targetNodeId;
+                machine.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+
+                await PublishLogAsync(machineId, $"Update mode: will update existing node {targetNodeId} and preserve node identity.");
+
+                // In update mode we reuse the existing agent token on the target.
+                // SshProvisioningService will attempt to read it from the target if this is empty.
+                enrollmentToken = string.Empty;
+            }
+            else
+            {
+                // Create an enrollment token (plain + hashed in DB)
+                var (plainToken, tokenEntity) = await tokenService.CreateAsync(machineId);
+                enrollmentToken = plainToken;
+                tokenHash = tokenEntity.TokenHash;
+                await PublishLogAsync(machineId, "Generated enrollment token.");
+            }
 
             var expectedFingerprint = machine.HostKeyFingerprint ?? request.ExpectedHostKeyFingerprint;
 
@@ -186,7 +278,7 @@ public sealed class OnboardingJobRunner
             var (success, fingerprint, requiresTrust, logs) = await ssh.InstallAgentAsync(
                 connOptions,
                 serverUri,
-                plainToken,
+                enrollmentToken,
                 request.Force,
                 request.RunAsRoot,
                 request.AgentInstall,
@@ -218,6 +310,8 @@ public sealed class OnboardingJobRunner
                     Error = "SSH host key not trusted"
                 });
 
+                TryEmitUpdateCompleted(false, "Agent update failed", "SSH host key not trusted");
+
                 await PublishLogAsync(machineId, $"Host key fingerprint: {fingerprint}");
                 await PublishStatusAsync(machineId, OnboardingStatus.Failed, machine.LastError);
                 return;
@@ -232,27 +326,59 @@ public sealed class OnboardingJobRunner
 
             await PublishLogAsync(machineId, "Remote installer completed. Waiting for agent to register...");
 
-            // Wait for agent to show up (node with matching token hash and Online status)
             var deadline = DateTime.UtcNow.AddMinutes(3);
             Guid? nodeId = null;
 
-            while (DateTime.UtcNow < deadline)
+            // If a specific node is targeted, wait for that node to come online and (best-effort) report the selected version.
+            if (updateMode)
             {
-                var node = await db.Nodes
-                    .Where(n => n.AuthKeyHash == tokenHash)
-                    .OrderByDescending(n => n.LastSeen)
-                    .FirstOrDefaultAsync();
+                var targetNodeId = request.TargetNodeId!.Value;
+                nodeId = targetNodeId;
 
-                if (node is not null)
+                var expectedVersion = NormalizeExpectedAgentVersion(request.AgentInstall);
+                if (!string.IsNullOrWhiteSpace(expectedVersion))
                 {
-                    nodeId = node.Id;
-                    if (node.Status == NodeStatus.Online)
-                    {
-                        break;
-                    }
+                    await PublishLogAsync(machineId, $"Waiting for node to report agentVersion='{expectedVersion}'...");
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(3));
+                while (DateTime.UtcNow < deadline)
+                {
+                    var node = await db.Nodes
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(n => n.Id == targetNodeId);
+
+                    if (node is not null && node.Status == NodeStatus.Online)
+                    {
+                        if (string.IsNullOrWhiteSpace(expectedVersion) || string.Equals(NormalizeVersionString(node.AgentVersion), expectedVersion, StringComparison.OrdinalIgnoreCase))
+                        {
+                            break;
+                        }
+                    }
+
+                    await Task.Delay(TimeSpan.FromSeconds(3));
+                }
+            }
+            else
+            {
+                // Wait for agent to show up (node with matching token hash and Online status)
+                while (DateTime.UtcNow < deadline)
+                {
+                    var node = await db.Nodes
+                        .Where(n => n.AuthKeyHash == tokenHash)
+                        .OrderByDescending(n => n.LastSeen)
+                        .FirstOrDefaultAsync();
+
+                    if (node is not null)
+                    {
+                        nodeId = node.Id;
+                        if (node.Status == NodeStatus.Online)
+                        {
+                            break;
+                        }
+                    }
+
+                    await Task.Delay(TimeSpan.FromSeconds(3));
+                }
             }
 
             if (nodeId is null)
@@ -272,6 +398,7 @@ public sealed class OnboardingJobRunner
                 }
 
                 await FailAsync(db, machine, "Install ran, but agent did not register within the timeout.", machineId);
+                TryEmitUpdateCompleted(false, "Agent update failed", "Agent did not register within timeout");
                 rateLimit.RecordSuccess(request.RateLimitKey);
                 await audit.RecordAsync(new Data.Entities.SshAuditEvent
                 {
@@ -290,6 +417,7 @@ public sealed class OnboardingJobRunner
                 return;
             }
 
+            // In update mode, keep the existing node link stable.
             machine.LinkedNodeId = nodeId;
             machine.Status = OnboardingStatus.Succeeded;
             machine.LastError = null;
@@ -298,6 +426,33 @@ public sealed class OnboardingJobRunner
 
             await PublishLogAsync(machineId, $"Agent registered successfully (nodeId={nodeId}).");
             await PublishStatusAsync(machineId, OnboardingStatus.Succeeded, null);
+
+            if (updateMode)
+            {
+                // Best-effort: capture the reported version at completion.
+                var node = await db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == nodeId.Value);
+                _auditLog.TryEnqueue(new AuditEvent
+                {
+                    Kind = "activity",
+                    EventName = "agent.update.completed",
+                    Category = "agents",
+                    Source = "system",
+                    ActorType = "dashboard",
+                    ActorName = request.Actor,
+                    ActorIp = request.ActorIp,
+                    NodeId = nodeId,
+                    MachineId = machineId,
+                    Success = true,
+                    Message = "Agent update completed",
+                    DataJson = JsonSerializer.Serialize(new
+                    {
+                        agentSource = request.AgentInstall?.Source,
+                        agentChannel = request.AgentInstall?.Channel,
+                        agentVersion = request.AgentInstall?.Version,
+                        reportedAgentVersion = node?.AgentVersion
+                    })
+                });
+            }
 
             rateLimit.RecordSuccess(request.RateLimitKey);
             await audit.RecordAsync(new Data.Entities.SshAuditEvent
@@ -318,6 +473,32 @@ public sealed class OnboardingJobRunner
         catch (Exception ex)
         {
             _logger.LogError(ex, "Onboarding job failed for machine {MachineId}", machineId);
+
+            // Best-effort durable completion record for update mode.
+            if (request.TargetNodeId is Guid targetNodeId)
+            {
+                _auditLog.TryEnqueue(new AuditEvent
+                {
+                    Kind = "activity",
+                    EventName = "agent.update.completed",
+                    Category = "agents",
+                    Source = "system",
+                    ActorType = "dashboard",
+                    ActorName = request.Actor,
+                    ActorIp = request.ActorIp,
+                    NodeId = targetNodeId,
+                    MachineId = machineId,
+                    Success = false,
+                    Message = "Agent update failed",
+                    Error = ex.Message,
+                    DataJson = JsonSerializer.Serialize(new
+                    {
+                        agentSource = request.AgentInstall?.Source,
+                        agentChannel = request.AgentInstall?.Channel,
+                        agentVersion = request.AgentInstall?.Version
+                    })
+                });
+            }
 
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DataContext>();
@@ -584,5 +765,44 @@ public sealed class OnboardingJobRunner
     private Task PublishStatusAsync(Guid machineId, OnboardingStatus status, string? lastError)
     {
         return _hub.Clients.All.SendAsync("OnboardingStatusChanged", machineId, status.ToString(), lastError);
+    }
+
+    private static string? NormalizeExpectedAgentVersion(SshProvisioningService.AgentInstallOptions? agentInstall)
+    {
+        if (agentInstall is null)
+        {
+            return null;
+        }
+
+        var v = (agentInstall.Version ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(v) || string.Equals(v, "staged", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return NormalizeVersionString(v);
+    }
+
+    private static string? NormalizeVersionString(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        raw = raw.Trim();
+
+        if (raw.StartsWith("v", StringComparison.OrdinalIgnoreCase) && raw.Length > 1)
+        {
+            raw = raw[1..];
+        }
+
+        var plus = raw.IndexOf('+');
+        if (plus > 0)
+        {
+            raw = raw[..plus];
+        }
+
+        return raw;
     }
 }

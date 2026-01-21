@@ -2,6 +2,7 @@ using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Services;
+using ManLab.Server.Services.Audit;
 using ManLab.Server.Services.Ssh;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.Options;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text.Json;
 
 namespace ManLab.Server.Controllers;
 
@@ -20,6 +22,7 @@ public sealed class OnboardingController : ControllerBase
     private readonly OnboardingJobRunner _jobRunner;
     private readonly SshProvisioningService _ssh;
     private readonly SshAuditService _audit;
+    private readonly IAuditLog _auditLog;
     private readonly SshRateLimitService _rateLimit;
     private readonly SshProvisioningOptions _sshOptions;
     private readonly CredentialEncryptionService _encryptionService;
@@ -29,6 +32,7 @@ public sealed class OnboardingController : ControllerBase
         OnboardingJobRunner jobRunner,
         SshProvisioningService ssh,
         SshAuditService audit,
+        IAuditLog auditLog,
         SshRateLimitService rateLimit,
         IOptions<SshProvisioningOptions> sshOptions,
         CredentialEncryptionService encryptionService)
@@ -37,6 +41,7 @@ public sealed class OnboardingController : ControllerBase
         _jobRunner = jobRunner;
         _ssh = ssh;
         _audit = audit;
+        _auditLog = auditLog;
         _rateLimit = rateLimit;
         _sshOptions = sshOptions.Value;
         _encryptionService = encryptionService;
@@ -549,6 +554,7 @@ public sealed class OnboardingController : ControllerBase
                 Channel: request.AgentChannel,
                 Version: request.AgentVersion,
                 GitHubReleaseBaseUrl: request.GitHubReleaseBaseUrl),
+            TargetNodeId: request.TargetNodeId,
             TrustOnFirstUse: request.TrustHostKey && _sshOptions.AllowTrustOnFirstUse && string.IsNullOrWhiteSpace(machine.HostKeyFingerprint),
             ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
             Actor: User?.Identity?.Name,
@@ -579,6 +585,29 @@ public sealed class OnboardingController : ControllerBase
             Success = true,
             Error = null
         });
+
+        if (request.TargetNodeId is Guid targetNodeId)
+        {
+            _auditLog.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "agent.update.start",
+                httpContext: HttpContext,
+                success: null,
+                statusCode: StatusCodes.Status202Accepted,
+                nodeId: targetNodeId,
+                machineId: machine.Id,
+                category: "agents",
+                message: "Agent update started",
+                dataJson: JsonSerializer.Serialize(new
+                {
+                    hostname = machine.Host,
+                    port = machine.Port,
+                    username = machine.Username,
+                    agentSource = request.AgentSource,
+                    agentChannel = request.AgentChannel,
+                    agentVersion = request.AgentVersion
+                }))); 
+        }
 
         return Accepted(new StartInstallResponse(machine.Id, machine.Status.ToString()));
     }
@@ -920,6 +949,7 @@ public sealed class OnboardingController : ControllerBase
         string? AgentChannel,
         string? AgentVersion,
         string? GitHubReleaseBaseUrl,
+        Guid? TargetNodeId,
         string? Password,
         string? PrivateKeyPem,
         string? PrivateKeyPassphrase,
