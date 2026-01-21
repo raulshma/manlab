@@ -19,9 +19,12 @@ import {
   ChevronRight,
   PanelLeftClose,
   PanelLeft,
+  LayoutGrid,
+  List as ListIcon,
 } from "lucide-react";
 import { MachineOnboardingModal } from "@/components/MachineOnboardingModal";
 import { NodeDetailView } from "@/components/NodeDetailView";
+import { NetworkMap } from "@/components/NetworkMap";
 import { fetchNodes } from "@/api";
 import type { Node, NodeStatus } from "@/types";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -50,6 +53,7 @@ function formatRelativeTime(dateString: string): string {
 }
 
 export function NodesPage() {
+  const [viewMode, setViewMode] = useState<"list" | "map">("list");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<NodeStatus | "All">("All");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -85,16 +89,18 @@ export function NodesPage() {
   }, [nodes, query, status]);
 
   // Auto-select first node if none is selected (Desktop only)
+  // Disable auto-select in Map mode to ensure Map is visible initially
   const effectiveSelectedId =
     selectedNodeId && filtered.find((n) => n.id === selectedNodeId)
       ? selectedNodeId
-      : !isMobile && filtered.length > 0
+      : !isMobile && filtered.length > 0 && viewMode === "list"
       ? filtered[0].id
       : null;
 
   // If mobile and a node is selected, show details. Otherwise show list.
-  const showList = !isMobile || !effectiveSelectedId;
-  const showDetails = !isMobile || effectiveSelectedId;
+  // In Map mode on mobile, we treat the Map as the "Detail" view (hiding the list)
+  const showList = !isMobile || (!effectiveSelectedId && viewMode === "list");
+  const showDetails = !isMobile || effectiveSelectedId || viewMode === "map";
 
   return (
     <div className="flex h-[calc(100vh-5rem)] -m-4 -mb-8 relative overflow-hidden">
@@ -138,6 +144,32 @@ export function NodesPage() {
             </Button>
           )}
         </div>
+
+        {/* View Toggle (Only show if not collapsed or on mobile) */}
+        {(!sidebarCollapsed || isMobile) && (
+            <div className="px-2 pt-2">
+                <div className="flex items-center p-1 bg-muted/50 rounded-lg border border-border">
+                    <Button
+                        variant={viewMode === "list" ? "secondary" : "ghost"}
+                        size="sm"
+                        className="flex-1 h-7 text-xs"
+                        onClick={() => setViewMode("list")}
+                    >
+                        <ListIcon className="w-3.5 h-3.5 mr-1.5" />
+                        List
+                    </Button>
+                    <Button
+                        variant={viewMode === "map" ? "secondary" : "ghost"}
+                        size="sm"
+                        className="flex-1 h-7 text-xs"
+                        onClick={() => setViewMode("map")}
+                    >
+                        <LayoutGrid className="w-3.5 h-3.5 mr-1.5" />
+                        Map
+                    </Button>
+                </div>
+            </div>
+        )}
 
         {/* Filter Controls - hidden when collapsed (Desktop) */}
         {(!sidebarCollapsed || isMobile) && (
@@ -313,19 +345,38 @@ export function NodesPage() {
         )}
       </div>
 
-      {/* Main Content - Node Details */}
+      {/* Main Content - Node Details or Map */}
       <div
         className={cn(
-          "flex-1 overflow-auto bg-background transition-all duration-300 md:translate-x-0",
+          "flex-1 overflow-hidden bg-background transition-all duration-300 md:translate-x-0 relative",
           // Mobile: slide in when details shown
           isMobile && showDetails ? "translate-x-0" : isMobile ? "translate-x-full fixed inset-0 z-30" : ""
         )}
       >
-        {effectiveSelectedId ? (
+        {viewMode === "map" && !effectiveSelectedId ? (
+            <>
+                {isMobile && (
+                    <Button 
+                        variant="secondary" 
+                        size="sm" 
+                        className="absolute top-4 left-4 z-50 shadow-md"
+                        onClick={() => setViewMode("list")}
+                    >
+                        <ListIcon className="w-4 h-4 mr-2" />
+                        List View
+                    </Button>
+                )}
+                <NetworkMap 
+                    nodes={filtered} 
+                    selectedNodeId={selectedNodeId}
+                    onNodeSelect={(id) => setSelectedNodeId(id)}
+                />
+            </>
+        ) : effectiveSelectedId ? (
           <NodeDetailView
             nodeId={effectiveSelectedId}
             onBack={() => setSelectedNodeId(null)}
-            showBackButton={isMobile}
+            showBackButton={isMobile || viewMode === "map"} 
           />
         ) : (
           <Empty className="h-full border-0">
