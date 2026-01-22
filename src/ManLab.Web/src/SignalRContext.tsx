@@ -510,6 +510,7 @@ export function SignalRProvider({
     newConnection.on("NodeStatusChanged", nodeStatusChangedHandler);
     newConnection.on("NodeRegistered", nodeRegisteredHandler);
     newConnection.on("TelemetryReceived", telemetryUpdateHandler);
+    newConnection.on("telemetryreceived", telemetryUpdateHandler);
     newConnection.on("CommandUpdated", commandUpdatedHandler);
 
     // Register local agent event handlers (prevents 'No client method' warnings)

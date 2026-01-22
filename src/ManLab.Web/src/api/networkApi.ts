@@ -152,13 +152,14 @@ export interface DiscoveryRequest {
  * mDNS service record.
  */
 export interface MdnsService {
-  serviceName: string;
-  serviceType: string;
-  hostname: string;
-  ipAddresses: string[];
-  port: number;
-  txtRecords: Record<string, string>;
-  networkInterface: string | null;
+  serviceName?: string;
+  name?: string;
+  serviceType?: string;
+  hostname?: string | null;
+  ipAddresses?: string[];
+  port?: number;
+  txtRecords?: Record<string, string>;
+  networkInterface?: string | null;
 }
 
 /**
@@ -170,34 +171,44 @@ export interface UpnpDevice {
   manufacturer: string | null;
   modelName: string | null;
   modelNumber: string | null;
-  deviceType: string | null;
-  location: string | null;
-  services: string[];
+  deviceType?: string | null;
+  notificationType?: string | null;
+  location?: string | null;
+  descriptionLocation?: string | null;
+  ipAddress?: string | null;
+  server?: string | null;
+  services?: string[];
 }
 
 /**
  * Combined discovery scan result.
  */
 export interface DiscoveryScanResult {
-  mdnsServices: MdnsService[];
+  mdnsServices?: MdnsService[];
+  mdnsDevices?: MdnsService[];
   upnpDevices: UpnpDevice[];
-  scanDurationMs: number;
+  scanDurationMs?: number;
+  durationMs?: number;
 }
 
 /**
  * mDNS-only discovery result.
  */
 export interface MdnsDiscoveryResult {
-  services: MdnsService[];
-  scanDurationMs: number;
+  services?: MdnsService[];
+  mdnsDevices?: MdnsService[];
+  scanDurationMs?: number;
+  durationMs?: number;
 }
 
 /**
  * UPnP-only discovery result.
  */
 export interface UpnpDiscoveryResult {
-  devices: UpnpDevice[];
-  scanDurationMs: number;
+  devices?: UpnpDevice[];
+  upnpDevices?: UpnpDevice[];
+  scanDurationMs?: number;
+  durationMs?: number;
 }
 
 /**
@@ -261,131 +272,395 @@ export interface MdnsServiceTypes {
 // API Functions
 // ============================================================================
 
+const NETWORK_RETRYABLE_MESSAGE = /(429|too many requests|service unavailable|bad gateway|gateway timeout|failed to fetch|networkerror)/i;
+
+export interface RequestOptions {
+  signal?: AbortSignal;
+}
+
+async function withNetworkRetry<T>(operation: () => Promise<T>): Promise<T> {
+  const maxRetries = 2;
+  const baseDelayMs = 300;
+  const maxDelayMs = 2000;
+
+  let delay = baseDelayMs;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      const shouldRetry = NETWORK_RETRYABLE_MESSAGE.test(message);
+
+      if (!shouldRetry || attempt >= maxRetries) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay = Math.min(maxDelayMs, delay * 2);
+    }
+  }
+
+  // This should never be reached due to the loop logic, but TypeScript needs it
+  throw new Error("Retry loop exhausted");
+}
+
 /**
  * Ping a single host.
  */
-export async function pingHost(request: PingRequest): Promise<PingResult> {
-  const { data } = await api.post<PingResult>("/network/ping", request);
-  return data;
+export async function pingHost(
+  request: PingRequest,
+  options?: RequestOptions
+): Promise<PingResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<PingResult>(
+      "/network/ping",
+      request,
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Discover hosts on a subnet (CIDR notation).
  */
 export async function discoverSubnet(
-  request: SubnetDiscoverRequest
+  request: SubnetDiscoverRequest,
+  options?: RequestOptions
 ): Promise<SubnetScanResult> {
-  const { data } = await api.post<SubnetScanResult>(
-    "/network/discover",
-    request
-  );
-  return data;
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<SubnetScanResult>(
+      "/network/discover",
+      request,
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Trace route to a host.
  */
 export async function traceroute(
-  request: TracerouteRequest
+  request: TracerouteRequest,
+  options?: RequestOptions
 ): Promise<TracerouteResult> {
-  const { data } = await api.post<TracerouteResult>(
-    "/network/traceroute",
-    request
-  );
-  return data;
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<TracerouteResult>(
+      "/network/traceroute",
+      request,
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Scan ports on a host.
  */
 export async function scanPorts(
-  request: PortScanRequest
+  request: PortScanRequest,
+  options?: RequestOptions
 ): Promise<PortScanResult> {
-  const { data } = await api.post<PortScanResult>("/network/ports", request);
-  return data;
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<PortScanResult>(
+      "/network/ports",
+      request,
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Get detailed information about a device by IP.
  */
 export async function getDeviceInfo(ip: string): Promise<DeviceInfo> {
-  const { data } = await api.get<DeviceInfo>(`/network/device/${encodeURIComponent(ip)}`);
-  return data;
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<DeviceInfo>(`/network/device/${encodeURIComponent(ip)}`);
+    return data;
+  });
 }
 
 /**
  * Perform combined mDNS and UPnP discovery.
  */
 export async function discoverDevices(
-  request: DiscoveryRequest = {}
+  request: DiscoveryRequest = {},
+  options?: RequestOptions
 ): Promise<DiscoveryScanResult> {
-  const { data } = await api.post<DiscoveryScanResult>(
-    "/network/discovery",
-    request
-  );
-  return data;
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<DiscoveryScanResult>(
+      "/network/discovery",
+      request,
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Perform mDNS-only discovery.
  */
 export async function discoverMdns(
-  request: DiscoveryRequest = {}
+  request: DiscoveryRequest = {},
+  options?: RequestOptions
 ): Promise<MdnsDiscoveryResult> {
-  const { data } = await api.post<MdnsDiscoveryResult>(
-    "/network/discovery/mdns",
-    request
-  );
-  return data;
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<MdnsDiscoveryResult>(
+      "/network/discovery/mdns",
+      request,
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Perform UPnP/SSDP-only discovery.
  */
 export async function discoverUpnp(
-  request: DiscoveryRequest = {}
+  request: DiscoveryRequest = {},
+  options?: RequestOptions
 ): Promise<UpnpDiscoveryResult> {
-  const { data } = await api.post<UpnpDiscoveryResult>(
-    "/network/discovery/upnp",
-    request
-  );
-  return data;
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<UpnpDiscoveryResult>(
+      "/network/discovery/upnp",
+      request,
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Get available mDNS service types.
  */
-export async function getMdnsServiceTypes(): Promise<MdnsServiceTypes> {
-  const { data } = await api.get<MdnsServiceTypes>(
-    "/network/discovery/mdns/service-types"
-  );
-  return data;
+export async function getMdnsServiceTypes(
+  options?: RequestOptions
+): Promise<MdnsServiceTypes> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<MdnsServiceTypes>(
+      "/network/discovery/mdns/service-types",
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Check if WiFi scanning is supported on the server.
  */
-export async function checkWifiSupport(): Promise<WifiSupportResponse> {
-  const { data } = await api.get<WifiSupportResponse>("/network/wifi/supported");
-  return data;
+export async function checkWifiSupport(
+  options?: RequestOptions
+): Promise<WifiSupportResponse> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<WifiSupportResponse>(
+      "/network/wifi/supported",
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Get available WiFi adapters.
  */
-export async function getWifiAdapters(): Promise<WifiAdapter[]> {
-  const { data } = await api.get<WifiAdapter[]>("/network/wifi/adapters");
-  return data;
+export async function getWifiAdapters(
+  options?: RequestOptions
+): Promise<WifiAdapter[]> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<WifiAdapter[]>(
+      "/network/wifi/adapters",
+      options
+    );
+    return data;
+  });
 }
 
 /**
  * Scan for WiFi networks.
  */
 export async function scanWifi(
-  request: WifiScanRequest = {}
+  request: WifiScanRequest = {},
+  options?: RequestOptions
 ): Promise<WifiScanResult> {
-  const { data } = await api.post<WifiScanResult>("/network/wifi/scan", request);
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<WifiScanResult>(
+      "/network/wifi/scan",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+// ============================================================================
+// Geolocation Types & Functions
+// ============================================================================
+
+/**
+ * Available geolocation database source.
+ */
+export interface GeoDatabaseSource {
+  id: string;
+  name: string;
+  description: string;
+  license: string;
+  downloadUrl: string;
+  estimatedSizeBytes: number | null;
+}
+
+/**
+ * Database metadata information.
+ */
+export interface GeoDatabaseInfo {
+  buildDate: string | null;
+  databaseType: string | null;
+  recordCount: number | null;
+}
+
+/**
+ * Geolocation database status.
+ */
+export interface GeoDatabaseStatus {
+  isAvailable: boolean;
+  databasePath: string | null;
+  lastUpdated: string | null;
+  fileSizeBytes: number | null;
+  activeSourceId: string | null;
+  metadata: GeoDatabaseInfo | null;
+}
+
+/**
+ * Geolocation lookup result.
+ */
+export interface GeoLocationResult {
+  ipAddress: string;
+  countryCode: string | null;
+  country: string | null;
+  state: string | null;
+  city: string | null;
+  postalCode: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  timezone: string | null;
+  isFound: boolean;
+}
+
+/**
+ * Geolocation lookup request.
+ */
+export interface GeoLookupRequest {
+  ips: string[];
+}
+
+/**
+ * Get the list of available geolocation database sources.
+ */
+export async function getGeolocationSources(
+  options?: RequestOptions
+): Promise<GeoDatabaseSource[]> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<GeoDatabaseSource[]>(
+      "/network/geolocation/sources",
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Get the status of the IP geolocation database.
+ */
+export async function getGeolocationStatus(
+  options?: RequestOptions
+): Promise<GeoDatabaseStatus> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<GeoDatabaseStatus>(
+      "/network/geolocation/status",
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Download the IP geolocation database from the default source.
+ */
+export async function downloadGeolocationDatabase(
+  options?: RequestOptions
+): Promise<{ success: boolean }> {
+  const { data } = await api.post<{ success: boolean }>(
+    "/network/geolocation/download",
+    {},
+    options
+  );
   return data;
+}
+
+/**
+ * Download the IP geolocation database from a specific source.
+ */
+export async function downloadGeolocationDatabaseFromSource(
+  sourceId: string,
+  options?: RequestOptions
+): Promise<{ success: boolean; sourceId: string }> {
+  const { data } = await api.post<{ success: boolean; sourceId: string }>(
+    `/network/geolocation/download/${encodeURIComponent(sourceId)}`,
+    {},
+    options
+  );
+  return data;
+}
+
+/**
+ * Update the IP geolocation database.
+ */
+export async function updateGeolocationDatabase(
+  options?: RequestOptions
+): Promise<{ success: boolean }> {
+  const { data } = await api.put<{ success: boolean }>(
+    "/network/geolocation/update",
+    {},
+    options
+  );
+  return data;
+}
+
+/**
+ * Delete the installed IP geolocation database.
+ */
+export async function deleteGeolocationDatabase(
+  options?: RequestOptions
+): Promise<{ success: boolean }> {
+  const { data } = await api.delete<{ success: boolean }>(
+    "/network/geolocation/database",
+    options
+  );
+  return data;
+}
+
+/**
+ * Lookup geolocation for one or more IP addresses.
+ */
+export async function lookupGeolocation(
+  ips: string[],
+  options?: RequestOptions
+): Promise<GeoLocationResult[]> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<GeoLocationResult[]>(
+      "/network/geolocation/lookup",
+      { ips },
+      options
+    );
+    return data;
+  });
 }
 
 // ============================================================================

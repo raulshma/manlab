@@ -147,7 +147,7 @@ export function FileBrowserSelectionToolbar({
 
         {/* Select All / Deselect All - Requirements: 8.6, 8.7 */}
         <Tooltip>
-          <TooltipTrigger>
+          <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
@@ -176,7 +176,7 @@ export function FileBrowserSelectionToolbar({
 
         {/* Clear Selection - Requirements: 8.7 */}
         <Tooltip>
-          <TooltipTrigger>
+          <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
@@ -195,7 +195,7 @@ export function FileBrowserSelectionToolbar({
         {/* Download Selected (single file) - Requirements: 8.4 */}
         {showDownloadSelected && (
           <Tooltip>
-            <TooltipTrigger>
+            <TooltipTrigger asChild>
               <Button
                 variant="default"
                 size="sm"
@@ -216,7 +216,7 @@ export function FileBrowserSelectionToolbar({
         {/* Download as Zip (multiple items or folders) - Requirements: 8.5 */}
         {showDownloadAsZip && (
           <Tooltip>
-            <TooltipTrigger>
+            <TooltipTrigger asChild>
               <Button
                 variant="default"
                 size="sm"

@@ -52,8 +52,9 @@ builder.Services
     })
     .AddJsonProtocol(protocolOptions =>
     {
-        // JSON hub protocol uses System.Text.Json; supply our source-generated resolver.
-        protocolOptions.PayloadSerializerOptions.TypeInfoResolverChain.Insert(0, ManLabJsonContext.Default);
+        // JSON hub protocol uses System.Text.Json; supply our source-generated resolvers.
+        protocolOptions.PayloadSerializerOptions.TypeInfoResolverChain.Insert(0, NetworkHubJsonContext.Default);
+        protocolOptions.PayloadSerializerOptions.TypeInfoResolverChain.Insert(1, ManLabJsonContext.Default);
     });
 
 // Activity/audit logging (best-effort, durable).
@@ -139,6 +140,12 @@ else
     // Fallback for unsupported platforms - use a no-op implementation
     builder.Services.AddSingleton<ManLab.Server.Services.Network.IWifiScannerService, ManLab.Server.Services.Network.UnsupportedWifiScannerService>();
 }
+
+// IP Geolocation service
+builder.Services.AddSingleton<ManLab.Server.Services.Network.IIpGeolocationService, ManLab.Server.Services.Network.IpGeolocationService>();
+
+// Network rate limiting for SignalR hub
+builder.Services.AddSingleton<ManLab.Server.Services.Network.NetworkRateLimitService>();
 
 builder.Services.AddHostedService<CommandDispatchService>();
 

@@ -10,27 +10,16 @@
  * - Search by device name
  */
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import {
   Radar,
   Loader2,
-  Copy,
   Search,
   Filter,
   RefreshCw,
-  Printer,
-  Tv2,
-  Smartphone,
-  Router,
-  Server,
-  HardDrive,
-  Globe,
-  Link,
-  ExternalLink,
-  ChevronDown,
-  ChevronUp,
   Trash2,
   Download,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,22 +45,34 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { notify } from "@/lib/network-notify";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
-import type { MdnsService, UpnpDevice } from "@/api/networkApi";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import {
+  discoverMdns,
+  discoverUpnp,
+  type MdnsService,
+  type DiscoveryScanResult,
+  type UpnpDevice,
+} from "@/api/networkApi";
+import {
+  MdnsServiceCard,
+  UpnpDeviceCard,
+} from "@/components/network/DeviceCard";
+import {
+  DEVICE_TYPE_LABELS,
+  getMdnsDeviceType,
+  getUpnpDeviceType,
+  type DeviceType,
+} from "@/components/network/device-constants";
+import { announce, announceScanEvent } from "@/lib/accessibility";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 type DiscoveryMode = "both" | "mdns" | "upnp";
-type DeviceType = "all" | "printer" | "media" | "iot" | "network" | "storage" | "other";
-
 interface DiscoveryState {
   isScanning: boolean;
   scanDuration: number;
@@ -79,103 +80,23 @@ interface DiscoveryState {
   elapsedSeconds: number;
 }
 
+const DISCOVERY_DURATION_KEY = "manlab:network:discovery-duration";
+const DISCOVERY_MODE_KEY = "manlab:network:discovery-mode";
+
 // ============================================================================
 // Constants
 // ============================================================================
 
-const DEVICE_TYPE_ICONS: Record<DeviceType, React.ComponentType<{ className?: string }>> = {
-  all: Radar,
-  printer: Printer,
-  media: Tv2,
-  iot: Smartphone,
-  network: Router,
-  storage: HardDrive,
-  other: Server,
-};
-
-const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
-  all: "All Devices",
-  printer: "Printers",
-  media: "Media Devices",
-  iot: "IoT Devices",
-  network: "Network Devices",
-  storage: "Storage",
-  other: "Other",
-};
-
-// Service type mappings for categorization
-const SERVICE_TYPE_CATEGORIES: Record<string, DeviceType> = {
-  "_ipp._tcp": "printer",
-  "_printer._tcp": "printer",
-  "_pdl-datastream._tcp": "printer",
-  "_airplay._tcp": "media",
-  "_raop._tcp": "media",
-  "_googlecast._tcp": "media",
-  "_spotify-connect._tcp": "media",
-  "_sonos._tcp": "media",
-  "_daap._tcp": "media",
-  "_homekit._tcp": "iot",
-  "_hap._tcp": "iot",
-  "_hue._tcp": "iot",
-  "_smb._tcp": "storage",
-  "_nfs._tcp": "storage",
-  "_afpovertcp._tcp": "storage",
-  "_ftp._tcp": "storage",
-  "_sftp-ssh._tcp": "storage",
-  "_ssh._tcp": "network",
-  "_http._tcp": "network",
-  "_https._tcp": "network",
-  "_workstation._tcp": "network",
-};
-
-// UPnP device type mappings
-const UPNP_TYPE_CATEGORIES: Record<string, DeviceType> = {
-  "MediaServer": "media",
-  "MediaRenderer": "media",
-  "InternetGatewayDevice": "network",
-  "WANDevice": "network",
-  "WFADevice": "network",
-  "Printer": "printer",
-  "ScannerDevice": "printer",
-  "BasicDevice": "other",
-};
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-/**
- * Get device type category from mDNS service type
- */
-function getMdnsDeviceType(serviceType: string): DeviceType {
-  const normalized = serviceType.toLowerCase();
-  for (const [pattern, category] of Object.entries(SERVICE_TYPE_CATEGORIES)) {
-    if (normalized.includes(pattern.toLowerCase())) {
-      return category;
-    }
-  }
-  return "other";
+function getStoredString(key: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  return localStorage.getItem(key) ?? fallback;
 }
 
-/**
- * Get device type category from UPnP device type
- */
-function getUpnpDeviceType(deviceType: string | null): DeviceType {
-  if (!deviceType) return "other";
-  for (const [pattern, category] of Object.entries(UPNP_TYPE_CATEGORIES)) {
-    if (deviceType.toLowerCase().includes(pattern.toLowerCase())) {
-      return category;
-    }
-  }
-  return "other";
-}
-
-/**
- * Copy text to clipboard
- */
-async function copyToClipboard(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text);
-  toast.success("Copied to clipboard");
+function getStoredNumber(key: string, fallback: number): number {
+  if (typeof window === "undefined") return fallback;
+  const raw = localStorage.getItem(key);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 /**
@@ -196,269 +117,35 @@ function exportToJSON(mdnsServices: MdnsService[], upnpDevices: UpnpDevice[]): v
   URL.revokeObjectURL(link.href);
 }
 
-// ============================================================================
-// mDNS Service Card Component
-// ============================================================================
+type MdnsServiceLike = MdnsService & {
+  name?: string;
+};
 
-interface MdnsServiceCardProps {
-  service: MdnsService;
+type UpnpDeviceLike = UpnpDevice & {
+  notificationType?: string | null;
+  descriptionLocation?: string | null;
+};
+
+function normalizeMdnsService(raw: MdnsServiceLike): MdnsService {
+  return {
+    serviceName: raw.serviceName ?? raw.name ?? "Unknown service",
+    name: raw.name,
+    serviceType: raw.serviceType ?? "unknown",
+    hostname: raw.hostname ?? null,
+    ipAddresses: raw.ipAddresses ?? [],
+    port: raw.port ?? 0,
+    txtRecords: raw.txtRecords ?? {},
+    networkInterface: raw.networkInterface ?? null,
+  };
 }
 
-function MdnsServiceCard({ service }: MdnsServiceCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const deviceType = getMdnsDeviceType(service.serviceType);
-  const DeviceIcon = DEVICE_TYPE_ICONS[deviceType];
-  const hasTxtRecords = Object.keys(service.txtRecords).length > 0;
-
-  return (
-    <Card className="hover:border-primary/50 transition-colors">
-      <CardContent className="p-4">
-        <div className="flex items-start gap-4">
-          {/* Icon */}
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
-            <DeviceIcon className="h-5 w-5 text-blue-500" />
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 min-w-0 space-y-2">
-            {/* Service Name */}
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <h4 className="font-medium truncate" title={service.serviceName}>
-                  {service.serviceName}
-                </h4>
-                <p className="text-xs text-muted-foreground font-mono truncate" title={service.serviceType}>
-                  {service.serviceType}
-                </p>
-              </div>
-              <div className="flex gap-1 shrink-0">
-                <Badge variant="secondary" className="text-xs">mDNS</Badge>
-                <Badge variant="outline" className="text-xs capitalize">
-                  {deviceType}
-                </Badge>
-              </div>
-            </div>
-
-            {/* Hostname & Port */}
-            <div className="flex items-center gap-4 text-sm">
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <Globe className="h-3.5 w-3.5" />
-                <span className="truncate" title={service.hostname}>
-                  {service.hostname}
-                </span>
-              </div>
-              <Badge variant="outline" className="text-xs font-mono">
-                Port: {service.port}
-              </Badge>
-            </div>
-
-            {/* IP Addresses */}
-            <div className="flex flex-wrap gap-1">
-              {service.ipAddresses.map((ip, idx) => (
-                <Tooltip key={idx}>
-                  <TooltipTrigger>
-                    <Badge
-                      variant="secondary"
-                      className="text-xs font-mono cursor-pointer hover:bg-secondary/80"
-                      onClick={() => copyToClipboard(ip)}
-                    >
-                      {ip}
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>Click to copy</TooltipContent>
-                </Tooltip>
-              ))}
-            </div>
-
-            {/* Network Interface */}
-            {service.networkInterface && (
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Router className="h-3 w-3" />
-                <span>Interface: {service.networkInterface}</span>
-              </div>
-            )}
-
-            {/* TXT Records (Collapsible) */}
-            {hasTxtRecords && (
-              <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-                <CollapsibleTrigger
-                  className="inline-flex h-7 px-2 text-xs gap-1 items-center justify-center rounded-md font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-                >
-                  {isExpanded ? (
-                    <ChevronUp className="h-3 w-3" />
-                  ) : (
-                    <ChevronDown className="h-3 w-3" />
-                  )}
-                  TXT Records ({Object.keys(service.txtRecords).length})
-                </CollapsibleTrigger>
-                <CollapsibleContent className="mt-2">
-                  <div className="rounded-md border bg-muted/50 p-2 text-xs font-mono space-y-1">
-                    {Object.entries(service.txtRecords).map(([key, value]) => (
-                      <div key={key} className="flex gap-2">
-                        <span className="text-muted-foreground">{key}:</span>
-                        <span className="break-all">{value || "(empty)"}</span>
-                      </div>
-                    ))}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            )}
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="flex gap-1 mt-3 pt-3 border-t">
-          <Tooltip>
-            <TooltipTrigger>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => copyToClipboard(service.serviceName)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Copy Name</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => copyToClipboard(service.ipAddresses.join(", "))}
-              >
-                <Link className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Copy IPs</TooltipContent>
-          </Tooltip>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ============================================================================
-// UPnP Device Card Component
-// ============================================================================
-
-interface UpnpDeviceCardProps {
-  device: UpnpDevice;
-}
-
-function UpnpDeviceCard({ device }: UpnpDeviceCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const deviceType = getUpnpDeviceType(device.deviceType);
-  const DeviceIcon = DEVICE_TYPE_ICONS[deviceType];
-  const hasServices = device.services.length > 0;
-
-  return (
-    <Card className="hover:border-primary/50 transition-colors">
-      <CardContent className="p-4">
-        <div className="flex items-start gap-4">
-          {/* Icon */}
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-500/10">
-            <DeviceIcon className="h-5 w-5 text-green-500" />
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 min-w-0 space-y-2">
-            {/* Friendly Name */}
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <h4 className="font-medium truncate" title={device.friendlyName || "Unknown Device"}>
-                  {device.friendlyName || "Unknown Device"}
-                </h4>
-                {device.deviceType && (
-                  <p className="text-xs text-muted-foreground truncate" title={device.deviceType}>
-                    {device.deviceType.split(":").pop()}
-                  </p>
-                )}
-              </div>
-              <div className="flex gap-1 shrink-0">
-                <Badge variant="secondary" className="text-xs bg-green-500/10 text-green-600">
-                  UPnP
-                </Badge>
-                <Badge variant="outline" className="text-xs capitalize">
-                  {deviceType}
-                </Badge>
-              </div>
-            </div>
-
-            {/* Manufacturer & Model */}
-            {(device.manufacturer || device.modelName) && (
-              <div className="text-sm text-muted-foreground">
-                {device.manufacturer && <span>{device.manufacturer}</span>}
-                {device.manufacturer && device.modelName && <span> • </span>}
-                {device.modelName && <span>{device.modelName}</span>}
-                {device.modelNumber && <span className="text-xs"> ({device.modelNumber})</span>}
-              </div>
-            )}
-
-            {/* USN (Unique Service Name) */}
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono truncate">
-              <span title={device.usn}>{device.usn.length > 50 ? device.usn.slice(0, 50) + "..." : device.usn}</span>
-            </div>
-
-            {/* Services List (Collapsible) */}
-            {hasServices && (
-              <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-                <CollapsibleTrigger
-                  className="inline-flex h-7 px-2 text-xs gap-1 items-center justify-center rounded-md font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-                >
-                  {isExpanded ? (
-                    <ChevronUp className="h-3 w-3" />
-                  ) : (
-                    <ChevronDown className="h-3 w-3" />
-                  )}
-                  Services ({device.services.length})
-                </CollapsibleTrigger>
-                <CollapsibleContent className="mt-2">
-                  <div className="rounded-md border bg-muted/50 p-2 text-xs font-mono space-y-1">
-                    {device.services.map((service, idx) => (
-                      <div key={idx} className="truncate" title={service}>
-                        {service.split(":").pop()}
-                      </div>
-                    ))}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            )}
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="flex gap-1 mt-3 pt-3 border-t">
-          <Tooltip>
-            <TooltipTrigger>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => copyToClipboard(device.friendlyName || device.usn)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Copy Name</TooltipContent>
-          </Tooltip>
-          {device.location && (
-            <Tooltip>
-              <TooltipTrigger>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => window.open(device.location!, "_blank")}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>View Device XML</TooltipContent>
-            </Tooltip>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
+function normalizeUpnpDevice(raw: UpnpDeviceLike): UpnpDevice {
+  return {
+    ...raw,
+    deviceType: raw.deviceType ?? raw.notificationType ?? null,
+    location: raw.location ?? raw.descriptionLocation ?? null,
+    services: raw.services ?? [],
+  };
 }
 
 // ============================================================================
@@ -467,8 +154,11 @@ function UpnpDeviceCard({ device }: UpnpDeviceCardProps) {
 
 export function DeviceDiscoveryTool() {
   // Configuration state
-  const [scanDuration, setScanDuration] = useState(5);
-  const [discoveryMode, setDiscoveryMode] = useState<DiscoveryMode>("both");
+  const [scanDuration, setScanDuration] = useState(() => getStoredNumber(DISCOVERY_DURATION_KEY, 5));
+  const [discoveryMode, setDiscoveryMode] = useState<DiscoveryMode>(
+    () => getStoredString(DISCOVERY_MODE_KEY, "both") as DiscoveryMode
+  );
+  const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
 
   // Discovery state
   const [discoveryState, setDiscoveryState] = useState<DiscoveryState>({
@@ -484,6 +174,9 @@ export function DeviceDiscoveryTool() {
   const [filterQuery, setFilterQuery] = useState("");
   const [protocolFilter, setProtocolFilter] = useState<"all" | "mdns" | "upnp">("all");
   const [deviceTypeFilter, setDeviceTypeFilter] = useState<DeviceType>("all");
+  const abortRef = useRef<AbortController | null>(null);
+
+  const debouncedFilterQuery = useDebouncedValue(filterQuery, 200);
 
   // SignalR connection
   const {
@@ -511,10 +204,27 @@ export function DeviceDiscoveryTool() {
     };
   }, [discoveryState.isScanning, discoveryState.scanDuration]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(DISCOVERY_DURATION_KEY, String(scanDuration));
+    localStorage.setItem(DISCOVERY_MODE_KEY, discoveryMode);
+  }, [scanDuration, discoveryMode]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   // Subscribe to discovery events
   useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
     const unsubscribe = subscribeToDiscovery({
       onDiscoveryStarted: (event) => {
+        setRateLimitMessage(null);
         setDiscoveryState({
           isScanning: true,
           scanDuration: event.durationSeconds,
@@ -523,24 +233,29 @@ export function DeviceDiscoveryTool() {
         });
         setMdnsServices([]);
         setUpnpDevices([]);
-        toast.info(`Discovery started: ${event.durationSeconds}s scan`);
+        notify.info(`Discovery started: ${event.durationSeconds}s scan`);
       },
       onMdnsDeviceFound: (event) => {
         setMdnsServices((prev) => {
+          const raw = (event as { service?: MdnsServiceLike; device?: MdnsServiceLike }).service
+            ?? (event as { device?: MdnsServiceLike }).device;
+          if (!raw) return prev;
+          const service = normalizeMdnsService(raw);
           // Avoid duplicates by checking hostname + service type
           const isDuplicate = prev.some(
-            (s) => s.hostname === event.service.hostname && s.serviceType === event.service.serviceType
+            (s) => (s.hostname ?? "") === (service.hostname ?? "") && s.serviceType === service.serviceType
           );
           if (isDuplicate) return prev;
-          return [...prev, event.service];
+          return [...prev, service];
         });
       },
       onUpnpDeviceFound: (event) => {
         setUpnpDevices((prev) => {
+          const device = normalizeUpnpDevice(event.device as UpnpDeviceLike);
           // Avoid duplicates by USN
-          const isDuplicate = prev.some((d) => d.usn === event.device.usn);
+          const isDuplicate = prev.some((d) => d.usn === device.usn);
           if (isDuplicate) return prev;
-          return [...prev, event.device];
+          return [...prev, device];
         });
       },
       onDiscoveryCompleted: (event) => {
@@ -549,38 +264,111 @@ export function DeviceDiscoveryTool() {
           isScanning: false,
           progress: 100,
         }));
-        const totalDevices = event.result.mdnsServices.length + event.result.upnpDevices.length;
-        toast.success(
-          `Discovery complete: ${totalDevices} devices found in ${(event.result.scanDurationMs / 1000).toFixed(1)}s`
+
+        const payload = event as typeof event | DiscoveryScanResult | undefined;
+        const result = payload && "result" in payload ? payload.result ?? payload : payload;
+        if (!result) {
+          notify.error("Discovery completed without results.");
+          announceScanEvent("completed", "Device discovery", "No results received");
+          return;
+        }
+
+        const mdnsRaw = (Array.isArray(result.mdnsServices ?? result.mdnsDevices)
+          ? (result.mdnsServices ?? result.mdnsDevices)
+          : []) as MdnsServiceLike[];
+        const upnpRaw = (Array.isArray(result.upnpDevices)
+          ? result.upnpDevices
+          : []) as UpnpDeviceLike[];
+
+        const mdns = mdnsRaw.map(normalizeMdnsService);
+        const upnp = upnpRaw.map(normalizeUpnpDevice);
+        const totalDevices = mdns.length + upnp.length;
+        notify.success(
+          `Discovery complete: ${totalDevices} devices found in ${(((result.scanDurationMs ?? result.durationMs ?? 0) / 1000) || 0).toFixed(1)}s`
+        );
+        announceScanEvent(
+          "completed",
+          "Device discovery",
+          `Found ${totalDevices} devices`
         );
       },
     });
 
     return unsubscribe;
-  }, [subscribeToDiscovery]);
+  }, [isConnected, subscribeToDiscovery]);
 
   // Start discovery
   const handleStartDiscovery = useCallback(async () => {
-    if (!isConnected) {
-      toast.error("Not connected to server. Please wait...");
+    if (discoveryMode === "both" && !isConnected) {
+      notify.error("Not connected to server. Please wait...");
       return;
     }
 
     try {
+      setRateLimitMessage(null);
       setDiscoveryState({
         isScanning: true,
         scanDuration,
         progress: 0,
         elapsedSeconds: 0,
       });
+
+      if (discoveryMode === "mdns") {
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        const result = await discoverMdns(
+          { scanDurationSeconds: scanDuration },
+          { signal: controller.signal }
+        );
+        const services = Array.isArray(result)
+          ? result
+          : (result.services ?? result.mdnsDevices ?? []);
+        setMdnsServices(services.map(normalizeMdnsService));
+        setUpnpDevices([]);
+        setDiscoveryState((prev) => ({ ...prev, isScanning: false, progress: 100 }));
+        notify.success(
+          `mDNS discovery complete: ${services.length} services found in ${(((result.scanDurationMs ?? result.durationMs ?? 0) / 1000) || 0).toFixed(1)}s`
+        );
+        return;
+      }
+
+      if (discoveryMode === "upnp") {
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        const result = await discoverUpnp(
+          { scanDurationSeconds: scanDuration },
+          { signal: controller.signal }
+        );
+        setMdnsServices([]);
+        const devices = Array.isArray(result)
+          ? result
+          : (result.devices ?? result.upnpDevices ?? []);
+        setUpnpDevices(devices.map(normalizeUpnpDevice));
+        setDiscoveryState((prev) => ({ ...prev, isScanning: false, progress: 100 }));
+        notify.success(
+          `UPnP discovery complete: ${devices.length} devices found in ${(((result.scanDurationMs ?? result.durationMs ?? 0) / 1000) || 0).toFixed(1)}s`
+        );
+        return;
+      }
+
       await discoverDevices(scanDuration);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const errorMessage =
         error instanceof Error ? error.message : "Failed to start discovery";
-      toast.error(errorMessage);
+      if (errorMessage.toLowerCase().includes("rate") || errorMessage.includes("429")) {
+        setRateLimitMessage("Rate limit reached. Please wait before retrying.");
+      }
+      notify.error(errorMessage);
       setDiscoveryState((prev) => ({ ...prev, isScanning: false }));
     }
-  }, [scanDuration, isConnected, discoverDevices]);
+  }, [scanDuration, isConnected, discoverDevices, discoveryMode]);
 
   // Clear results
   const handleClearResults = useCallback(() => {
@@ -592,7 +380,8 @@ export function DeviceDiscoveryTool() {
       progress: 0,
       elapsedSeconds: 0,
     });
-    toast.info("Results cleared");
+    notify.info("Results cleared");
+    announce("Discovery results cleared", "polite");
   }, []);
 
   // Filtered results
@@ -601,47 +390,47 @@ export function DeviceDiscoveryTool() {
     let services = mdnsServices;
 
     // Filter by search query
-    if (filterQuery) {
-      const lowerQuery = filterQuery.toLowerCase();
+    if (debouncedFilterQuery) {
+      const lowerQuery = debouncedFilterQuery.toLowerCase();
       services = services.filter(
         (s) =>
-          s.serviceName.toLowerCase().includes(lowerQuery) ||
-          s.hostname.toLowerCase().includes(lowerQuery) ||
-          s.serviceType.toLowerCase().includes(lowerQuery)
+          (s.serviceName ?? s.name ?? "").toLowerCase().includes(lowerQuery) ||
+          (s.hostname ?? "").toLowerCase().includes(lowerQuery) ||
+          (s.serviceType ?? "").toLowerCase().includes(lowerQuery)
       );
     }
 
     // Filter by device type
     if (deviceTypeFilter !== "all") {
-      services = services.filter((s) => getMdnsDeviceType(s.serviceType) === deviceTypeFilter);
+      services = services.filter((s) => getMdnsDeviceType(s.serviceType ?? "") === deviceTypeFilter);
     }
 
     return services;
-  }, [mdnsServices, filterQuery, protocolFilter, deviceTypeFilter]);
+  }, [mdnsServices, debouncedFilterQuery, protocolFilter, deviceTypeFilter]);
 
   const filteredUpnpDevices = useMemo(() => {
     if (protocolFilter === "mdns") return [];
     let devices = upnpDevices;
 
     // Filter by search query
-    if (filterQuery) {
-      const lowerQuery = filterQuery.toLowerCase();
+    if (debouncedFilterQuery) {
+      const lowerQuery = debouncedFilterQuery.toLowerCase();
       devices = devices.filter(
         (d) =>
           d.friendlyName?.toLowerCase().includes(lowerQuery) ||
           d.manufacturer?.toLowerCase().includes(lowerQuery) ||
           d.modelName?.toLowerCase().includes(lowerQuery) ||
-          d.deviceType?.toLowerCase().includes(lowerQuery)
+          (d.deviceType ?? d.notificationType)?.toLowerCase().includes(lowerQuery)
       );
     }
 
     // Filter by device type
     if (deviceTypeFilter !== "all") {
-      devices = devices.filter((d) => getUpnpDeviceType(d.deviceType) === deviceTypeFilter);
+      devices = devices.filter((d) => getUpnpDeviceType(d.deviceType ?? d.notificationType ?? null) === deviceTypeFilter);
     }
 
     return devices;
-  }, [upnpDevices, filterQuery, protocolFilter, deviceTypeFilter]);
+  }, [upnpDevices, debouncedFilterQuery, protocolFilter, deviceTypeFilter]);
 
   const totalFiltered = filteredMdnsServices.length + filteredUpnpDevices.length;
   const totalDevices = mdnsServices.length + upnpDevices.length;
@@ -706,7 +495,7 @@ export function DeviceDiscoveryTool() {
               <Button
                 onClick={handleStartDiscovery}
                 disabled={discoveryState.isScanning || !isConnected}
-                className="w-full lg:w-auto"
+                className="w-full lg:w-auto min-h-11"
               >
                 {discoveryState.isScanning ? (
                   <>
@@ -732,6 +521,15 @@ export function DeviceDiscoveryTool() {
           )}
         </CardContent>
       </Card>
+
+      {rateLimitMessage && (
+        <Card className="border-orange-500/40 bg-orange-500/5">
+          <CardContent className="pt-4 flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400">
+            <AlertTriangle className="h-4 w-4" />
+            {rateLimitMessage}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Progress Section */}
       {discoveryState.isScanning && (
@@ -770,6 +568,14 @@ export function DeviceDiscoveryTool() {
         </Card>
       )}
 
+      {discoveryState.isScanning && totalDevices === 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className="h-36" />
+          ))}
+        </div>
+      )}
+
       {/* Results Section */}
       {totalDevices > 0 && (
         <>
@@ -794,7 +600,7 @@ export function DeviceDiscoveryTool() {
                   placeholder="Search devices..."
                   value={filterQuery}
                   onChange={(e) => setFilterQuery(e.target.value)}
-                  className="pl-8 w-[180px]"
+                  className="pl-8 w-45"
                 />
               </div>
 
@@ -803,7 +609,7 @@ export function DeviceDiscoveryTool() {
                 value={protocolFilter}
                 onValueChange={(v) => setProtocolFilter(v as "all" | "mdns" | "upnp")}
               >
-                <SelectTrigger className="w-[120px]">
+                <SelectTrigger className="w-30">
                   <Filter className="h-4 w-4 mr-2" />
                   <SelectValue />
                 </SelectTrigger>
@@ -819,7 +625,7 @@ export function DeviceDiscoveryTool() {
                 value={deviceTypeFilter}
                 onValueChange={(v) => setDeviceTypeFilter(v as DeviceType)}
               >
-                <SelectTrigger className="w-[140px]">
+                <SelectTrigger className="w-35">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -833,11 +639,12 @@ export function DeviceDiscoveryTool() {
 
               {/* Export Button */}
               <Tooltip>
-                <TooltipTrigger>
+                <TooltipTrigger asChild>
                   <Button
                     variant="outline"
                     size="icon"
                     onClick={() => exportToJSON(mdnsServices, upnpDevices)}
+                    aria-label="Export discovery results"
                   >
                     <Download className="h-4 w-4" />
                   </Button>
@@ -847,11 +654,12 @@ export function DeviceDiscoveryTool() {
 
               {/* Clear Button */}
               <Tooltip>
-                <TooltipTrigger>
+                <TooltipTrigger asChild>
                   <Button
                     variant="outline"
                     size="icon"
                     onClick={handleClearResults}
+                    aria-label="Clear results"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -870,7 +678,10 @@ export function DeviceDiscoveryTool() {
               </h4>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredMdnsServices.map((service, idx) => (
-                  <MdnsServiceCard key={`${service.hostname}-${service.serviceType}-${idx}`} service={service} />
+                  <MdnsServiceCard
+                    key={`${service.hostname ?? "unknown"}-${service.serviceType ?? "unknown"}-${idx}`}
+                    service={service}
+                  />
                 ))}
               </div>
             </div>
@@ -928,7 +739,7 @@ export function DeviceDiscoveryTool() {
               (Bonjour) and UPnP protocols. This will detect printers, media servers, 
               IoT devices, and more.
             </p>
-            <Button onClick={handleStartDiscovery} disabled={!isConnected}>
+            <Button onClick={handleStartDiscovery} disabled={!isConnected} className="min-h-11">
               <Radar className="mr-2 h-4 w-4" />
               Start Discovery
             </Button>
@@ -947,7 +758,7 @@ export function DeviceDiscoveryTool() {
                   Discovery complete! Found {totalDevices} device{totalDevices !== 1 ? "s" : ""}.
                 </span>
               </div>
-              <Button variant="outline" size="sm" onClick={handleStartDiscovery}>
+              <Button variant="outline" size="sm" onClick={handleStartDiscovery} className="min-h-10">
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Scan Again
               </Button>

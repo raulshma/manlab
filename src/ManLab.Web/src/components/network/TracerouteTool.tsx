@@ -28,6 +28,7 @@ import {
   Copy,
   Target,
   CircleDot,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,13 +48,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { notify } from "@/lib/network-notify";
 import {
   traceroute as tracerouteApi,
   type TracerouteResult,
   type TracerouteHop,
 } from "@/api/networkApi";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
+import { announce, announceScanEvent } from "@/lib/accessibility";
 
 // ============================================================================
 // Types
@@ -64,6 +67,10 @@ interface TracerouteHistoryEntry {
   timestamp: Date;
   result: TracerouteResult;
 }
+
+const TRACE_HOST_KEY = "manlab:network:traceroute-host";
+const TRACE_MAXHOPS_KEY = "manlab:network:traceroute-max-hops";
+const TRACE_TIMEOUT_KEY = "manlab:network:traceroute-timeout";
 
 // ============================================================================
 // Utility Functions
@@ -141,9 +148,9 @@ function getMaxRtt(hops: TracerouteHop[]): number {
 async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
-    toast.success("Copied to clipboard");
+    notify.success("Copied to clipboard");
   } catch {
-    toast.error("Failed to copy to clipboard");
+    notify.error("Failed to copy to clipboard");
   }
 }
 
@@ -211,6 +218,18 @@ function exportToCSV(result: TracerouteResult): void {
   URL.revokeObjectURL(link.href);
 }
 
+function getStoredString(key: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  return localStorage.getItem(key) ?? fallback;
+}
+
+function getStoredNumber(key: string, fallback: number): number {
+  if (typeof window === "undefined") return fallback;
+  const raw = localStorage.getItem(key);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 // ============================================================================
 // Sub-Components
 // ============================================================================
@@ -272,7 +291,7 @@ function HopCard({ hop, isDestination, isFirst, maxRtt }: HopCardProps) {
             <div className="flex items-center gap-2 flex-wrap">
               {hop.address && (
                 <Tooltip>
-                  <TooltipTrigger>
+                  <TooltipTrigger asChild>
                     <button
                       onClick={() => copyToClipboard(hop.address!)}
                       className="font-mono text-sm hover:text-primary transition-colors"
@@ -284,7 +303,7 @@ function HopCard({ hop, isDestination, isFirst, maxRtt }: HopCardProps) {
                 </Tooltip>
               )}
               {hop.hostname && hop.hostname !== hop.address && (
-                <span className="text-sm text-muted-foreground truncate max-w-[200px]">
+                <span className="text-sm text-muted-foreground truncate max-w-50">
                   ({hop.hostname})
                 </span>
               )}
@@ -330,17 +349,32 @@ function HopCard({ hop, isDestination, isFirst, maxRtt }: HopCardProps) {
 
 export function TracerouteTool() {
   // Form state
-  const [host, setHost] = useState("");
-  const [maxHops, setMaxHops] = useState(30);
-  const [timeout, setTimeout] = useState(1000);
+  const [host, setHost] = useState(() => getStoredString(TRACE_HOST_KEY, ""));
+  const [maxHops, setMaxHops] = useState(() => getStoredNumber(TRACE_MAXHOPS_KEY, 30));
+  const [timeout, setTimeout] = useState(() => getStoredNumber(TRACE_TIMEOUT_KEY, 1000));
   const [isLoading, setIsLoading] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
 
   // Result state
   const [result, setResult] = useState<TracerouteResult | null>(null);
   const [liveHops, setLiveHops] = useState<TracerouteHop[]>([]);
   const [isTracing, setIsTracing] = useState(false);
   const [history, setHistory] = useState<TracerouteHistoryEntry[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(TRACE_HOST_KEY, host);
+    localStorage.setItem(TRACE_MAXHOPS_KEY, String(maxHops));
+    localStorage.setItem(TRACE_TIMEOUT_KEY, String(timeout));
+  }, [host, maxHops, timeout]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   // SignalR
   const { isConnected, subscribeToTraceroute, traceroute: hubTraceroute } =
@@ -402,6 +436,7 @@ export function TracerouteTool() {
 
     setIsLoading(true);
     setValidationError(null);
+    setRateLimitMessage(null);
     setResult(null);
     setLiveHops([]);
 
@@ -422,21 +457,37 @@ export function TracerouteTool() {
         setHistory((prev) => [newEntry, ...prev].slice(0, 5));
 
         if (traceResult.reachedDestination) {
-          toast.success(
+          notify.success(
             `Traceroute complete: ${traceResult.hops.length} hops to destination`
           );
+          announceScanEvent(
+            "completed",
+            "Traceroute",
+            `Reached destination in ${traceResult.hops.length} hops`
+          );
         } else {
-          toast.warning(
+          notify.warning(
             `Traceroute incomplete: Destination not reached after ${traceResult.hops.length} hops`
+          );
+          announce(
+            `Traceroute incomplete. Destination not reached after ${traceResult.hops.length} hops`,
+            "polite"
           );
         }
       } else {
         // Fallback to REST API
-        const traceResult = await tracerouteApi({
-          host,
-          maxHops,
-          timeout,
-        });
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        const traceResult = await tracerouteApi(
+          {
+            host,
+            maxHops,
+            timeout,
+          },
+          { signal: controller.signal }
+        );
         setResult(traceResult);
 
         // Add to history
@@ -448,19 +499,25 @@ export function TracerouteTool() {
         setHistory((prev) => [newEntry, ...prev].slice(0, 5));
 
         if (traceResult.reachedDestination) {
-          toast.success(
+          notify.success(
             `Traceroute complete: ${traceResult.hops.length} hops to destination`
           );
         } else {
-          toast.warning(
+          notify.warning(
             `Traceroute incomplete: Destination not reached after ${traceResult.hops.length} hops`
           );
         }
       }
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const errorMessage =
         error instanceof Error ? error.message : "Traceroute request failed";
-      toast.error(errorMessage);
+      if (errorMessage.toLowerCase().includes("rate") || errorMessage.includes("429")) {
+        setRateLimitMessage("Rate limit reached. Please wait before retrying.");
+      }
+      notify.error(errorMessage);
       setResult(null);
       setIsTracing(false);
     } finally {
@@ -483,26 +540,27 @@ export function TracerouteTool() {
     setResult(null);
     setLiveHops([]);
     setHistory([]);
-    toast.info("Results cleared");
+    notify.info("Results cleared");
+    announce("Traceroute results cleared", "polite");
   }, []);
 
   // Export functions
   const handleExportText = useCallback(() => {
     if (!result) {
-      toast.error("No data to export");
+      notify.error("No data to export");
       return;
     }
     exportToText(result);
-    toast.success("Exported to text file");
+    notify.success("Exported to text file");
   }, [result]);
 
   const handleExportCSV = useCallback(() => {
     if (!result) {
-      toast.error("No data to export");
+      notify.error("No data to export");
       return;
     }
     exportToCSV(result);
-    toast.success("Exported to CSV");
+    notify.success("Exported to CSV");
   }, [result]);
 
   // Determine which hops to display
@@ -554,9 +612,13 @@ export function TracerouteTool() {
                 onKeyDown={handleKeyDown}
                 className={validationError ? "border-destructive" : ""}
                 disabled={isLoading}
+                aria-invalid={!!validationError}
+                aria-describedby={validationError ? "traceroute-host-error" : undefined}
               />
               {validationError && (
-                <p className="text-sm text-destructive">{validationError}</p>
+                <p id="traceroute-host-error" className="text-sm text-destructive" role="alert">
+                  {validationError}
+                </p>
               )}
             </div>
 
@@ -601,7 +663,7 @@ export function TracerouteTool() {
               <Button
                 onClick={handleTraceroute}
                 disabled={isLoading || !host}
-                className="w-full md:w-auto"
+                className="w-full md:w-auto min-h-11"
               >
                 {isLoading ? (
                   <>
@@ -621,6 +683,15 @@ export function TracerouteTool() {
       </Card>
 
       {/* Live Progress Indicator */}
+      {rateLimitMessage && (
+        <Card className="border-orange-500/40 bg-orange-500/5">
+          <CardContent className="pt-4 flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400">
+            <AlertTriangle className="h-4 w-4" />
+            {rateLimitMessage}
+          </CardContent>
+        </Card>
+      )}
+
       {isTracing && (
         <Card className="border-primary/50">
           <CardContent className="pt-6">
@@ -633,6 +704,25 @@ export function TracerouteTool() {
                 </p>
               </div>
               <Progress value={(liveHops.length / maxHops) * 100} className="w-32" />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {isTracing && displayHops.length === 0 && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <div key={index} className="flex items-center gap-4">
+                  <Skeleton className="h-10 w-10 rounded-full" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-2 w-full" />
+                  </div>
+                  <Skeleton className="h-6 w-20" />
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -714,11 +804,12 @@ export function TracerouteTool() {
                   {result.resolvedAddress}
                 </code>
                 <Tooltip>
-                  <TooltipTrigger>
+                  <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => copyToClipboard(result.resolvedAddress!)}
+                      className="min-h-10"
                     >
                       <Copy className="h-4 w-4" />
                     </Button>
@@ -744,7 +835,7 @@ export function TracerouteTool() {
                 {result && (
                   <>
                     <Tooltip>
-                      <TooltipTrigger>
+                      <TooltipTrigger asChild>
                         <Button variant="outline" size="sm" onClick={handleExportText}>
                           <Download className="h-4 w-4 mr-1" />
                           TXT
@@ -753,7 +844,7 @@ export function TracerouteTool() {
                       <TooltipContent>Export to Text</TooltipContent>
                     </Tooltip>
                     <Tooltip>
-                      <TooltipTrigger>
+                      <TooltipTrigger asChild>
                         <Button variant="outline" size="sm" onClick={handleExportCSV}>
                           <Download className="h-4 w-4 mr-1" />
                           CSV
@@ -764,7 +855,7 @@ export function TracerouteTool() {
                   </>
                 )}
                 <Tooltip>
-                  <TooltipTrigger>
+                  <TooltipTrigger asChild>
                     <Button variant="outline" size="sm" onClick={handleClear}>
                       <Trash2 className="h-4 w-4" />
                     </Button>

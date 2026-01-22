@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 namespace ManLab.Server.Services.Network;
 
 /// <summary>
@@ -28,7 +26,7 @@ public interface INetworkScannerService
         string cidr,
         int concurrencyLimit = 100,
         int timeout = 500,
-        [EnumeratorCancellation] CancellationToken ct = default);
+        CancellationToken ct = default);
     
     /// <summary>
     /// Traces the route to a remote host.

@@ -15,6 +15,7 @@ public class NetworkController : ControllerBase
     private readonly INetworkScannerService _scanner;
     private readonly IDeviceDiscoveryService _discovery;
     private readonly IWifiScannerService _wifiScanner;
+    private readonly IIpGeolocationService _geolocation;
     private readonly ILogger<NetworkController> _logger;
     private readonly IAuditLog _audit;
 
@@ -22,12 +23,14 @@ public class NetworkController : ControllerBase
         INetworkScannerService scanner,
         IDeviceDiscoveryService discovery,
         IWifiScannerService wifiScanner,
+        IIpGeolocationService geolocation,
         ILogger<NetworkController> logger,
         IAuditLog audit)
     {
         _scanner = scanner;
         _discovery = discovery;
         _wifiScanner = wifiScanner;
+        _geolocation = geolocation;
         _logger = logger;
         _audit = audit;
     }
@@ -101,7 +104,7 @@ public class NetworkController : ControllerBase
             return BadRequest(new NetworkScanError
             {
                 Code = "INVALID_CIDR",
-                Message = errorMessage
+                Message = errorMessage!
             });
         }
 
@@ -563,6 +566,227 @@ public class NetworkController : ControllerBase
             });
         }
     }
+
+    #region Geolocation Endpoints
+
+    /// <summary>
+    /// Gets the list of available geolocation database sources.
+    /// </summary>
+    /// <returns>List of available database sources.</returns>
+    [HttpGet("geolocation/sources")]
+    public ActionResult<IReadOnlyList<GeoDatabaseSource>> GetGeolocationSources()
+    {
+        return Ok(_geolocation.GetAvailableSources());
+    }
+
+    /// <summary>
+    /// Gets the status of the IP geolocation database.
+    /// </summary>
+    /// <returns>Database status including availability and metadata.</returns>
+    [HttpGet("geolocation/status")]
+    public async Task<ActionResult<GeoDatabaseStatus>> GetGeolocationStatus(CancellationToken ct)
+    {
+        var status = await _geolocation.GetStatusAsync(ct);
+        return Ok(status);
+    }
+
+    /// <summary>
+    /// Downloads the IP geolocation database from the default source.
+    /// </summary>
+    /// <returns>True if download was successful.</returns>
+    [HttpPost("geolocation/download")]
+    public async Task<ActionResult<object>> DownloadGeolocationDatabase(CancellationToken ct)
+    {
+        try
+        {
+            _logger.LogInformation("Starting geolocation database download");
+            var success = await _geolocation.DownloadDatabaseAsync(null, ct);
+            
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.geolocation.download",
+                httpContext: HttpContext,
+                success: success,
+                statusCode: 200,
+                category: "network",
+                message: success ? "Geolocation database downloaded" : "Geolocation database download failed"));
+
+            return Ok(new { success });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to download geolocation database");
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "GEOLOCATION_DOWNLOAD_FAILED",
+                Message = "Failed to download geolocation database",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Downloads the IP geolocation database from a specific source.
+    /// </summary>
+    /// <param name="sourceId">The source ID to download from.</param>
+    /// <returns>True if download was successful.</returns>
+    [HttpPost("geolocation/download/{sourceId}")]
+    public async Task<ActionResult<object>> DownloadGeolocationDatabase(string sourceId, CancellationToken ct)
+    {
+        var sources = _geolocation.GetAvailableSources();
+        if (!sources.Any(s => s.Id == sourceId))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_SOURCE",
+                Message = $"Unknown database source: {sourceId}"
+            });
+        }
+
+        try
+        {
+            _logger.LogInformation("Starting geolocation database download from {SourceId}", sourceId);
+            var success = await _geolocation.DownloadDatabaseAsync(sourceId, null, ct);
+            
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.geolocation.download",
+                httpContext: HttpContext,
+                success: success,
+                statusCode: 200,
+                category: "network",
+                message: success ? $"Geolocation database downloaded from {sourceId}" : $"Geolocation database download from {sourceId} failed"));
+
+            return Ok(new { success, sourceId });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to download geolocation database from {SourceId}", sourceId);
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "GEOLOCATION_DOWNLOAD_FAILED",
+                Message = "Failed to download geolocation database",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Updates the IP geolocation database to the latest version.
+    /// </summary>
+    /// <returns>True if update was successful.</returns>
+    [HttpPut("geolocation/update")]
+    public async Task<ActionResult<object>> UpdateGeolocationDatabase(CancellationToken ct)
+    {
+        try
+        {
+            _logger.LogInformation("Starting geolocation database update");
+            var success = await _geolocation.UpdateDatabaseAsync(null, ct);
+            
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.geolocation.update",
+                httpContext: HttpContext,
+                success: success,
+                statusCode: 200,
+                category: "network",
+                message: success ? "Geolocation database updated" : "Geolocation database update failed"));
+
+            return Ok(new { success });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update geolocation database");
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "GEOLOCATION_UPDATE_FAILED",
+                Message = "Failed to update geolocation database",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Deletes the installed IP geolocation database.
+    /// </summary>
+    /// <returns>True if deletion was successful.</returns>
+    [HttpDelete("geolocation/database")]
+    public async Task<ActionResult<object>> DeleteGeolocationDatabase(CancellationToken ct)
+    {
+        try
+        {
+            _logger.LogInformation("Deleting geolocation database");
+            var success = await _geolocation.DeleteDatabaseAsync(ct);
+            
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.geolocation.delete",
+                httpContext: HttpContext,
+                success: success,
+                statusCode: 200,
+                category: "network",
+                message: success ? "Geolocation database deleted" : "Geolocation database deletion failed"));
+
+            return Ok(new { success });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete geolocation database");
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "GEOLOCATION_DELETE_FAILED",
+                Message = "Failed to delete geolocation database",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Looks up geolocation for one or more IP addresses.
+    /// </summary>
+    /// <param name="request">The lookup request containing IP addresses.</param>
+    /// <returns>List of geolocation results.</returns>
+    [HttpPost("geolocation/lookup")]
+    public async Task<ActionResult<IReadOnlyList<GeoLocationResult>>> LookupGeolocation(
+        [FromBody] GeoLookupRequest request, 
+        CancellationToken ct)
+    {
+        if (request.Ips is null || request.Ips.Length == 0)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_REQUEST",
+                Message = "At least one IP address is required"
+            });
+        }
+
+        if (request.Ips.Length > 100)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "TOO_MANY_IPS",
+                Message = "Maximum 100 IP addresses allowed per request"
+            });
+        }
+
+        try
+        {
+            var results = await _geolocation.LookupBatchAsync(request.Ips, ct);
+            return Ok(results);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to lookup geolocation for {Count} IPs", request.Ips.Length);
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "GEOLOCATION_LOOKUP_FAILED",
+                Message = "Failed to lookup geolocation",
+                Details = ex.Message
+            });
+        }
+    }
+
+    #endregion
 
     #region Helper Methods
 

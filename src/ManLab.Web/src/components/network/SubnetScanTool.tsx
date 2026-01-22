@@ -12,30 +12,25 @@
  * - "Scan My Network" quick button
  */
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useMemo, useRef, useState, useCallback, useEffect, useLayoutEffect } from "react";
 import {
   Search,
   Loader2,
   Download,
   Trash2,
-  Copy,
-  Radio,
-  Route,
-  Server,
-  Terminal,
   CheckCircle2,
   RefreshCw,
   Filter,
   ArrowUpDown,
   Zap,
-  Globe,
+  AlertTriangle,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { ProgressWithEta } from "@/components/network/StatusIndicators";
 import {
   Card,
   CardContent,
@@ -62,9 +57,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { notify } from "@/lib/network-notify";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import type { DiscoveredHost } from "@/api/networkApi";
+import { HostCard } from "@/components/network/HostCard";
+import { NetworkMapView } from "@/components/network/NetworkMapView";
+import {
+  announce,
+  announceScanEvent,
+  announceProgress,
+} from "@/lib/accessibility";
 
 // ============================================================================
 // Types
@@ -93,6 +97,14 @@ const COMMON_SUBNETS = [
   { label: "192.168.1.0/16 (Large Home)", value: "192.168.0.0/16" },
 ];
 
+const SUBNET_LAST_KEY = "manlab:network:last-subnet";
+const SUBNET_CONCURRENCY_KEY = "manlab:network:subnet-concurrency";
+const SUBNET_TIMEOUT_KEY = "manlab:network:subnet-timeout";
+const SUBNET_SHARE_PREFIX = "manlab:network:subnet-share:";
+
+const VIRTUAL_ITEM_HEIGHT = 190;
+const VIRTUAL_OVERSCAN = 4;
+
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -118,6 +130,49 @@ function isValidCIDR(cidr: string): boolean {
   const validPrefix = prefixNum >= 0 && prefixNum <= 32;
 
   return validIP && validPrefix;
+}
+
+function getCidrPrefix(cidr: string): number | null {
+  const parts = cidr.split("/");
+  if (parts.length !== 2) return null;
+  const prefix = Number(parts[1]);
+  return Number.isFinite(prefix) ? prefix : null;
+}
+
+function getStoredString(key: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  return localStorage.getItem(key) ?? fallback;
+}
+
+function getStoredNumber(key: string, fallback: number): number {
+  if (typeof window === "undefined") return fallback;
+  const raw = localStorage.getItem(key);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function saveShareSnapshot(cidr: string, hosts: DiscoveredHost[]): string | null {
+  if (typeof window === "undefined") return null;
+  const id = crypto.randomUUID();
+  const payload = {
+    cidr,
+    hosts,
+    createdAt: new Date().toISOString(),
+  };
+  localStorage.setItem(`${SUBNET_SHARE_PREFIX}${id}`, JSON.stringify(payload));
+  return id;
+}
+
+function loadShareSnapshot(id: string): { cidr: string; hosts: DiscoveredHost[] } | null {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(`${SUBNET_SHARE_PREFIX}${id}`);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return { cidr: parsed.cidr, hosts: parsed.hosts };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -218,148 +273,7 @@ function exportToJSON(hosts: DiscoveredHost[]): void {
  */
 async function copyToClipboard(text: string): Promise<void> {
   await navigator.clipboard.writeText(text);
-  toast.success("Copied to clipboard");
-}
-
-/**
- * Get RTT badge color
- */
-function getRttBadgeVariant(rtt: number): "default" | "secondary" | "outline" | "destructive" {
-  if (rtt < 10) return "default";
-  if (rtt < 50) return "secondary";
-  if (rtt < 200) return "outline";
-  return "destructive";
-}
-
-// ============================================================================
-// Host Card Component
-// ============================================================================
-
-interface HostCardProps {
-  host: DiscoveredHost;
-  onPing?: (ip: string) => void;
-  onTraceroute?: (ip: string) => void;
-  onPortScan?: (ip: string) => void;
-}
-
-function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardProps) {
-  return (
-    <Card className="hover:border-primary/50 transition-colors">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0 space-y-2">
-            {/* IP Address */}
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-lg font-semibold">
-                {host.ipAddress}
-              </span>
-              <Tooltip>
-                <TooltipTrigger>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={() => copyToClipboard(host.ipAddress)}
-                  >
-                    <Copy className="h-3 w-3" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Copy IP</TooltipContent>
-              </Tooltip>
-            </div>
-
-            {/* Hostname */}
-            {host.hostname && (
-              <div className="flex items-center gap-2 text-sm">
-                <Globe className="h-4 w-4 text-muted-foreground" />
-                <span className="truncate" title={host.hostname}>
-                  {host.hostname}
-                </span>
-              </div>
-            )}
-
-            {/* MAC Address & Vendor */}
-            {(host.macAddress || host.vendor) && (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                {host.macAddress && (
-                  <span className="font-mono">{host.macAddress}</span>
-                )}
-                {host.vendor && (
-                  <Badge variant="outline" className="text-xs">
-                    {host.vendor}
-                  </Badge>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* RTT Badge */}
-          <div className="flex flex-col items-end gap-2">
-            <Badge variant={getRttBadgeVariant(host.roundtripTime)}>
-              {host.roundtripTime}ms
-            </Badge>
-            {host.ttl && (
-              <span className="text-xs text-muted-foreground">
-                TTL: {host.ttl}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="flex gap-1 mt-3 pt-3 border-t">
-          <Tooltip>
-            <TooltipTrigger>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onPing?.(host.ipAddress)}
-              >
-                <Radio className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Ping</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onTraceroute?.(host.ipAddress)}
-              >
-                <Route className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Traceroute</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onPortScan?.(host.ipAddress)}
-              >
-                <Server className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Port Scan</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => window.open(`ssh://${host.ipAddress}`, "_blank")}
-              >
-                <Terminal className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>SSH</TooltipContent>
-          </Tooltip>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  notify.success("Copied to clipboard");
 }
 
 // ============================================================================
@@ -368,10 +282,11 @@ function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardProps) {
 
 export function SubnetScanTool() {
   // Form state
-  const [cidr, setCidr] = useState("");
-  const [concurrency, setConcurrency] = useState(100);
-  const [timeout, setTimeout] = useState(500);
+  const [cidr, setCidr] = useState(() => getStoredString(SUBNET_LAST_KEY, ""));
+  const [concurrency, setConcurrency] = useState(() => getStoredNumber(SUBNET_CONCURRENCY_KEY, 100));
+  const [timeout, setTimeout] = useState(() => getStoredNumber(SUBNET_TIMEOUT_KEY, 500));
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
 
   // Scan state
   const [scanState, setScanState] = useState<ScanState>({
@@ -381,12 +296,20 @@ export function SubnetScanTool() {
     totalHosts: 0,
     scannedCount: 0,
   });
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const scanStartTimeRef = useRef<number | null>(null);
 
   // Results state
   const [hosts, setHosts] = useState<DiscoveredHost[]>([]);
   const [filterQuery, setFilterQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("ip");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  const debouncedFilterQuery = useDebouncedValue(filterQuery, 200);
+
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [listHeight, setListHeight] = useState(600);
+  const [scrollTop, setScrollTop] = useState(0);
 
   // SignalR connection
   const {
@@ -399,6 +322,7 @@ export function SubnetScanTool() {
   useEffect(() => {
     const unsubscribe = subscribeToSubnetScan({
       onScanStarted: (event) => {
+        setRateLimitMessage(null);
         setScanState((prev) => ({
           ...prev,
           scanId: event.scanId,
@@ -407,8 +331,11 @@ export function SubnetScanTool() {
           progress: 0,
           scannedCount: 0,
         }));
+        scanStartTimeRef.current = Date.now();
+        setEtaSeconds(null);
         setHosts([]);
-        toast.info(`Scan started: ${event.totalHosts} hosts to check`);
+        notify.info(`Scan started: ${event.totalHosts} hosts to check`);
+        announceScanEvent("started", "Subnet scan", `Checking ${event.totalHosts} hosts`);
       },
       onScanProgress: (event) => {
         setScanState((prev) => ({
@@ -416,6 +343,25 @@ export function SubnetScanTool() {
           progress: event.percentComplete,
           scannedCount: event.scannedCount,
         }));
+        if (scanStartTimeRef.current && event.percentComplete > 0) {
+          const elapsedSeconds = (Date.now() - scanStartTimeRef.current) / 1000;
+          const estimatedTotalSeconds = elapsedSeconds / (event.percentComplete / 100);
+          const remainingSeconds = Math.max(0, estimatedTotalSeconds - elapsedSeconds);
+          setEtaSeconds(Math.round(remainingSeconds));
+          // Announce progress at 25% intervals for screen readers
+          // Calculate total from scanned count and percentage to avoid stale closure
+          const estimatedTotal = event.percentComplete > 0
+            ? Math.round(event.scannedCount / (event.percentComplete / 100))
+            : event.scannedCount;
+          announceProgress(
+            event.percentComplete,
+            event.scannedCount,
+            estimatedTotal,
+            "Subnet scan"
+          );
+        } else {
+          setEtaSeconds(null);
+        }
       },
       onHostFound: (event) => {
         setHosts((prev) => [...prev, event.host]);
@@ -426,8 +372,14 @@ export function SubnetScanTool() {
           isScanning: false,
           progress: 100,
         }));
-        toast.success(
+        setEtaSeconds(0);
+        notify.success(
           `Scan complete: ${event.result.hostsFound} hosts found in ${(event.result.scanDurationMs / 1000).toFixed(1)}s`
+        );
+        announceScanEvent(
+          "completed",
+          "Subnet scan",
+          `Found ${event.result.hostsFound} hosts`
         );
       },
       onScanFailed: (event) => {
@@ -435,12 +387,52 @@ export function SubnetScanTool() {
           ...prev,
           isScanning: false,
         }));
-        toast.error(`Scan failed: ${event.error}`);
+        setEtaSeconds(null);
+        scanStartTimeRef.current = null;
+        if (event.error.toLowerCase().includes("rate") || event.error.includes("429")) {
+          setRateLimitMessage("Rate limit reached. Please wait a moment before retrying.");
+        }
+        notify.error(`Scan failed: ${event.error}`);
+        announceScanEvent("failed", "Subnet scan", event.error);
       },
     });
 
     return unsubscribe;
   }, [subscribeToSubnetScan]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(SUBNET_LAST_KEY, cidr);
+    localStorage.setItem(SUBNET_CONCURRENCY_KEY, String(concurrency));
+    localStorage.setItem(SUBNET_TIMEOUT_KEY, String(timeout));
+  }, [cidr, concurrency, timeout]);
+
+  // Load shared snapshot on mount - using useLayoutEffect to avoid cascading renders
+  // This runs synchronously before paint, so setState is acceptable here
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const shareId = params.get("share");
+    if (!shareId) return;
+    const snapshot = loadShareSnapshot(shareId);
+    if (!snapshot) return;
+
+    // Batch state updates - these are intentional for initial data loading
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setCidr(snapshot.cidr);
+    setHosts(snapshot.hosts);
+    setScanState({
+      isScanning: false,
+      scanId: null,
+      progress: 100,
+      totalHosts: snapshot.hosts.length,
+      scannedCount: snapshot.hosts.length,
+    });
+    /* eslint-enable react-hooks/set-state-in-effect */
+    notify.info("Loaded shared subnet scan results.");
+  }, []);
+
+
 
   // Handle input change with validation
   const handleCidrChange = useCallback((value: string) => {
@@ -460,17 +452,29 @@ export function SubnetScanTool() {
     }
 
     if (!isConnected) {
-      toast.error("Not connected to server. Please wait...");
+      notify.error("Not connected to server. Please wait...");
       return;
     }
 
+    const prefix = getCidrPrefix(cidr);
+    if (prefix !== null && prefix <= 20) {
+      const confirmed = window.confirm(
+        "This is a large subnet scan and may take several minutes. Continue?"
+      );
+      if (!confirmed) return;
+    }
+
     try {
+      setRateLimitMessage(null);
       setScanState((prev) => ({ ...prev, isScanning: true }));
       await startSubnetScan(cidr, concurrency, timeout);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to start scan";
-      toast.error(errorMessage);
+      if (errorMessage.toLowerCase().includes("rate") || errorMessage.includes("429")) {
+        setRateLimitMessage("Rate limit reached. Please wait a moment before retrying.");
+      }
+      notify.error(errorMessage);
       setScanState((prev) => ({ ...prev, isScanning: false }));
     }
   }, [cidr, concurrency, timeout, isConnected, startSubnetScan]);
@@ -481,7 +485,7 @@ export function SubnetScanTool() {
     const defaultSubnet = "192.168.1.0/24";
     setCidr(defaultSubnet);
     setValidationError(null);
-    toast.info(`Selected subnet: ${defaultSubnet}`);
+    notify.info(`Selected subnet: ${defaultSubnet}`);
   }, []);
 
   // Clear results
@@ -494,7 +498,12 @@ export function SubnetScanTool() {
       totalHosts: 0,
       scannedCount: 0,
     });
-    toast.info("Results cleared");
+    scanStartTimeRef.current = null;
+    // Assuming 'announce' is imported from the same place as announceScanEvent and announceProgress
+    // For example: import { announce, announceScanEvent, announceProgress } from "@/lib/accessibility-utils";
+    announce("Results cleared", "polite");
+    setEtaSeconds(null);
+    notify.info("Results cleared");
   }, []);
 
   // Toggle sort direction
@@ -511,25 +520,69 @@ export function SubnetScanTool() {
 
   // Filtered and sorted hosts
   const displayedHosts = useMemo(() => {
-    const filtered = filterHosts(hosts, filterQuery);
+    const filtered = filterHosts(hosts, debouncedFilterQuery);
     return sortHosts(filtered, sortField, sortDirection);
-  }, [hosts, filterQuery, sortField, sortDirection]);
+  }, [hosts, debouncedFilterQuery, sortField, sortDirection]);
+
+  const shouldVirtualize = displayedHosts.length > 200;
+  const totalHeight = displayedHosts.length * VIRTUAL_ITEM_HEIGHT;
+  const startIndex = Math.max(
+    0,
+    Math.floor(scrollTop / VIRTUAL_ITEM_HEIGHT) - VIRTUAL_OVERSCAN
+  );
+  const endIndex = Math.min(
+    displayedHosts.length,
+    Math.ceil((scrollTop + listHeight) / VIRTUAL_ITEM_HEIGHT) + VIRTUAL_OVERSCAN
+  );
+  const visibleHosts = displayedHosts.slice(startIndex, endIndex);
+
+  // Update list height when element resizes using ResizeObserver
+  useEffect(() => {
+    const element = listRef.current;
+    if (!element) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const height = entry.contentRect.height || 600;
+        setListHeight(height);
+      }
+    });
+
+    resizeObserver.observe(element);
+    // Set initial height - necessary for first render before ResizeObserver fires
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setListHeight(element.clientHeight || 600);
+
+    return () => resizeObserver.disconnect();
+  }, []); // Empty deps - observer handles updates
 
   // Handle quick actions
   const handlePing = useCallback((ip: string) => {
-    toast.info(`Ping ${ip} - switch to Ping tab`);
+    notify.info(`Ping ${ip} - switch to Ping tab`);
     // TODO: Integrate with tab switching
   }, []);
 
   const handleTraceroute = useCallback((ip: string) => {
-    toast.info(`Traceroute to ${ip} - switch to Traceroute tab`);
+    notify.info(`Traceroute to ${ip} - switch to Traceroute tab`);
     // TODO: Integrate with tab switching
   }, []);
 
   const handlePortScan = useCallback((ip: string) => {
-    toast.info(`Port scan ${ip} - switch to Port Scan tab`);
+    notify.info(`Port scan ${ip} - switch to Port Scan tab`);
     // TODO: Integrate with tab switching
   }, []);
+
+  const handleShareResults = useCallback(async () => {
+    if (displayedHosts.length === 0) {
+      notify.error("No data to share");
+      return;
+    }
+    const shareId = saveShareSnapshot(cidr, displayedHosts);
+    if (!shareId) return;
+    const shareUrl = `${window.location.origin}/network?share=${shareId}`;
+    await navigator.clipboard.writeText(shareUrl);
+    notify.success("Share link copied to clipboard");
+  }, [cidr, displayedHosts]);
 
   return (
     <div className="space-y-6">
@@ -555,7 +608,7 @@ export function SubnetScanTool() {
                   placeholder="e.g., 192.168.1.0/24"
                   value={cidr}
                   onChange={(e) => handleCidrChange(e.target.value)}
-                  className={validationError ? "border-destructive" : ""}
+                  className={validationError ? "border-destructive flex-1" : "flex-1"}
                   disabled={scanState.isScanning}
                   list="common-subnets"
                 />
@@ -565,15 +618,13 @@ export function SubnetScanTool() {
                   ))}
                 </datalist>
                 <Tooltip>
-                  <TooltipTrigger>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={handleQuickScan}
-                      disabled={scanState.isScanning}
-                    >
-                      <Zap className="h-4 w-4" />
-                    </Button>
+                  <TooltipTrigger
+                    className={buttonVariants({ variant: "outline", size: "icon" }) + " h-11 w-11"}
+                    onClick={handleQuickScan}
+                    disabled={scanState.isScanning}
+                    aria-label="Scan my network"
+                  >
+                    <Zap className="h-4 w-4" />
                   </TooltipTrigger>
                   <TooltipContent>Scan My Network</TooltipContent>
                 </Tooltip>
@@ -624,7 +675,7 @@ export function SubnetScanTool() {
               <Button
                 onClick={handleStartScan}
                 disabled={scanState.isScanning || !cidr || !isConnected}
-                className="w-full lg:w-auto"
+                className="w-full lg:w-auto min-h-11"
               >
                 {scanState.isScanning ? (
                   <>
@@ -648,6 +699,13 @@ export function SubnetScanTool() {
               Connecting to server... Real-time updates require WebSocket connection.
             </div>
           )}
+
+          {rateLimitMessage && (
+            <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg text-orange-600 dark:text-orange-400 text-sm flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              {rateLimitMessage}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -662,7 +720,12 @@ export function SubnetScanTool() {
                   {scanState.scannedCount} / {scanState.totalHosts} hosts checked
                 </span>
               </div>
-              <Progress value={scanState.progress} className="h-2" />
+              <ProgressWithEta
+                value={scanState.progress}
+                scanned={scanState.scannedCount}
+                total={scanState.totalHosts}
+                etaSeconds={etaSeconds}
+              />
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2 text-green-500">
                   <CheckCircle2 className="h-4 w-4" />
@@ -675,6 +738,14 @@ export function SubnetScanTool() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {scanState.isScanning && hosts.length === 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <Skeleton key={index} className="h-36" />
+          ))}
+        </div>
       )}
 
       {/* Results Section */}
@@ -693,7 +764,7 @@ export function SubnetScanTool() {
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {/* Search Filter */}
               <div className="relative">
                 <Filter className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -701,7 +772,7 @@ export function SubnetScanTool() {
                   placeholder="Filter hosts..."
                   value={filterQuery}
                   onChange={(e) => setFilterQuery(e.target.value)}
-                  className="pl-8 w-[200px]"
+                  className="pl-8 w-50"
                 />
               </div>
 
@@ -710,7 +781,7 @@ export function SubnetScanTool() {
                 value={sortField}
                 onValueChange={(value) => handleSort(value as SortField)}
               >
-                <SelectTrigger className="w-[130px]">
+                <SelectTrigger className="w-32.5">
                   <ArrowUpDown className="h-4 w-4 mr-2" />
                   <SelectValue />
                 </SelectTrigger>
@@ -725,7 +796,7 @@ export function SubnetScanTool() {
               {/* Export Dropdown */}
               <DropdownMenu>
                 <DropdownMenuTrigger>
-                  <Button variant="outline" size="icon">
+                  <Button variant="outline" size="icon" aria-label="Export results">
                     <Download className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -744,38 +815,74 @@ export function SubnetScanTool() {
                   >
                     Copy all IPs
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleShareResults}>
+                    Copy share link
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
 
               {/* Clear Button */}
               <Tooltip>
-                <TooltipTrigger>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={handleClearResults}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                <TooltipTrigger
+                  className={buttonVariants({ variant: "outline", size: "icon" })}
+                  onClick={handleClearResults}
+                  aria-label="Clear results"
+                >
+                  <Trash2 className="h-4 w-4" />
                 </TooltipTrigger>
                 <TooltipContent>Clear Results</TooltipContent>
               </Tooltip>
             </div>
           </div>
 
-          {/* Host Cards Grid */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {displayedHosts.map((host) => (
-              <HostCard
-                key={host.ipAddress}
-                host={host}
-                onPing={handlePing}
-                onTraceroute={handleTraceroute}
-                onPortScan={handlePortScan}
-              />
-            ))}
-          </div>
+          {/* Host Cards */}
+          {shouldVirtualize ? (
+            <div
+              ref={listRef}
+              onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+              className="max-h-168 overflow-auto rounded-lg border"
+            >
+              <div style={{ height: totalHeight, position: "relative" }}>
+                {visibleHosts.map((host, index) => (
+                  <div
+                    key={host.ipAddress}
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      top: (startIndex + index) * VIRTUAL_ITEM_HEIGHT,
+                      padding: "0.5rem",
+                    }}
+                  >
+                    <HostCard
+                      host={host}
+                      onPing={handlePing}
+                      onTraceroute={handleTraceroute}
+                      onPortScan={handlePortScan}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {displayedHosts.map((host) => (
+                <HostCard
+                  key={host.ipAddress}
+                  host={host}
+                  onPing={handlePing}
+                  onTraceroute={handleTraceroute}
+                  onPortScan={handlePortScan}
+                />
+              ))}
+            </div>
+          )}
         </>
+      )}
+
+      {!scanState.isScanning && hosts.length > 0 && (
+        <NetworkMapView hosts={hosts} />
       )}
 
       {/* Empty State */}
@@ -788,7 +895,7 @@ export function SubnetScanTool() {
               Enter a CIDR subnet range (e.g., 192.168.1.0/24) and click "Start Scan"
               to discover all active hosts on your network.
             </p>
-            <Button variant="outline" onClick={handleQuickScan}>
+            <Button variant="outline" onClick={handleQuickScan} className="min-h-11">
               <Zap className="mr-2 h-4 w-4" />
               Scan My Network (192.168.1.0/24)
             </Button>

@@ -10,6 +10,10 @@ import {
   HubConnectionState,
   LogLevel,
 } from "@microsoft/signalr";
+import {
+  isRealtimeEnabled,
+  subscribeRealtimePreference,
+} from "@/lib/network-preferences";
 import type {
   PingResult,
   TracerouteResult,
@@ -35,6 +39,163 @@ import type {
   WifiNetworkFoundEvent,
   WifiScanCompletedEvent,
 } from "../api/networkApi";
+
+// ============================================================================
+// Shared Connection Pool
+// ============================================================================
+
+interface SharedConnectionSnapshot {
+  connection: HubConnection | null;
+  status: NetworkHubStatus;
+  error: Error | null;
+}
+
+interface SharedConnectionState extends SharedConnectionSnapshot {
+  subscribers: number;
+  listeners: Set<(snapshot: SharedConnectionSnapshot) => void>;
+}
+
+const sharedConnections = new Map<string, SharedConnectionState>();
+
+function getSnapshot(state: SharedConnectionState): SharedConnectionSnapshot {
+  return {
+    connection: state.connection,
+    status: state.status,
+    error: state.error,
+  };
+}
+
+function notifyShared(state: SharedConnectionState) {
+  const snapshot = getSnapshot(state);
+  state.listeners.forEach((listener) => listener(snapshot));
+}
+
+function getOrCreateSharedConnection(hubUrl: string): SharedConnectionState {
+  const existing = sharedConnections.get(hubUrl);
+  if (existing) return existing;
+
+  const initial: SharedConnectionState = {
+    connection: null,
+    status: "Disconnected",
+    error: null,
+    subscribers: 0,
+    listeners: new Set(),
+  };
+
+  sharedConnections.set(hubUrl, initial);
+  return initial;
+}
+
+function subscribeSharedState(
+  hubUrl: string,
+  listener: (snapshot: SharedConnectionSnapshot) => void
+): () => void {
+  const state = getOrCreateSharedConnection(hubUrl);
+  state.listeners.add(listener);
+  listener(getSnapshot(state));
+
+  return () => {
+    state.listeners.delete(listener);
+  };
+}
+
+function buildConnection(hubUrl: string): HubConnection {
+  let baseUrl = "";
+  if (import.meta.env.DEV) {
+    baseUrl = "";
+  }
+
+  return new HubConnectionBuilder()
+    .withUrl(`${baseUrl}${hubUrl}`)
+    .withAutomaticReconnect({
+      nextRetryDelayInMilliseconds: (retryContext) => {
+        if (retryContext.previousRetryCount === 0) return 0;
+        if (retryContext.previousRetryCount === 1) return 2000;
+        if (retryContext.previousRetryCount === 2) return 10000;
+        return Math.min(30000, retryContext.previousRetryCount * 5000);
+      },
+    })
+    .configureLogging(LogLevel.Information)
+    .build();
+}
+
+function startSharedConnection(state: SharedConnectionState, hubUrl: string) {
+  if (state.connection) return;
+
+  const newConnection = buildConnection(hubUrl);
+  state.connection = newConnection;
+  state.status = "Connecting";
+  state.error = null;
+  notifyShared(state);
+
+  const onReconnecting = (err?: Error) => {
+    state.status = "Reconnecting";
+    state.error = err ?? null;
+    notifyShared(state);
+  };
+
+  const onReconnected = () => {
+    state.status = "Connected";
+    state.error = null;
+    notifyShared(state);
+  };
+
+  const onClose = (err?: Error) => {
+    state.status = "Disconnected";
+    state.error = err ?? null;
+    notifyShared(state);
+  };
+
+  newConnection.onreconnecting(onReconnecting);
+  newConnection.onreconnected(onReconnected);
+  newConnection.onclose(onClose);
+
+  newConnection
+    .start()
+    .then(() => {
+      state.status = "Connected";
+      state.error = null;
+      notifyShared(state);
+    })
+    .catch((err) => {
+      state.status = "Error";
+      state.error = err instanceof Error ? err : new Error(String(err));
+      notifyShared(state);
+      console.error("Failed to connect to Network Hub:", err);
+    });
+}
+
+function stopSharedConnection(state: SharedConnectionState) {
+  if (!state.connection) return;
+
+  const connection = state.connection;
+  state.connection = null;
+  state.status = "Disconnected";
+  state.error = null;
+  notifyShared(state);
+
+  if (
+    connection.state === HubConnectionState.Connected ||
+    connection.state === HubConnectionState.Connecting
+  ) {
+    connection.stop();
+  }
+}
+
+function retainSharedConnection(hubUrl: string): () => void {
+  const state = getOrCreateSharedConnection(hubUrl);
+  state.subscribers += 1;
+  if (!state.connection) {
+    startSharedConnection(state, hubUrl);
+  }
+
+  return () => {
+    state.subscribers = Math.max(0, state.subscribers - 1);
+    if (state.subscribers === 0) {
+      stopSharedConnection(state);
+    }
+  };
+}
 
 // ============================================================================
 // Types
@@ -155,75 +316,36 @@ export function useNetworkHub(
   const [connection, setConnection] = useState<HubConnection | null>(null);
   const [status, setStatus] = useState<NetworkHubStatus>("Disconnected");
   const [error, setError] = useState<Error | null>(null);
+  const [realtimeEnabled, setRealtimeEnabled] = useState(isRealtimeEnabled());
   const connectionRef = useRef<HubConnection | null>(null);
 
-  // Build and manage connection
+  // Sync local state with shared connection pool
   useEffect(() => {
-    // Determine base URL for SignalR
-    let baseUrl = "";
-    if (import.meta.env.DEV) {
-      // In development, use the API proxy base
-      baseUrl = "";
+    const unsubscribe = subscribeSharedState(hubUrl, (snapshot) => {
+      setConnection(snapshot.connection);
+      setStatus(snapshot.status);
+      setError(snapshot.error);
+      connectionRef.current = snapshot.connection;
+    });
+
+    return unsubscribe;
+  }, [hubUrl]);
+
+  // Build and manage shared connection
+  useEffect(() => {
+    if (!realtimeEnabled) {
+      const shared = getOrCreateSharedConnection(hubUrl);
+      stopSharedConnection(shared);
+      return;
     }
 
-    const newConnection = new HubConnectionBuilder()
-      .withUrl(`${baseUrl}${hubUrl}`)
-      .withAutomaticReconnect({
-        nextRetryDelayInMilliseconds: (retryContext) => {
-          // Exponential backoff: 0, 2, 10, 30 seconds, then cap at 30
-          if (retryContext.previousRetryCount === 0) return 0;
-          if (retryContext.previousRetryCount === 1) return 2000;
-          if (retryContext.previousRetryCount === 2) return 10000;
-          return Math.min(
-            30000,
-            retryContext.previousRetryCount * 5000
-          );
-        },
-      })
-      .configureLogging(LogLevel.Information)
-      .build();
+    const release = retainSharedConnection(hubUrl);
+    return release;
+  }, [hubUrl, realtimeEnabled]);
 
-    // Connection state change handlers
-    newConnection.onreconnecting((err) => {
-      setStatus("Reconnecting");
-      if (err) setError(err);
-    });
-
-    newConnection.onreconnected(() => {
-      setStatus("Connected");
-      setError(null);
-    });
-
-    newConnection.onclose((err) => {
-      setStatus("Disconnected");
-      if (err) setError(err);
-    });
-
-    // Start connection
-    setStatus("Connecting");
-    newConnection
-      .start()
-      .then(() => {
-        setStatus("Connected");
-        setError(null);
-        setConnection(newConnection);
-        connectionRef.current = newConnection;
-      })
-      .catch((err) => {
-        setStatus("Error");
-        setError(err);
-        console.error("Failed to connect to Network Hub:", err);
-      });
-
-    return () => {
-      if (
-        newConnection.state === HubConnectionState.Connected ||
-        newConnection.state === HubConnectionState.Connecting
-      ) {
-        newConnection.stop();
-      }
-    };
-  }, [hubUrl]);
+  useEffect(() => {
+    return subscribeRealtimePreference(setRealtimeEnabled);
+  }, []);
 
   // ============================================================================
   // Hub Methods (Client→Server)
@@ -376,7 +498,7 @@ export function useNetworkHub(
         if (handlers.onScanFailed) conn.off("ScanFailed");
       };
     },
-    [connection]
+    []
   );
 
   const subscribeToTraceroute = useCallback(
@@ -401,7 +523,7 @@ export function useNetworkHub(
         if (handlers.onTracerouteCompleted) conn.off("TracerouteCompleted");
       };
     },
-    [connection]
+    []
   );
 
   const subscribeToPortScan = useCallback(
@@ -426,7 +548,7 @@ export function useNetworkHub(
         if (handlers.onPortScanCompleted) conn.off("PortScanCompleted");
       };
     },
-    [connection]
+    []
   );
 
   const subscribeToDiscovery = useCallback(
@@ -455,7 +577,7 @@ export function useNetworkHub(
         if (handlers.onDiscoveryCompleted) conn.off("DiscoveryCompleted");
       };
     },
-    [connection]
+    []
   );
 
   const subscribeToWifiScan = useCallback(
@@ -480,7 +602,7 @@ export function useNetworkHub(
         if (handlers.onWifiScanCompleted) conn.off("WifiScanCompleted");
       };
     },
-    [connection]
+    []
   );
 
   return {

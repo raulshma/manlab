@@ -1389,28 +1389,23 @@ public class AgentHub : Hub
             estimatedSecondsRemaining = (int)Math.Ceiling(remainingBytes / speedBytesPerSec);
         }
 
+        var progressUpdate = new DownloadProgressUpdate
+        {
+            DownloadId = downloadId,
+            BytesTransferred = bytesTransferred,
+            TotalBytes = totalBytes,
+            SpeedBytesPerSec = speedBytesPerSec,
+            EstimatedSecondsRemaining = estimatedSecondsRemaining
+        };
+
         // Forward progress to the requesting client
         if (!string.IsNullOrEmpty(session.ClientConnectionId))
         {
-            await Clients.Client(session.ClientConnectionId).SendAsync("DownloadProgress", new
-            {
-                downloadId,
-                bytesTransferred,
-                totalBytes,
-                speedBytesPerSec,
-                estimatedSecondsRemaining
-            });
+            await Clients.Client(session.ClientConnectionId).SendAsync("DownloadProgress", progressUpdate);
         }
 
         // Also broadcast to the download progress group for any subscribed clients
-        await Clients.Group(GetDownloadProgressGroup(downloadId)).SendAsync("DownloadProgress", new
-        {
-            downloadId,
-            bytesTransferred,
-            totalBytes,
-            speedBytesPerSec,
-            estimatedSecondsRemaining
-        });
+        await Clients.Group(GetDownloadProgressGroup(downloadId)).SendAsync("DownloadProgress", progressUpdate);
     }
 
     /// <summary>
@@ -1457,24 +1452,21 @@ public class AgentHub : Hub
 
         _logger.LogInformation("Download session {DownloadId} status changed to {Status}", downloadId, status);
 
+        var statusEvent = new DownloadStatusChangedEvent
+        {
+            DownloadId = downloadId,
+            Status = status,
+            Error = error
+        };
+
         // Forward status change to the requesting client
         if (!string.IsNullOrEmpty(session.ClientConnectionId))
         {
-            await Clients.Client(session.ClientConnectionId).SendAsync("DownloadStatusChanged", new
-            {
-                downloadId,
-                status,
-                error
-            });
+            await Clients.Client(session.ClientConnectionId).SendAsync("DownloadStatusChanged", statusEvent);
         }
 
         // Also broadcast to the download progress group
-        await Clients.Group(GetDownloadProgressGroup(downloadId)).SendAsync("DownloadStatusChanged", new
-        {
-            downloadId,
-            status,
-            error
-        });
+        await Clients.Group(GetDownloadProgressGroup(downloadId)).SendAsync("DownloadStatusChanged", statusEvent);
     }
 
     /// <summary>

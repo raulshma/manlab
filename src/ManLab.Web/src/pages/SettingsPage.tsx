@@ -17,6 +17,7 @@ import { DiscordSettings } from "@/components/settings/DiscordSettings";
 import { AgentDefaultsSettings } from "@/components/settings/AgentDefaultsSettings";
 import { ScriptsSettings } from "@/components/settings/ScriptsSettings";
 import { GitHubReleaseSettings } from "@/components/settings/GitHubReleaseSettings";
+import { NetworkSettings } from "@/components/settings/NetworkSettings";
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -66,6 +67,7 @@ export function SettingsPage() {
       <Tabs defaultValue="general" className="w-full">
         <TabsList className="w-full flex-wrap h-auto">
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="network">Network</TabsTrigger>
           <TabsTrigger value="scripts">Scripts</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
@@ -119,6 +121,9 @@ export function SettingsPage() {
                 <Button onClick={handleSaveConnection}>Save & Reload</Button>
             </CardFooter>
           </Card>
+        </TabsContent>
+        <TabsContent value="network" className="space-y-4">
+          <NetworkSettings />
         </TabsContent>
         <TabsContent value="scripts" className="space-y-4">
             <ScriptsSettings />

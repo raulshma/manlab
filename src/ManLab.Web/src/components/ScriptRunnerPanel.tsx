@@ -155,7 +155,6 @@ export function ScriptRunnerPanel({
       {
         try
         {
-          // eslint-disable-next-line no-await-in-loop
           await cancelScriptRun(id);
           succeeded.push(id);
         }

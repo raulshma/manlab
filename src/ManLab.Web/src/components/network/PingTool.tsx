@@ -11,7 +11,7 @@
  * - Export results to CSV
  */
 
-import { useState, useCallback, useRef } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Radio,
   Loader2,
@@ -23,12 +23,12 @@ import {
   MapPin,
   Timer,
   Activity,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -49,18 +49,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-} from "recharts";
-import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { notify } from "@/lib/network-notify";
 import { pingHost, type PingResult } from "@/api/networkApi";
+import { StatusBadge } from "@/components/network/StatusIndicators";
+import { announce } from "@/lib/accessibility";
+
+const PingRttChart = lazy(() => import("@/components/network/PingRttChart"));
 
 // ============================================================================
 // Types
@@ -70,6 +65,9 @@ interface PingHistoryEntry extends PingResult {
   id: string;
   timestamp: Date;
 }
+
+const PING_HOST_KEY = "manlab:network:ping-host";
+const PING_TIMEOUT_KEY = "manlab:network:ping-timeout";
 
 // ============================================================================
 // Utility Functions
@@ -152,20 +150,46 @@ function exportToCSV(history: PingHistoryEntry[]): void {
   URL.revokeObjectURL(link.href);
 }
 
+function getStoredString(key: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  return localStorage.getItem(key) ?? fallback;
+}
+
+function getStoredNumber(key: string, fallback: number): number {
+  if (typeof window === "undefined") return fallback;
+  const raw = localStorage.getItem(key);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 // ============================================================================
 // Component
 // ============================================================================
 
 export function PingTool() {
   // Form state
-  const [host, setHost] = useState("");
-  const [timeout, setTimeout] = useState(1000);
+  const [host, setHost] = useState(() => getStoredString(PING_HOST_KEY, ""));
+  const [timeout, setTimeout] = useState(() => getStoredNumber(PING_TIMEOUT_KEY, 1000));
   const [isLoading, setIsLoading] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
 
   // Result state
   const [lastResult, setLastResult] = useState<PingResult | null>(null);
   const [history, setHistory] = useState<PingHistoryEntry[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(PING_HOST_KEY, host);
+    localStorage.setItem(PING_TIMEOUT_KEY, String(timeout));
+  }, [host, timeout]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   // Input ref for focus
   const inputRef = useRef<HTMLInputElement>(null);
@@ -190,9 +214,17 @@ export function PingTool() {
 
     setIsLoading(true);
     setValidationError(null);
+    setRateLimitMessage(null);
 
     try {
-      const result = await pingHost({ host, timeout });
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const result = await pingHost(
+        { host, timeout },
+        { signal: controller.signal }
+      );
       setLastResult(result);
 
       // Add to history (keep last 10)
@@ -204,14 +236,22 @@ export function PingTool() {
       setHistory((prev) => [newEntry, ...prev].slice(0, 10));
 
       if (result.isSuccess) {
-        toast.success(`Ping successful: ${result.roundtripTime}ms`);
+        notify.success(`Ping successful: ${result.roundtripTime}ms`);
+        announce(`Ping to ${host} successful. Round trip time: ${result.roundtripTime} milliseconds`, "polite");
       } else {
-        toast.error(`Ping failed: ${result.status}`);
+        notify.error(`Ping failed: ${result.status}`);
+        announce(`Ping to ${host} failed. Status: ${result.status}`, "assertive");
       }
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const errorMessage =
         error instanceof Error ? error.message : "Ping request failed";
-      toast.error(errorMessage);
+      if (errorMessage.toLowerCase().includes("rate") || errorMessage.includes("429")) {
+        setRateLimitMessage("Rate limit reached. Please wait before retrying.");
+      }
+      notify.error(errorMessage);
       setLastResult(null);
     } finally {
       setIsLoading(false);
@@ -232,49 +272,68 @@ export function PingTool() {
   const handleClearHistory = useCallback(() => {
     setHistory([]);
     setLastResult(null);
-    toast.info("Ping history cleared");
+    notify.info("Ping history cleared");
+    announce("Ping history cleared", "polite");
   }, []);
 
   // Export to CSV
   const handleExport = useCallback(() => {
     if (history.length === 0) {
-      toast.error("No data to export");
+      notify.error("No data to export");
       return;
     }
     exportToCSV(history);
-    toast.success("Exported to CSV");
+    notify.success("Exported to CSV");
   }, [history]);
 
   // Prepare chart data
-  const chartData = [...history]
-    .reverse()
-    .filter((entry) => entry.isSuccess)
-    .map((entry) => ({
-      time: formatTime(entry.timestamp),
-      rtt: entry.roundtripTime,
-    }));
+  const successfulPings = useMemo(
+    () => history.filter((entry) => entry.isSuccess),
+    [history]
+  );
 
-  // Calculate stats
-  const successfulPings = history.filter((h) => h.isSuccess);
-  const avgRtt =
-    successfulPings.length > 0
-      ? Math.round(
-          successfulPings.reduce((sum, h) => sum + h.roundtripTime, 0) /
-            successfulPings.length
-        )
-      : 0;
-  const minRtt =
-    successfulPings.length > 0
-      ? Math.min(...successfulPings.map((h) => h.roundtripTime))
-      : 0;
-  const maxRtt =
-    successfulPings.length > 0
-      ? Math.max(...successfulPings.map((h) => h.roundtripTime))
-      : 0;
-  const successRate =
-    history.length > 0
-      ? Math.round((successfulPings.length / history.length) * 100)
-      : 100;
+  const chartData = useMemo(
+    () =>
+      [...successfulPings]
+        .reverse()
+        .map((entry) => ({
+          time: formatTime(entry.timestamp),
+          rtt: entry.roundtripTime,
+        })),
+    [successfulPings]
+  );
+
+  const stats = useMemo(() => {
+    const avg =
+      successfulPings.length > 0
+        ? Math.round(
+            successfulPings.reduce((sum, h) => sum + h.roundtripTime, 0) /
+              successfulPings.length
+          )
+        : 0;
+
+    const min =
+      successfulPings.length > 0
+        ? Math.min(...successfulPings.map((h) => h.roundtripTime))
+        : 0;
+
+    const max =
+      successfulPings.length > 0
+        ? Math.max(...successfulPings.map((h) => h.roundtripTime))
+        : 0;
+
+    const successRateValue =
+      history.length > 0
+        ? Math.round((successfulPings.length / history.length) * 100)
+        : 100;
+
+    return {
+      avgRtt: avg,
+      minRtt: min,
+      maxRtt: max,
+      successRate: successRateValue,
+    };
+  }, [history, successfulPings]);
 
   return (
     <div className="space-y-6">
@@ -303,9 +362,13 @@ export function PingTool() {
                 onKeyDown={handleKeyDown}
                 className={validationError ? "border-destructive" : ""}
                 disabled={isLoading}
+                aria-invalid={!!validationError}
+                aria-describedby={validationError ? "ping-host-error" : undefined}
               />
               {validationError && (
-                <p className="text-sm text-destructive">{validationError}</p>
+                <p id="ping-host-error" className="text-sm text-destructive" role="alert">
+                  {validationError}
+                </p>
               )}
             </div>
 
@@ -332,7 +395,7 @@ export function PingTool() {
               <Button
                 onClick={handlePing}
                 disabled={isLoading || !host}
-                className="w-full md:w-auto"
+                className="w-full md:w-auto min-h-11"
               >
                 {isLoading ? (
                   <>
@@ -351,7 +414,35 @@ export function PingTool() {
         </CardContent>
       </Card>
 
+      {/* Loading Skeleton */}
+      {isLoading && !lastResult && history.length === 0 && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="grid gap-4 md:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-10 rounded-full" />
+                  <div className="space-y-2">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-6 w-20" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Last Result Display */}
+      {rateLimitMessage && (
+        <Card className="border-orange-500/40 bg-orange-500/5">
+          <CardContent className="pt-4 flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400">
+            <AlertTriangle className="h-4 w-4" />
+            {rateLimitMessage}
+          </CardContent>
+        </Card>
+      )}
+
       {lastResult && (
         <Card
           className={`border-l-4 ${lastResult.isSuccess ? "border-l-green-500" : "border-l-red-500"}`}
@@ -367,11 +458,10 @@ export function PingTool() {
                 )}
                 <div>
                   <p className="text-sm text-muted-foreground">Status</p>
-                  <Badge
-                    variant={lastResult.isSuccess ? "default" : "destructive"}
-                  >
-                    {lastResult.isSuccess ? "Success" : lastResult.status}
-                  </Badge>
+                  <StatusBadge
+                    status={lastResult.isSuccess ? "success" : lastResult.status}
+                    label={lastResult.isSuccess ? "Success" : lastResult.status}
+                  />
                 </div>
               </div>
 
@@ -433,26 +523,26 @@ export function PingTool() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs text-muted-foreground">Average RTT</p>
-                  <p className="text-xl font-bold">{avgRtt}ms</p>
+                  <p className="text-xl font-bold">{stats.avgRtt}ms</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Success Rate</p>
                   <p
-                    className={`text-xl font-bold ${successRate === 100 ? "text-green-500" : successRate >= 80 ? "text-yellow-500" : "text-red-500"}`}
+                    className={`text-xl font-bold ${stats.successRate === 100 ? "text-green-500" : stats.successRate >= 80 ? "text-yellow-500" : "text-red-500"}`}
                   >
-                    {successRate}%
+                    {stats.successRate}%
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Min RTT</p>
                   <p className="text-lg font-medium text-green-500">
-                    {minRtt}ms
+                    {stats.minRtt}ms
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Max RTT</p>
                   <p className="text-lg font-medium text-orange-500">
-                    {maxRtt}ms
+                    {stats.maxRtt}ms
                   </p>
                 </div>
               </div>
@@ -477,64 +567,9 @@ export function PingTool() {
                 <CardTitle className="text-sm">RTT over Time</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={chartData}>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      className="stroke-muted"
-                    />
-                    <XAxis
-                      dataKey="time"
-                      tick={{ fontSize: 12 }}
-                      tickLine={false}
-                      className="fill-muted-foreground"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 12 }}
-                      tickLine={false}
-                      className="fill-muted-foreground"
-                      label={{
-                        value: "ms",
-                        angle: -90,
-                        position: "insideLeft",
-                        fontSize: 12,
-                      }}
-                    />
-                    <RechartsTooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(var(--card))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "0.5rem",
-                      }}
-                      labelStyle={{ color: "hsl(var(--foreground))" }}
-                    />
-                    {avgRtt > 0 && (
-                      <ReferenceLine
-                        y={avgRtt}
-                        stroke="hsl(var(--muted-foreground))"
-                        strokeDasharray="5 5"
-                        label={{
-                          value: `Avg: ${avgRtt}ms`,
-                          position: "insideTopRight",
-                          fontSize: 10,
-                          fill: "hsl(var(--muted-foreground))",
-                        }}
-                      />
-                    )}
-                    <Line
-                      type="monotone"
-                      dataKey="rtt"
-                      stroke="hsl(var(--primary))"
-                      strokeWidth={2}
-                      dot={{
-                        fill: "hsl(var(--primary))",
-                        strokeWidth: 2,
-                        r: 4,
-                      }}
-                      activeDot={{ r: 6 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+                <Suspense fallback={<Skeleton className="h-52 w-full" />}>
+                  <PingRttChart data={chartData} avgRtt={stats.avgRtt} />
+                </Suspense>
               </CardContent>
             </Card>
           )}
@@ -549,11 +584,12 @@ export function PingTool() {
               <CardTitle className="text-sm">Ping History</CardTitle>
               <div className="flex gap-2">
                 <Tooltip>
-                  <TooltipTrigger>
+                  <TooltipTrigger asChild>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={handleExport}
+                      aria-label="Export ping history to CSV"
                     >
                       <Download className="h-4 w-4" />
                     </Button>
@@ -561,11 +597,12 @@ export function PingTool() {
                   <TooltipContent>Export to CSV</TooltipContent>
                 </Tooltip>
                 <Tooltip>
-                  <TooltipTrigger>
+                  <TooltipTrigger asChild>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={handleClearHistory}
+                      aria-label="Clear ping history"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -579,12 +616,12 @@ export function PingTool() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Host</TableHead>
-                  <TableHead>Resolved IP</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">RTT</TableHead>
-                  <TableHead className="text-right">TTL</TableHead>
+                  <TableHead scope="col">Time</TableHead>
+                  <TableHead scope="col">Host</TableHead>
+                  <TableHead scope="col">Resolved IP</TableHead>
+                  <TableHead scope="col">Status</TableHead>
+                  <TableHead scope="col" className="text-right">RTT</TableHead>
+                  <TableHead scope="col" className="text-right">TTL</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -598,12 +635,11 @@ export function PingTool() {
                       {entry.resolvedAddress || "—"}
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={entry.isSuccess ? "default" : "destructive"}
+                      <StatusBadge
+                        status={entry.isSuccess ? "success" : entry.status}
+                        label={entry.isSuccess ? "Success" : entry.status}
                         className="text-xs"
-                      >
-                        {entry.isSuccess ? "Success" : entry.status}
-                      </Badge>
+                      />
                     </TableCell>
                     <TableCell
                       className={`text-right font-mono ${entry.isSuccess ? getRttColor(entry.roundtripTime) : "text-muted-foreground"}`}

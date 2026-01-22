@@ -14,7 +14,7 @@
  * - Real-time updates via SignalR
  */
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { lazy, Suspense, useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   Server,
   Loader2,
@@ -33,10 +33,10 @@ import {
   Monitor,
   Zap,
   Copy,
-  ExternalLink,
   Filter,
   LayoutGrid,
   List,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +56,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -64,29 +71,32 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { toast } from "sonner";
+import { notify } from "@/lib/network-notify";
 import {
   scanPorts as scanPortsApi,
   type PortScanResult,
   type OpenPort,
 } from "@/api/networkApi";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
+import { PortCard } from "@/components/network/PortCard";
+import { CategoryIcon } from "@/components/network/CategoryIcon";
+import {
+  getPortInfo,
+  getRiskColor,
+  type RiskLevel,
+  type ServiceCategory,
+  ALL_COMMON_PORTS,
+} from "@/components/network/port-constants";
+import { announce, announceScanEvent } from "@/lib/accessibility";
+const PortDistributionChart = lazy(
+  () => import("@/components/network/PortDistributionChart")
+);
 
 // ============================================================================
 // Types & Constants
 // ============================================================================
 
 type PortMode = "common" | "custom" | "specific";
-type RiskLevel = "low" | "medium" | "high" | "critical";
-type ServiceCategory = "web" | "database" | "remote" | "mail" | "file" | "other";
-
-interface PortInfo {
-  port: number;
-  serviceName: string | null;
-  serviceDescription: string | null;
-  category: ServiceCategory;
-  risk: RiskLevel;
-}
 
 interface QuickScanPreset {
   name: string;
@@ -95,35 +105,9 @@ interface QuickScanPreset {
   icon: React.ComponentType<{ className?: string }>;
 }
 
-// Common ports with metadata
-const COMMON_PORTS: Record<number, { service: string; category: ServiceCategory; risk: RiskLevel; description: string }> = {
-  21: { service: "FTP", category: "file", risk: "high", description: "File Transfer Protocol" },
-  22: { service: "SSH", category: "remote", risk: "medium", description: "Secure Shell" },
-  23: { service: "Telnet", category: "remote", risk: "critical", description: "Unencrypted remote access" },
-  25: { service: "SMTP", category: "mail", risk: "medium", description: "Simple Mail Transfer" },
-  53: { service: "DNS", category: "other", risk: "low", description: "Domain Name System" },
-  80: { service: "HTTP", category: "web", risk: "low", description: "Web Server" },
-  110: { service: "POP3", category: "mail", risk: "medium", description: "Post Office Protocol" },
-  135: { service: "RPC", category: "other", risk: "high", description: "Windows RPC" },
-  139: { service: "NetBIOS", category: "file", risk: "high", description: "Windows File Sharing" },
-  143: { service: "IMAP", category: "mail", risk: "medium", description: "Internet Message Access" },
-  443: { service: "HTTPS", category: "web", risk: "low", description: "Secure Web Server" },
-  445: { service: "SMB", category: "file", risk: "high", description: "Windows File Sharing" },
-  993: { service: "IMAPS", category: "mail", risk: "low", description: "Secure IMAP" },
-  995: { service: "POP3S", category: "mail", risk: "low", description: "Secure POP3" },
-  1433: { service: "MSSQL", category: "database", risk: "medium", description: "Microsoft SQL Server" },
-  1521: { service: "Oracle", category: "database", risk: "medium", description: "Oracle Database" },
-  3306: { service: "MySQL", category: "database", risk: "medium", description: "MySQL Database" },
-  3389: { service: "RDP", category: "remote", risk: "high", description: "Remote Desktop Protocol" },
-  5432: { service: "PostgreSQL", category: "database", risk: "medium", description: "PostgreSQL Database" },
-  5900: { service: "VNC", category: "remote", risk: "high", description: "Virtual Network Computing" },
-  6379: { service: "Redis", category: "database", risk: "medium", description: "Redis Cache" },
-  8080: { service: "HTTP-Alt", category: "web", risk: "low", description: "Alternative HTTP" },
-  8443: { service: "HTTPS-Alt", category: "web", risk: "low", description: "Alternative HTTPS" },
-  27017: { service: "MongoDB", category: "database", risk: "medium", description: "MongoDB Database" },
-};
-
-const ALL_COMMON_PORTS = Object.keys(COMMON_PORTS).map(Number);
+const PORT_HOST_KEY = "manlab:network:port-host";
+const PORT_CONCURRENCY_KEY = "manlab:network:port-concurrency";
+const PORT_TIMEOUT_KEY = "manlab:network:port-timeout";
 
 // Quick scan presets
 const QUICK_SCAN_PRESETS: QuickScanPreset[] = [
@@ -217,70 +201,45 @@ function parsePortsString(input: string): number[] {
   return [...new Set(ports)].sort((a, b) => a - b);
 }
 
-/**
- * Get port metadata
- */
-function getPortInfo(port: OpenPort): PortInfo {
-  const known = COMMON_PORTS[port.port];
-  return {
-    port: port.port,
-    serviceName: port.serviceName || known?.service || "Unknown",
-    serviceDescription: port.serviceDescription || known?.description || null,
-    category: known?.category || "other",
-    risk: known?.risk || "low",
-  };
+function validateCustomRange(startStr: string, endStr: string): string | null {
+  if (!startStr && !endStr) return null;
+  const start = parseInt(startStr, 10);
+  const end = parseInt(endStr, 10);
+
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return "Enter valid numeric start and end ports.";
+  }
+
+  if (start < 1 || end > 65535) {
+    return "Ports must be between 1 and 65535.";
+  }
+
+  if (end < start) {
+    return "End port must be greater than or equal to start port.";
+  }
+
+  return null;
 }
 
-/**
- * Get risk color
- */
-function getRiskColor(risk: RiskLevel): string {
-  switch (risk) {
-    case "low":
-      return "text-green-500";
-    case "medium":
-      return "text-yellow-500";
-    case "high":
-      return "text-orange-500";
-    case "critical":
-      return "text-red-500";
+function validateSpecificPorts(input: string): string | null {
+  if (!input.trim()) return null;
+  const parsed = parsePortsString(input);
+  if (parsed.length === 0) {
+    return "Enter ports like '22, 80, 443' or ranges like '3000-3010'.";
   }
+  return null;
 }
 
-/**
- * Get risk background color
- */
-function getRiskBgColor(risk: RiskLevel): string {
-  switch (risk) {
-    case "low":
-      return "bg-green-500/10 border-green-500/30";
-    case "medium":
-      return "bg-yellow-500/10 border-yellow-500/30";
-    case "high":
-      return "bg-orange-500/10 border-orange-500/30";
-    case "critical":
-      return "bg-red-500/10 border-red-500/30";
-  }
+function getStoredString(key: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  return localStorage.getItem(key) ?? fallback;
 }
 
-/**
- * Render category icon
- */
-function CategoryIcon({ category, className }: { category: ServiceCategory; className?: string }) {
-  switch (category) {
-    case "web":
-      return <Globe className={className} />;
-    case "database":
-      return <Database className={className} />;
-    case "remote":
-      return <Terminal className={className} />;
-    case "mail":
-      return <Mail className={className} />;
-    case "file":
-      return <HardDrive className={className} />;
-    default:
-      return <Server className={className} />;
-  }
+function getStoredNumber(key: string, fallback: number): number {
+  if (typeof window === "undefined") return fallback;
+  const raw = localStorage.getItem(key);
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 /**
@@ -289,9 +248,9 @@ function CategoryIcon({ category, className }: { category: ServiceCategory; clas
 async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
-    toast.success("Copied to clipboard");
+    notify.success("Copied to clipboard");
   } catch {
-    toast.error("Failed to copy to clipboard");
+    notify.error("Failed to copy to clipboard");
   }
 }
 
@@ -327,112 +286,29 @@ function exportToCSV(result: PortScanResult): void {
   URL.revokeObjectURL(link.href);
 }
 
-// ============================================================================
-// Sub-Components
-// ============================================================================
-
-interface PortCardProps {
-  port: OpenPort;
-  host: string;
-}
-
-function PortCard({ port, host }: PortCardProps) {
-  const info = getPortInfo(port);
-  const isWebPort = [80, 443, 8080, 8443, 3000, 4000, 5000].includes(port.port);
-  const webProtocol = [443, 8443].includes(port.port) ? "https" : "http";
-
-  const handleTestConnection = () => {
-    window.open(`${webProtocol}://${host}:${port.port}`, "_blank");
+/**
+ * Export port scan results to JSON
+ */
+function exportToJSON(result: PortScanResult): void {
+  const payload = {
+    host: result.host,
+    resolvedAddress: result.resolvedAddress,
+    scannedPorts: result.scannedPorts,
+    scanDurationMs: result.scanDurationMs,
+    openPorts: result.openPorts.map((port) => ({
+      ...port,
+      metadata: getPortInfo(port),
+    })),
+    exportedAt: new Date().toISOString(),
   };
 
-  return (
-    <div
-      className={`relative p-4 rounded-lg border transition-all hover:shadow-md ${getRiskBgColor(info.risk)}`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          {/* Port Number Badge */}
-          <div className="flex items-center justify-center w-12 h-12 rounded-lg bg-background border font-mono font-bold text-lg">
-            {port.port}
-          </div>
-
-          {/* Service Info */}
-          <div>
-            <div className="flex items-center gap-2">
-              <CategoryIcon category={info.category} className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium">{info.serviceName}</span>
-              <Badge variant="outline" className="text-xs capitalize">
-                {info.category}
-              </Badge>
-            </div>
-            {info.serviceDescription && (
-              <p className="text-sm text-muted-foreground mt-0.5">
-                {info.serviceDescription}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-2">
-          {/* Risk Indicator */}
-          <Tooltip>
-            <TooltipTrigger>
-              <Badge
-                variant="outline"
-                className={`capitalize ${getRiskColor(info.risk)}`}
-              >
-                {info.risk === "critical" ? (
-                  <ShieldAlert className="h-3 w-3 mr-1" />
-                ) : info.risk === "high" ? (
-                  <Shield className="h-3 w-3 mr-1" />
-                ) : (
-                  <ShieldCheck className="h-3 w-3 mr-1" />
-                )}
-                {info.risk}
-              </Badge>
-            </TooltipTrigger>
-            <TooltipContent>
-              {info.risk === "critical"
-                ? "Critical: This service is inherently insecure"
-                : info.risk === "high"
-                  ? "High: May expose sensitive information"
-                  : info.risk === "medium"
-                    ? "Medium: Ensure proper authentication"
-                    : "Low: Generally safe when configured properly"}
-            </TooltipContent>
-          </Tooltip>
-
-          {/* Copy Port */}
-          <Tooltip>
-            <TooltipTrigger>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => copyToClipboard(`${host}:${port.port}`)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Copy address</TooltipContent>
-          </Tooltip>
-
-          {/* Test Connection (for web ports) */}
-          {isWebPort && (
-            <Tooltip>
-              <TooltipTrigger>
-                <Button variant="outline" size="sm" onClick={handleTestConnection}>
-                  <ExternalLink className="h-4 w-4 mr-1" />
-                  Open
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Open in browser</TooltipContent>
-            </Tooltip>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `port-scan-${result.host}-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 // ============================================================================
@@ -441,21 +317,24 @@ function PortCard({ port, host }: PortCardProps) {
 
 export function PortScanTool() {
   // Form state
-  const [host, setHost] = useState("");
+  const [host, setHost] = useState(() => getStoredString(PORT_HOST_KEY, ""));
   const [portMode, setPortMode] = useState<PortMode>("common");
   const [customRangeStart, setCustomRangeStart] = useState("1");
   const [customRangeEnd, setCustomRangeEnd] = useState("1000");
   const [specificPorts, setSpecificPorts] = useState("");
-  const [concurrency, setConcurrency] = useState(50);
-  const [timeout, setTimeout] = useState(2000);
+  const [concurrency, setConcurrency] = useState(() => getStoredNumber(PORT_CONCURRENCY_KEY, 50));
+  const [timeout, setTimeout] = useState(() => getStoredNumber(PORT_TIMEOUT_KEY, 2000));
   const [isLoading, setIsLoading] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [portValidationError, setPortValidationError] = useState<string | null>(null);
+  const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
 
   // Result state
   const [result, setResult] = useState<PortScanResult | null>(null);
   const [liveOpenPorts, setLiveOpenPorts] = useState<OpenPort[]>([]);
   const [scanProgress, setScanProgress] = useState(0);
   const [isScanning, setIsScanning] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Filter/View state
   const [categoryFilter, setCategoryFilter] = useState<ServiceCategory | "all">("all");
@@ -494,6 +373,7 @@ export function PortScanTool() {
     const unsubscribe = subscribeToPortScan({
       onPortScanStarted: (event) => {
         console.log("Port scan started:", event);
+        setRateLimitMessage(null);
         setLiveOpenPorts([]);
         setIsScanning(true);
         setScanProgress(0);
@@ -514,6 +394,33 @@ export function PortScanTool() {
     return unsubscribe;
   }, [isConnected, subscribeToPortScan]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(PORT_HOST_KEY, host);
+    localStorage.setItem(PORT_CONCURRENCY_KEY, String(concurrency));
+    localStorage.setItem(PORT_TIMEOUT_KEY, String(timeout));
+  }, [host, concurrency, timeout]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (portMode === "custom") {
+      setPortValidationError(validateCustomRange(customRangeStart, customRangeEnd));
+      return;
+    }
+
+    if (portMode === "specific") {
+      setPortValidationError(validateSpecificPorts(specificPorts));
+      return;
+    }
+
+    setPortValidationError(null);
+  }, [portMode, customRangeStart, customRangeEnd, specificPorts]);
+
   // Handle input change with validation
   const handleHostChange = useCallback((value: string) => {
     setHost(value);
@@ -529,7 +436,7 @@ export function PortScanTool() {
     (preset: QuickScanPreset) => {
       setPortMode("specific");
       setSpecificPorts(preset.ports.join(", "));
-      toast.info(`Selected ${preset.name} preset: ${preset.ports.length} ports`);
+      notify.info(`Selected ${preset.name} preset: ${preset.ports.length} ports`);
     },
     []
   );
@@ -542,18 +449,31 @@ export function PortScanTool() {
       return;
     }
 
+    if (portValidationError) {
+      notify.error(portValidationError);
+      return;
+    }
+
     const ports = getPortsToScan();
     if (ports.length === 0) {
-      toast.error("No valid ports to scan");
+      notify.error("No valid ports to scan");
       return;
     }
 
     if (ports.length > 1000) {
-      toast.warning("Port range limited to 1000 ports for performance");
+      notify.warning("Port range limited to 1000 ports for performance");
+    }
+
+    if (ports.length > 500) {
+      const confirmed = window.confirm(
+        `This will scan ${ports.length} ports and may take a while. Continue?`
+      );
+      if (!confirmed) return;
     }
 
     setIsLoading(true);
     setValidationError(null);
+    setRateLimitMessage(null);
     setResult(null);
     setLiveOpenPorts([]);
     setScanProgress(0);
@@ -566,33 +486,51 @@ export function PortScanTool() {
         setResult(scanResult);
         setIsScanning(false);
 
-        toast.success(
+        notify.success(
           `Scan complete: ${scanResult.openPorts.length} open ports found out of ${scanResult.scannedPorts} scanned`
+        );
+        announceScanEvent(
+          "completed",
+          "Port scan",
+          `Found ${scanResult.openPorts.length} open ports`
         );
       } else {
         // Fallback to REST API
-        const scanResult = await scanPortsApi({
-          host,
-          ports,
-          concurrencyLimit: concurrency,
-          timeout,
-        });
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        const scanResult = await scanPortsApi(
+          {
+            host,
+            ports,
+            concurrencyLimit: concurrency,
+            timeout,
+          },
+          { signal: controller.signal }
+        );
         setResult(scanResult);
 
-        toast.success(
+        notify.success(
           `Scan complete: ${scanResult.openPorts.length} open ports found out of ${scanResult.scannedPorts} scanned`
         );
       }
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const errorMessage =
         error instanceof Error ? error.message : "Port scan failed";
-      toast.error(errorMessage);
+      if (errorMessage.toLowerCase().includes("rate") || errorMessage.includes("429")) {
+        setRateLimitMessage("Rate limit reached. Please wait before retrying.");
+      }
+      notify.error(errorMessage);
       setResult(null);
       setIsScanning(false);
     } finally {
       setIsLoading(false);
     }
-  }, [host, getPortsToScan, concurrency, timeout, isConnected, hubScanPorts]);
+  }, [host, portValidationError, getPortsToScan, concurrency, timeout, isConnected, hubScanPorts]);
 
   // Handle Enter key press
   const handleKeyDown = useCallback(
@@ -609,17 +547,27 @@ export function PortScanTool() {
     setResult(null);
     setLiveOpenPorts([]);
     setScanProgress(0);
-    toast.info("Results cleared");
+    notify.info("Results cleared");
+    announce("Port scan results cleared", "polite");
   }, []);
 
   // Export to CSV
-  const handleExport = useCallback(() => {
+  const handleExportCsv = useCallback(() => {
     if (!result) {
-      toast.error("No data to export");
+      notify.error("No data to export");
       return;
     }
     exportToCSV(result);
-    toast.success("Exported to CSV");
+    notify.success("Exported to CSV");
+  }, [result]);
+
+  const handleExportJson = useCallback(() => {
+    if (!result) {
+      notify.error("No data to export");
+      return;
+    }
+    exportToJSON(result);
+    notify.success("Exported to JSON");
   }, [result]);
 
   // Determine which ports to display
@@ -700,9 +648,13 @@ export function PortScanTool() {
                 onKeyDown={handleKeyDown}
                 className={validationError ? "border-destructive" : ""}
                 disabled={isLoading}
+                aria-invalid={!!validationError}
+                aria-describedby={validationError ? "port-scan-host-error" : undefined}
               />
               {validationError && (
-                <p className="text-sm text-destructive">{validationError}</p>
+                <p id="port-scan-host-error" className="text-sm text-destructive" role="alert">
+                  {validationError}
+                </p>
               )}
             </div>
 
@@ -711,7 +663,7 @@ export function PortScanTool() {
               <Button
                 onClick={handleScan}
                 disabled={isLoading || !host}
-                className="w-full md:w-auto"
+                className="w-full md:w-auto min-h-11"
               >
                 {isLoading ? (
                   <>
@@ -806,17 +758,23 @@ export function PortScanTool() {
                     disabled={isLoading}
                   />
                 </div>
-                <p className="text-xs text-muted-foreground col-span-2">
-                  Maximum range: 1000 ports. Currently scanning:{" "}
-                  {Math.min(
-                    1000,
-                    Math.max(
-                      0,
-                      (parseInt(customRangeEnd) || 0) - (parseInt(customRangeStart) || 0) + 1
-                    )
-                  )}{" "}
-                  ports
-                </p>
+                {portValidationError ? (
+                  <p className="text-xs text-destructive col-span-2">
+                    {portValidationError}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground col-span-2">
+                    Maximum range: 1000 ports. Currently scanning:{" "}
+                    {Math.min(
+                      1000,
+                      Math.max(
+                        0,
+                        (parseInt(customRangeEnd) || 0) - (parseInt(customRangeStart) || 0) + 1
+                      )
+                    )}{" "}
+                    ports
+                  </p>
+                )}
               </div>
             )}
 
@@ -831,10 +789,16 @@ export function PortScanTool() {
                   onChange={(e) => setSpecificPorts(e.target.value)}
                   disabled={isLoading}
                 />
-                <p className="text-xs text-muted-foreground">
-                  You can use ranges like "1-100" or specific ports like "22, 80, 443".
-                  Currently: {parsePortsString(specificPorts).length} ports
-                </p>
+                {portValidationError ? (
+                  <p className="text-xs text-destructive">
+                    {portValidationError}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    You can use ranges like "1-100" or specific ports like "22, 80, 443".
+                    Currently: {parsePortsString(specificPorts).length} ports
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -842,7 +806,7 @@ export function PortScanTool() {
           {/* Quick Scan Presets */}
           <div className="space-y-3">
             <Label>Quick Scan Presets</Label>
-            <div className="grid gap-2 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+            <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
               {QUICK_SCAN_PRESETS.map((preset) => {
                 const Icon = preset.icon;
                 return (
@@ -852,7 +816,7 @@ export function PortScanTool() {
                     size="sm"
                     onClick={() => handleQuickScan(preset)}
                     disabled={isLoading}
-                    className="flex-col h-auto py-3 gap-1"
+                    className="flex-col h-auto py-3 gap-1 min-h-14"
                   >
                     <Icon className="h-5 w-5" />
                     <span className="text-xs">{preset.name}</span>
@@ -902,6 +866,15 @@ export function PortScanTool() {
           </div>
         </CardContent>
       </Card>
+
+      {rateLimitMessage && (
+        <Card className="border-orange-500/40 bg-orange-500/5">
+          <CardContent className="pt-4 flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400">
+            <AlertTriangle className="h-4 w-4" />
+            {rateLimitMessage}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Live Progress Indicator */}
       {isScanning && (
@@ -1023,11 +996,33 @@ export function PortScanTool() {
                   variant="ghost"
                   size="sm"
                   onClick={() => copyToClipboard(result.resolvedAddress!)}
+                  aria-label="Copy resolved IP"
                 >
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {(result || liveOpenPorts.length > 0) && (
+        <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+          <PortDistributionChart ports={result?.openPorts ?? liveOpenPorts} />
+        </Suspense>
+      )}
+
+      {isScanning && liveOpenPorts.length === 0 && !result && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Scanning ports...</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 md:grid-cols-2">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <Skeleton key={index} className="h-16" />
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}
@@ -1049,7 +1044,7 @@ export function PortScanTool() {
                     setCategoryFilter(value as ServiceCategory | "all")
                   }
                 >
-                  <SelectTrigger className="w-[150px]">
+                  <SelectTrigger className="w-37.5">
                     <Filter className="h-4 w-4 mr-2" />
                     <SelectValue />
                   </SelectTrigger>
@@ -1071,6 +1066,7 @@ export function PortScanTool() {
                     size="sm"
                     onClick={() => setViewMode("grid")}
                     className="rounded-r-none"
+                    aria-label="Grid view"
                   >
                     <LayoutGrid className="h-4 w-4" />
                   </Button>
@@ -1079,6 +1075,7 @@ export function PortScanTool() {
                     size="sm"
                     onClick={() => setViewMode("list")}
                     className="rounded-l-none"
+                    aria-label="List view"
                   >
                     <List className="h-4 w-4" />
                   </Button>
@@ -1086,20 +1083,27 @@ export function PortScanTool() {
 
                 {/* Export */}
                 {result && (
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Button variant="outline" size="sm" onClick={handleExport}>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger>
+                      <Button variant="outline" size="sm" aria-label="Export results">
                         <Download className="h-4 w-4" />
                       </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Export to CSV</TooltipContent>
-                  </Tooltip>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={handleExportCsv}>
+                        Export as CSV
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={handleExportJson}>
+                        Export as JSON
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
 
                 {/* Clear */}
                 <Tooltip>
-                  <TooltipTrigger>
-                    <Button variant="outline" size="sm" onClick={handleClear}>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="sm" onClick={handleClear} aria-label="Clear results">
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>

@@ -15,19 +15,22 @@ public class NetworkHub : Hub
     private readonly IDeviceDiscoveryService _discovery;
     private readonly IWifiScannerService _wifiScanner;
     private readonly IAuditLog _audit;
+    private readonly NetworkRateLimitService _rateLimit;
 
     public NetworkHub(
         ILogger<NetworkHub> logger,
         INetworkScannerService scanner,
         IDeviceDiscoveryService discovery,
         IWifiScannerService wifiScanner,
-        IAuditLog audit)
+        IAuditLog audit,
+        NetworkRateLimitService rateLimit)
     {
         _logger = logger;
         _scanner = scanner;
         _discovery = discovery;
         _wifiScanner = wifiScanner;
         _audit = audit;
+        _rateLimit = rateLimit;
     }
 
     /// <summary>
@@ -45,6 +48,7 @@ public class NetworkHub : Hub
     public override Task OnDisconnectedAsync(Exception? exception)
     {
         _logger.LogDebug("Client disconnected from NetworkHub: {ConnectionId}", Context.ConnectionId);
+        _rateLimit.CleanupConnection(Context.ConnectionId);
         return base.OnDisconnectedAsync(exception);
     }
 
@@ -80,9 +84,33 @@ public class NetworkHub : Hub
     {
         var scanId = Guid.NewGuid().ToString("N");
         
+        // Check rate limit
+        var (isLimited, retryAfter) = _rateLimit.CheckRateLimit(Context.ConnectionId, "subnet");
+        if (isLimited)
+        {
+            return new NetworkScanStartResult
+            {
+                ScanId = scanId,
+                Success = false,
+                ErrorMessage = $"Rate limit exceeded. Please wait {retryAfter} seconds before retrying."
+            };
+        }
+        
+        // Check concurrent scan limit
+        if (!_rateLimit.TryStartScan(Context.ConnectionId))
+        {
+            return new NetworkScanStartResult
+            {
+                ScanId = scanId,
+                Success = false,
+                ErrorMessage = "A scan is already in progress. Please wait for it to complete."
+            };
+        }
+        
         // Validate CIDR
         if (string.IsNullOrWhiteSpace(cidr))
         {
+            _rateLimit.EndScan(Context.ConnectionId);
             return new NetworkScanStartResult
             {
                 ScanId = scanId,
@@ -94,6 +122,7 @@ public class NetworkHub : Hub
         // Validate private network
         if (!IsPrivateNetwork(cidr))
         {
+            _rateLimit.EndScan(Context.ConnectionId);
             return new NetworkScanStartResult
             {
                 ScanId = scanId,
@@ -110,6 +139,7 @@ public class NetworkHub : Hub
         }
         catch (ArgumentException ex)
         {
+            _rateLimit.EndScan(Context.ConnectionId);
             return new NetworkScanStartResult
             {
                 ScanId = scanId,
@@ -136,7 +166,7 @@ public class NetworkHub : Hub
         });
 
         // Start the scan in background (don't await - let it run async)
-        _ = RunSubnetScanAsync(scanId, cidr, totalHosts, concurrencyLimit, timeout);
+        _ = RunSubnetScanAsync(scanId, cidr, totalHosts, concurrencyLimit, timeout, Context.ConnectionId);
 
         _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
             kind: "activity",
@@ -196,7 +226,7 @@ public class NetworkHub : Hub
         _logger.LogInformation("Starting traceroute {ScanId} to {Host}", scanId, host);
 
         // Notify trace started
-        await Clients.Group(GetScanGroup(scanId)).SendAsync("TracerouteStarted", new
+        await Clients.Group(GetScanGroup(scanId)).SendAsync("TracerouteStarted", new TracerouteStartedEvent
         {
             ScanId = scanId,
             Host = host,
@@ -210,7 +240,7 @@ public class NetworkHub : Hub
         foreach (var hop in result.Hops)
         {
             hopIndex++;
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("TracerouteHop", new
+            await Clients.Group(GetScanGroup(scanId)).SendAsync("TracerouteHop", new TracerouteHopEvent
             {
                 ScanId = scanId,
                 HopNumber = hopIndex,
@@ -252,7 +282,7 @@ public class NetworkHub : Hub
 
         // Notify scan started
         var portsToScan = ports ?? GetCommonPorts();
-        await Clients.Group(GetScanGroup(scanId)).SendAsync("PortScanStarted", new
+        await Clients.Group(GetScanGroup(scanId)).SendAsync("PortScanStarted", new PortScanStartedEvent
         {
             ScanId = scanId,
             Host = host,
@@ -264,7 +294,7 @@ public class NetworkHub : Hub
         // Notify each open port found
         foreach (var port in result.OpenPorts)
         {
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("PortFound", new
+            await Clients.Group(GetScanGroup(scanId)).SendAsync("PortFound", new PortFoundEvent
             {
                 ScanId = scanId,
                 Port = port,
@@ -290,7 +320,7 @@ public class NetworkHub : Hub
 
         _logger.LogInformation("Starting device discovery {ScanId} for {Duration}s", scanId, scanDurationSeconds);
 
-        await Clients.Group(GetScanGroup(scanId)).SendAsync("DiscoveryStarted", new
+        await Clients.Group(GetScanGroup(scanId)).SendAsync("DiscoveryStarted", new DiscoveryStartedEvent
         {
             ScanId = scanId,
             DurationSeconds = scanDurationSeconds
@@ -301,7 +331,7 @@ public class NetworkHub : Hub
         // Notify each device found
         foreach (var device in result.MdnsDevices)
         {
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("MdnsDeviceFound", new
+            await Clients.Group(GetScanGroup(scanId)).SendAsync("MdnsDeviceFound", new MdnsDeviceFoundEvent
             {
                 ScanId = scanId,
                 Device = device
@@ -310,7 +340,7 @@ public class NetworkHub : Hub
 
         foreach (var device in result.UpnpDevices)
         {
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("UpnpDeviceFound", new
+            await Clients.Group(GetScanGroup(scanId)).SendAsync("UpnpDeviceFound", new UpnpDeviceFoundEvent
             {
                 ScanId = scanId,
                 Device = device
@@ -346,7 +376,7 @@ public class NetworkHub : Hub
 
         _logger.LogInformation("Starting WiFi scan {ScanId}", scanId);
 
-        await Clients.Group(GetScanGroup(scanId)).SendAsync("WifiScanStarted", new
+        await Clients.Group(GetScanGroup(scanId)).SendAsync("WifiScanStarted", new WifiScanStartedEvent
         {
             ScanId = scanId,
             AdapterName = adapterName
@@ -357,7 +387,7 @@ public class NetworkHub : Hub
         // Notify each network found
         foreach (var network in result.Networks)
         {
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("WifiNetworkFound", new
+            await Clients.Group(GetScanGroup(scanId)).SendAsync("WifiNetworkFound", new WifiNetworkFoundEvent
             {
                 ScanId = scanId,
                 Network = network
@@ -371,50 +401,58 @@ public class NetworkHub : Hub
 
     #region Private Methods
 
-    private async Task RunSubnetScanAsync(string scanId, string cidr, int totalHosts, int concurrencyLimit, int timeout)
+    private async Task RunSubnetScanAsync(string scanId, string cidr, int totalHosts, int concurrencyLimit, int timeout, string connectionId)
     {
         var startedAt = DateTime.UtcNow;
-        var scannedCount = 0;
+        var foundHostCount = 0;
         var foundHosts = new List<DiscoveredHost>();
         var lastProgressUpdate = DateTime.UtcNow;
+        
+        // Record the request for rate limiting
+        _rateLimit.RecordRequest(connectionId, "subnet");
+        
+        // Estimate scan duration for progress tracking
+        // Each host takes roughly (timeout / concurrency) ms on average, plus overhead
+        var estimatedTotalTimeMs = (double)totalHosts * timeout / concurrencyLimit + 2000;
 
         try
         {
             await foreach (var host in _scanner.ScanSubnetAsync(cidr, concurrencyLimit, timeout))
             {
                 foundHosts.Add(host);
-                scannedCount++;
+                foundHostCount++;
 
                 // Send host found event
-                await Clients.Group(GetScanGroup(scanId)).SendAsync("HostFound", new
+                await Clients.Group(GetScanGroup(scanId)).SendAsync("HostFound", new HostFoundEvent
                 {
                     ScanId = scanId,
                     Host = host
                 });
 
-                // Send progress updates every 500ms or every 10 hosts
-                if ((DateTime.UtcNow - lastProgressUpdate).TotalMilliseconds >= 500 || scannedCount % 10 == 0)
+                // Send progress updates every 500ms or every 10 hosts found
+                var now = DateTime.UtcNow;
+                if ((now - lastProgressUpdate).TotalMilliseconds >= 500 || foundHostCount % 10 == 0)
                 {
+                    // Estimate how many hosts have been scanned based on elapsed time
+                    var elapsedMs = (now - startedAt).TotalMilliseconds;
+                    var estimatedScannedHosts = Math.Min(totalHosts, (int)(elapsedMs / estimatedTotalTimeMs * totalHosts));
+                    
                     await Clients.Group(GetScanGroup(scanId)).SendAsync("ScanProgress", new ScanProgressUpdate
                     {
                         ScanId = scanId,
                         Cidr = cidr,
                         TotalHosts = totalHosts,
-                        ScannedHosts = scannedCount,
-                        HostsFound = foundHosts.Count,
+                        ScannedHosts = estimatedScannedHosts,
+                        HostsFound = foundHostCount,
                         Status = "scanning",
                         StartedAt = startedAt
                     });
-                    lastProgressUpdate = DateTime.UtcNow;
+                    lastProgressUpdate = now;
                 }
             }
 
-            // Estimate scanned count for completed scan (we streamed discovered hosts, not all attempts)
-            // In a streaming scan, we don't track failed pings - estimate based on timing
-            var estimatedScanned = totalHosts;
-
             // Send completion event
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("ScanCompleted", new
+            await Clients.Group(GetScanGroup(scanId)).SendAsync("ScanCompleted", new ScanCompletedEvent
             {
                 ScanId = scanId,
                 Cidr = cidr,
@@ -432,12 +470,17 @@ public class NetworkHub : Hub
         {
             _logger.LogError(ex, "Subnet scan {ScanId} failed", scanId);
 
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("ScanFailed", new
+            await Clients.Group(GetScanGroup(scanId)).SendAsync("ScanFailed", new ScanFailedEvent
             {
                 ScanId = scanId,
                 Cidr = cidr,
                 Error = ex.Message
             });
+        }
+        finally
+        {
+            // Always release the scan slot when done
+            _rateLimit.EndScan(connectionId);
         }
     }
 
@@ -615,6 +658,126 @@ public record ScanProgressUpdate
     /// Estimated percentage complete.
     /// </summary>
     public int PercentComplete => TotalHosts > 0 ? (ScannedHosts * 100) / TotalHosts : 0;
+}
+
+/// <summary>
+/// Traceroute started event.
+/// </summary>
+public record TracerouteStartedEvent
+{
+    public required string ScanId { get; init; }
+    public required string Host { get; init; }
+    public int MaxHops { get; init; }
+}
+
+/// <summary>
+/// Traceroute hop event.
+/// </summary>
+public record TracerouteHopEvent
+{
+    public required string ScanId { get; init; }
+    public int HopNumber { get; init; }
+    public int TotalHops { get; init; }
+    public required ManLab.Server.Services.Network.TracerouteHop Hop { get; init; }
+    public bool ReachedDestination { get; init; }
+}
+
+/// <summary>
+/// Port scan started event.
+/// </summary>
+public record PortScanStartedEvent
+{
+    public required string ScanId { get; init; }
+    public required string Host { get; init; }
+    public int TotalPorts { get; init; }
+}
+
+/// <summary>
+/// Port found event.
+/// </summary>
+public record PortFoundEvent
+{
+    public required string ScanId { get; init; }
+    public int Port { get; init; }
+    public required string ServiceName { get; init; }
+}
+
+/// <summary>
+/// Discovery started event.
+/// </summary>
+public record DiscoveryStartedEvent
+{
+    public required string ScanId { get; init; }
+    public int DurationSeconds { get; init; }
+}
+
+/// <summary>
+/// mDNS device found event.
+/// </summary>
+public record MdnsDeviceFoundEvent
+{
+    public required string ScanId { get; init; }
+    public required ManLab.Server.Services.Network.MdnsDiscoveredDevice Device { get; init; }
+}
+
+/// <summary>
+/// UPnP device found event.
+/// </summary>
+public record UpnpDeviceFoundEvent
+{
+    public required string ScanId { get; init; }
+    public required ManLab.Server.Services.Network.UpnpDiscoveredDevice Device { get; init; }
+}
+
+/// <summary>
+/// WiFi scan started event.
+/// </summary>
+public record WifiScanStartedEvent
+{
+    public required string ScanId { get; init; }
+    public string? AdapterName { get; init; }
+}
+
+/// <summary>
+/// WiFi network found event.
+/// </summary>
+public record WifiNetworkFoundEvent
+{
+    public required string ScanId { get; init; }
+    public required ManLab.Server.Services.Network.WifiNetwork Network { get; init; }
+}
+
+/// <summary>
+/// Host found during subnet scan event.
+/// </summary>
+public record HostFoundEvent
+{
+    public required string ScanId { get; init; }
+    public required ManLab.Server.Services.Network.DiscoveredHost Host { get; init; }
+}
+
+/// <summary>
+/// Subnet scan completed event.
+/// </summary>
+public record ScanCompletedEvent
+{
+    public required string ScanId { get; init; }
+    public required string Cidr { get; init; }
+    public int TotalHosts { get; init; }
+    public int HostsFound { get; init; }
+    public List<ManLab.Server.Services.Network.DiscoveredHost> Hosts { get; init; } = [];
+    public DateTime StartedAt { get; init; }
+    public DateTime CompletedAt { get; init; }
+}
+
+/// <summary>
+/// Subnet scan failed event.
+/// </summary>
+public record ScanFailedEvent
+{
+    public required string ScanId { get; init; }
+    public required string Cidr { get; init; }
+    public required string Error { get; init; }
 }
 
 #endregion

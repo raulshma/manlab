@@ -531,7 +531,7 @@ public sealed class SshFileService
         var isWindowsDrivePath = path.Length >= 2 && path[0] == '/' && char.IsLetter(path[1]) &&
                                   (path.Length == 2 || path[2] == '/');
         
-        return VirtualToRealPath(virtualPath, sftp, isWindowsDrivePath);
+        return VirtualToRealPath(virtualPath!, sftp, isWindowsDrivePath);
     }
 
     private async Task<bool> IsWindowsAsync(OnboardingMachine machine, SshProvisioningService.AuthOptions auth, CancellationToken ct)

@@ -235,7 +235,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
     {
         var device = new UpnpDiscoveredDevice
         {
-            Usn = ssdpDevice.Usn,
+            Usn = ssdpDevice.Usn ?? string.Empty,
             NotificationType = ssdpDevice.NotificationType,
             DescriptionLocation = ssdpDevice.DescriptionLocation?.ToString(),
             IpAddress = ExtractIpAddress(ssdpDevice.DescriptionLocation),

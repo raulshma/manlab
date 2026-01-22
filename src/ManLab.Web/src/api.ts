@@ -58,19 +58,56 @@ import type {
 const API_BASE = "/api";
 
 export const api = {
-  get: async <T>(url: string): Promise<{ data: T }> => {
-    const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`);
+  get: async <T>(
+    url: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ data: T }> => {
+    const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
+      signal: options?.signal,
+    });
     if (!response.ok) throw new Error(response.statusText);
     return { data: await response.json() };
   },
-  post: async <T>(url: string, body?: unknown): Promise<{ data: T }> => {
+  post: async <T>(
+    url: string,
+    body?: unknown,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ data: T }> => {
     const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: options?.signal,
     });
     if (!response.ok) throw new Error(response.statusText);
     // Handle empty response
+    const text = await response.text();
+    return { data: text ? JSON.parse(text) : null };
+  },
+  put: async <T>(
+    url: string,
+    body?: unknown,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ data: T }> => {
+    const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(response.statusText);
+    const text = await response.text();
+    return { data: text ? JSON.parse(text) : null };
+  },
+  delete: async <T>(
+    url: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ data: T }> => {
+    const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
+      method: "DELETE",
+      signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(response.statusText);
     const text = await response.text();
     return { data: text ? JSON.parse(text) : null };
   },
