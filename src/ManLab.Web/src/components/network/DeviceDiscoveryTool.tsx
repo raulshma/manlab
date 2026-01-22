@@ -56,10 +56,8 @@ import {
   type DiscoveryScanResult,
   type UpnpDevice,
 } from "@/api/networkApi";
-import {
-  MdnsServiceCard,
-  UpnpDeviceCard,
-} from "@/components/network/DeviceCard";
+import { AggregatedDeviceCard } from "@/components/network/AggregatedDeviceCard";
+import { aggregateDevicesByIp } from "@/components/network/device-aggregation";
 import {
   DEVICE_TYPE_LABELS,
   getMdnsDeviceType,
@@ -384,56 +382,63 @@ export function DeviceDiscoveryTool() {
     announce("Discovery results cleared", "polite");
   }, []);
 
-  // Filtered results
-  const filteredMdnsServices = useMemo(() => {
-    if (protocolFilter === "upnp") return [];
-    let services = mdnsServices;
+  // Aggregate devices by IP address
+  const aggregatedDevices = useMemo(() => {
+    return aggregateDevicesByIp(mdnsServices, upnpDevices);
+  }, [mdnsServices, upnpDevices]);
 
-    // Filter by search query
-    if (debouncedFilterQuery) {
-      const lowerQuery = debouncedFilterQuery.toLowerCase();
-      services = services.filter(
-        (s) =>
-          (s.serviceName ?? s.name ?? "").toLowerCase().includes(lowerQuery) ||
-          (s.hostname ?? "").toLowerCase().includes(lowerQuery) ||
-          (s.serviceType ?? "").toLowerCase().includes(lowerQuery)
-      );
+  // Filtered aggregated devices
+  const filteredDevices = useMemo(() => {
+    let devices = aggregatedDevices;
+
+    // Filter by protocol
+    if (protocolFilter === "mdns") {
+      devices = devices.filter((d) => d.mdnsServices.length > 0);
+    } else if (protocolFilter === "upnp") {
+      devices = devices.filter((d) => d.upnpDevices.length > 0);
     }
-
-    // Filter by device type
-    if (deviceTypeFilter !== "all") {
-      services = services.filter((s) => getMdnsDeviceType(s.serviceType ?? "") === deviceTypeFilter);
-    }
-
-    return services;
-  }, [mdnsServices, debouncedFilterQuery, protocolFilter, deviceTypeFilter]);
-
-  const filteredUpnpDevices = useMemo(() => {
-    if (protocolFilter === "mdns") return [];
-    let devices = upnpDevices;
 
     // Filter by search query
     if (debouncedFilterQuery) {
       const lowerQuery = debouncedFilterQuery.toLowerCase();
       devices = devices.filter(
         (d) =>
-          d.friendlyName?.toLowerCase().includes(lowerQuery) ||
-          d.manufacturer?.toLowerCase().includes(lowerQuery) ||
-          d.modelName?.toLowerCase().includes(lowerQuery) ||
-          (d.deviceType ?? d.notificationType)?.toLowerCase().includes(lowerQuery)
+          d.displayName.toLowerCase().includes(lowerQuery) ||
+          d.ipAddress.toLowerCase().includes(lowerQuery) ||
+          d.hostnames.some((h) => h.toLowerCase().includes(lowerQuery)) ||
+          d.mdnsServices.some(
+            (s) =>
+              (s.serviceName ?? s.name ?? "").toLowerCase().includes(lowerQuery) ||
+              (s.serviceType ?? "").toLowerCase().includes(lowerQuery)
+          ) ||
+          d.upnpDevices.some(
+            (u) =>
+              u.friendlyName?.toLowerCase().includes(lowerQuery) ||
+              u.manufacturer?.toLowerCase().includes(lowerQuery) ||
+              u.modelName?.toLowerCase().includes(lowerQuery)
+          )
       );
     }
 
     // Filter by device type
     if (deviceTypeFilter !== "all") {
-      devices = devices.filter((d) => getUpnpDeviceType(d.deviceType ?? d.notificationType ?? null) === deviceTypeFilter);
+      devices = devices.filter((d) => {
+        const hasMdnsMatch = d.mdnsServices.some(
+          (s) => getMdnsDeviceType(s.serviceType ?? "") === deviceTypeFilter
+        );
+        const hasUpnpMatch = d.upnpDevices.some(
+          (u) => getUpnpDeviceType(u.deviceType ?? u.notificationType ?? null) === deviceTypeFilter
+        );
+        return hasMdnsMatch || hasUpnpMatch;
+      });
     }
 
     return devices;
-  }, [upnpDevices, debouncedFilterQuery, protocolFilter, deviceTypeFilter]);
+  }, [aggregatedDevices, debouncedFilterQuery, protocolFilter, deviceTypeFilter]);
 
-  const totalFiltered = filteredMdnsServices.length + filteredUpnpDevices.length;
-  const totalDevices = mdnsServices.length + upnpDevices.length;
+  const totalFiltered = filteredDevices.length;
+  const totalDevices = aggregatedDevices.length;
+  const totalServices = mdnsServices.length + upnpDevices.length;
 
   return (
     <div className="space-y-6">
@@ -590,6 +595,9 @@ export function DeviceDiscoveryTool() {
                   Showing {totalFiltered} of {totalDevices}
                 </Badge>
               )}
+              <Badge variant="outline" className="text-xs">
+                {totalServices} service{totalServices !== 1 ? "s" : ""} total
+              </Badge>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -669,36 +677,12 @@ export function DeviceDiscoveryTool() {
             </div>
           </div>
 
-          {/* mDNS Services Section */}
-          {filteredMdnsServices.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs">mDNS</Badge>
-                Services ({filteredMdnsServices.length})
-              </h4>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredMdnsServices.map((service, idx) => (
-                  <MdnsServiceCard
-                    key={`${service.hostname ?? "unknown"}-${service.serviceType ?? "unknown"}-${idx}`}
-                    service={service}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* UPnP Devices Section */}
-          {filteredUpnpDevices.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs bg-green-500/10 text-green-600">UPnP</Badge>
-                Devices ({filteredUpnpDevices.length})
-              </h4>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredUpnpDevices.map((device) => (
-                  <UpnpDeviceCard key={device.usn} device={device} />
-                ))}
-              </div>
+          {/* Aggregated Device Cards */}
+          {filteredDevices.length > 0 && (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredDevices.map((device) => (
+                <AggregatedDeviceCard key={device.ipAddress} device={device} />
+              ))}
             </div>
           )}
 
@@ -751,11 +735,12 @@ export function DeviceDiscoveryTool() {
       {!discoveryState.isScanning && totalDevices > 0 && discoveryState.progress === 100 && (
         <Card className="bg-green-500/5 border-green-500/30">
           <CardContent className="py-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
                 <Radar className="h-5 w-5" />
                 <span className="font-medium">
-                  Discovery complete! Found {totalDevices} device{totalDevices !== 1 ? "s" : ""}.
+                  Discovery complete! Found {totalDevices} unique device{totalDevices !== 1 ? "s" : ""}
+                  {totalServices !== totalDevices && ` (${totalServices} services)`}.
                 </span>
               </div>
               <Button variant="outline" size="sm" onClick={handleStartDiscovery} className="min-h-10">

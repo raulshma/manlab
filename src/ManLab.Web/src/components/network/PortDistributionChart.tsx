@@ -8,7 +8,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getPortInfo, type ServiceCategory } from "@/components/network/PortCard";
+import { getPortInfo, type ServiceCategory } from "@/components/network/port-constants";
 import type { OpenPort } from "@/api/networkApi";
 
 const CATEGORY_LABELS: Record<ServiceCategory, string> = {

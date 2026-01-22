@@ -57,6 +57,92 @@ import {
 } from "@/components/network/network-utils";
 
 // ============================================================================
+// Normalization Helpers
+// ============================================================================
+
+type RawWifiNetwork = Partial<WifiNetwork> & {
+  signalQualityPercent?: number | null;
+  frequencyMhz?: number | null;
+  security?: string[] | null;
+  isSecured?: boolean | null;
+};
+
+type RawWifiScanResult = {
+  networks?: RawWifiNetwork[];
+  scanDurationMs?: number;
+  durationMs?: number;
+};
+
+const clampPercent = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
+
+const getNumber = (value: unknown, fallback = 0) =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+const computeSignalStrength = (network: RawWifiNetwork): number => {
+  if (typeof network.signalStrength === "number" && Number.isFinite(network.signalStrength)) {
+    return clampPercent(network.signalStrength);
+  }
+
+  if (typeof network.signalQualityPercent === "number" && Number.isFinite(network.signalQualityPercent)) {
+    return clampPercent(network.signalQualityPercent);
+  }
+
+  if (typeof network.signalStrengthDbm === "number" && Number.isFinite(network.signalStrengthDbm)) {
+    const dbm = network.signalStrengthDbm;
+    if (dbm >= -50) return 100;
+    if (dbm <= -100) return 0;
+    return clampPercent(2 * (dbm + 100));
+  }
+
+  return 0;
+};
+
+const normalizeSecurityType = (network: RawWifiNetwork): string => {
+  const direct = typeof network.securityType === "string" ? network.securityType.trim() : "";
+  if (direct) return direct;
+
+  const fromList = Array.isArray(network.security)
+    ? network.security.filter(Boolean).join(" / ")
+    : "";
+  if (fromList) return fromList;
+
+  if (network.isSecured === false) return "Open";
+  if (network.isSecured === true) return "Secured";
+
+  return "";
+};
+
+const normalizeWifiNetwork = (network: RawWifiNetwork): WifiNetwork => {
+  const ssidRaw = typeof network.ssid === "string" ? network.ssid.trim() : "";
+  const isHidden =
+    network.isHidden ??
+    (ssidRaw.length === 0 ||
+      ssidRaw === "[Hidden Network]" ||
+      ssidRaw.toLowerCase().includes("hidden"));
+
+  const signalStrength = computeSignalStrength(network);
+  const signalStrengthDbm =
+    typeof network.signalStrengthDbm === "number" && Number.isFinite(network.signalStrengthDbm)
+      ? Math.round(network.signalStrengthDbm)
+      : typeof network.signalQualityPercent === "number" && Number.isFinite(network.signalQualityPercent)
+        ? Math.round(network.signalQualityPercent / 2 - 100)
+        : null;
+
+  return {
+    ssid: ssidRaw || "Hidden Network",
+    bssid: typeof network.bssid === "string" && network.bssid.trim().length > 0 ? network.bssid : "—",
+    signalStrength,
+    signalStrengthDbm,
+    channel: getNumber(network.channel, 0),
+    frequency: getNumber(network.frequency ?? network.frequencyMhz, 0),
+    band: typeof network.band === "string" && network.band.trim().length > 0 ? network.band : "Unknown",
+    securityType: normalizeSecurityType(network),
+    isConnected: Boolean(network.isConnected),
+    isHidden,
+  };
+};
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -161,19 +247,32 @@ export function WifiScannerTool() {
         announceScanEvent("started", "WiFi scan");
       },
       onWifiNetworkFound: (event) => {
-        setLiveNetworks((prev) => [...prev, event.network]);
+        const payload = event as { network?: RawWifiNetwork };
+        if (!payload?.network) return;
+        const network = payload.network;
+        setLiveNetworks((prev) => [...prev, normalizeWifiNetwork(network)]);
       },
       onWifiScanCompleted: (event) => {
         setIsScanning(false);
-        setNetworks(event.result.networks);
+        const payload = event as unknown as { result?: RawWifiScanResult } | RawWifiScanResult | undefined;
+        const rawResult = payload && "result" in payload ? payload.result ?? payload : payload;
+        if (!rawResult) {
+          notify.error("WiFi scan completed without results.");
+          announceScanEvent("completed", "WiFi scan", "No results received");
+          return;
+        }
+        const result = rawResult as RawWifiScanResult;
+        const networks = Array.isArray(result.networks) ? result.networks.map(normalizeWifiNetwork) : [];
+        setNetworks(networks);
         setLiveNetworks([]);
+        const durationMs = result.scanDurationMs ?? result.durationMs ?? 0;
         notify.success(
-          `Found ${event.result.networks.length} networks in ${(event.result.scanDurationMs / 1000).toFixed(1)}s`
+          `Found ${networks.length} networks in ${(durationMs / 1000).toFixed(1)}s`
         );
         announceScanEvent(
           "completed",
           "WiFi scan",
-          `Found ${event.result.networks.length} networks`
+          `Found ${networks.length} networks`
         );
       },
     });
@@ -196,14 +295,21 @@ export function WifiScannerTool() {
     try {
       if (isConnected) {
         const result = await hubScanWifi(selectedAdapter);
-        setNetworks(result.networks);
+        const networks = Array.isArray(result?.networks)
+          ? result.networks.map(normalizeWifiNetwork)
+          : [];
+        setNetworks(networks);
+        const durationMs =
+          (result as RawWifiScanResult | undefined)?.scanDurationMs ??
+          (result as RawWifiScanResult | undefined)?.durationMs ??
+          0;
         notify.success(
-          `Found ${result.networks.length} networks in ${(result.scanDurationMs / 1000).toFixed(1)}s`
+          `Found ${networks.length} networks in ${(durationMs / 1000).toFixed(1)}s`
         );
         announceScanEvent(
           "completed",
           "WiFi scan",
-          `Found ${result.networks.length} networks`
+          `Found ${networks.length} networks`
         );
       } else {
         abortRef.current?.abort();
@@ -214,14 +320,21 @@ export function WifiScannerTool() {
           { adapterName: selectedAdapter },
           { signal: controller.signal }
         );
-        setNetworks(result.networks);
+        const networks = Array.isArray(result?.networks)
+          ? result.networks.map(normalizeWifiNetwork)
+          : [];
+        setNetworks(networks);
+        const durationMs =
+          (result as RawWifiScanResult | undefined)?.scanDurationMs ??
+          (result as RawWifiScanResult | undefined)?.durationMs ??
+          0;
         notify.success(
-          `Found ${result.networks.length} networks in ${(result.scanDurationMs / 1000).toFixed(1)}s`
+          `Found ${networks.length} networks in ${(durationMs / 1000).toFixed(1)}s`
         );
         announceScanEvent(
           "completed",
           "WiFi scan",
-          `Found ${result.networks.length} networks`
+          `Found ${networks.length} networks`
         );
       }
     } catch (error) {
