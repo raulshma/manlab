@@ -40,7 +40,8 @@ public interface INetworkScannerService
         string hostname,
         int maxHops = 30,
         int timeout = 1000,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        Func<TracerouteHop, int, Task>? onHop = null);
     
     /// <summary>
     /// Scans ports on a target host.

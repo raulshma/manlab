@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
@@ -175,6 +176,8 @@ export function PingTool() {
   const [host, setHost] = useState(() => getStoredString(PING_HOST_KEY, ""));
   const [timeout, setTimeout] = useState(() => getStoredNumber(PING_TIMEOUT_KEY, 1000));
   const [isLoading, setIsLoading] = useState(false);
+  const [isContinuous, setIsContinuous] = useState(false);
+  const [isContinuousRunning, setIsContinuousRunning] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
 
@@ -182,6 +185,7 @@ export function PingTool() {
   const [lastResult, setLastResult] = useState<PingResult | null>(null);
   const [history, setHistory] = useState<PingHistoryEntry[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const continuousRef = useRef(false);
 
   // Input ref for focus
   const inputRef = useRef<HTMLInputElement>(null);
@@ -212,6 +216,7 @@ export function PingTool() {
 
   useEffect(() => {
     return () => {
+      continuousRef.current = false;
       abortRef.current?.abort();
     };
   }, []);
@@ -227,11 +232,11 @@ export function PingTool() {
   }, []);
 
   // Handle ping submission
-  const handlePing = useCallback(async () => {
+  const performPing = useCallback(async (notifyUser: boolean) => {
     if (!host || !isValidHost(host)) {
       setValidationError("Please enter a valid hostname or IP address");
       inputRef.current?.focus();
-      return;
+      return false;
     }
 
     setIsLoading(true);
@@ -257,37 +262,79 @@ export function PingTool() {
       };
       setHistory((prev) => [newEntry, ...prev].slice(0, 10));
 
-      if (result.isSuccess) {
-        notify.success(`Ping successful: ${result.roundtripTime}ms`);
-        announce(`Ping to ${host} successful. Round trip time: ${result.roundtripTime} milliseconds`, "polite");
-      } else {
-        notify.error(`Ping failed: ${result.status}`);
-        announce(`Ping to ${host} failed. Status: ${result.status}`, "assertive");
+      if (notifyUser) {
+        if (result.isSuccess) {
+          notify.success(`Ping successful: ${result.roundtripTime}ms`);
+          announce(
+            `Ping to ${host} successful. Round trip time: ${result.roundtripTime} milliseconds`,
+            "polite"
+          );
+        } else {
+          notify.error(`Ping failed: ${result.status}`);
+          announce(`Ping to ${host} failed. Status: ${result.status}`, "assertive");
+        }
       }
+      return true;
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        return;
+        return false;
       }
       const errorMessage =
         error instanceof Error ? error.message : "Ping request failed";
       if (errorMessage.toLowerCase().includes("rate") || errorMessage.includes("429")) {
         setRateLimitMessage("Rate limit reached. Please wait before retrying.");
       }
-      notify.error(errorMessage);
+      if (notifyUser) {
+        notify.error(errorMessage);
+      }
       setLastResult(null);
+      return false;
     } finally {
       setIsLoading(false);
     }
   }, [host, timeout]);
 
+  const stopContinuous = useCallback(() => {
+    continuousRef.current = false;
+    abortRef.current?.abort();
+    setIsContinuousRunning(false);
+  }, []);
+
+  const startContinuous = useCallback(async () => {
+    if (isContinuousRunning) return;
+
+    continuousRef.current = true;
+    setIsContinuousRunning(true);
+
+    while (continuousRef.current) {
+      await performPing(false);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    setIsContinuousRunning(false);
+  }, [isContinuousRunning, performPing]);
+
+  const handlePing = useCallback(async () => {
+    if (isContinuous) {
+      if (isContinuousRunning) {
+        stopContinuous();
+        return;
+      }
+      await startContinuous();
+      return;
+    }
+
+    await performPing(true);
+  }, [isContinuous, isContinuousRunning, performPing, startContinuous, stopContinuous]);
+
   // Handle Enter key press
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !isLoading) {
+      if (e.key === "Enter" && !isLoading && !isContinuousRunning) {
         handlePing();
       }
     },
-    [handlePing, isLoading]
+    [handlePing, isLoading, isContinuousRunning]
   );
 
   // Clear history
@@ -357,6 +404,8 @@ export function PingTool() {
     };
   }, [history, successfulPings]);
 
+  const isFormDisabled = isLoading || isContinuousRunning;
+
   return (
     <div className="space-y-6">
       {/* Input Section */}
@@ -371,7 +420,7 @@ export function PingTool() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-6 md:grid-cols-[1fr_200px_auto]">
+          <div className="grid gap-6 md:grid-cols-[1fr_200px_160px_auto]">
             {/* Host Input */}
             <div className="space-y-2">
               <Label htmlFor="ping-host">Hostname or IP Address</Label>
@@ -383,7 +432,7 @@ export function PingTool() {
                 onChange={(e) => handleHostChange(e.target.value)}
                 onKeyDown={handleKeyDown}
                 className={validationError ? "border-destructive" : ""}
-                disabled={isLoading}
+                disabled={isFormDisabled}
                 aria-invalid={!!validationError}
                 aria-describedby={validationError ? "ping-host-error" : undefined}
               />
@@ -406,28 +455,55 @@ export function PingTool() {
                 min={100}
                 max={5000}
                 step={100}
-                disabled={isLoading}
+                disabled={isFormDisabled}
                 className="mt-3"
               />
               <p className="text-xs text-muted-foreground">100ms - 5000ms</p>
+            </div>
+
+            {/* Continuous Mode */}
+            <div className="space-y-2">
+              <Label htmlFor="ping-continuous">Infinite</Label>
+              <div className="flex items-center gap-2 mt-3">
+                <Switch
+                  id="ping-continuous"
+                  checked={isContinuous}
+                  onCheckedChange={(checked) => {
+                    setIsContinuous(checked);
+                    if (!checked && isContinuousRunning) {
+                      stopContinuous();
+                    }
+                  }}
+                  disabled={isLoading}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {isContinuousRunning ? "Running" : "Off"}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">Continuous ping until stopped</p>
             </div>
 
             {/* Submit Button */}
             <div className="flex items-end">
               <Button
                 onClick={handlePing}
-                disabled={isLoading || !host}
+                disabled={!host || (!isContinuousRunning && isLoading)}
                 className="w-full md:w-auto min-h-11"
               >
-                {isLoading ? (
+                {isContinuousRunning ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Pinging...
+                    Stop
+                  </>
+                ) : isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {isContinuous ? "Starting..." : "Pinging..."}
                   </>
                 ) : (
                   <>
                     <Radio className="mr-2 h-4 w-4" />
-                    Ping
+                    {isContinuous ? "Start" : "Ping"}
                   </>
                 )}
               </Button>

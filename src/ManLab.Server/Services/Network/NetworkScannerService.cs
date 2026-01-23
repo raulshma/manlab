@@ -220,7 +220,8 @@ public sealed class NetworkScannerService : INetworkScannerService
         string hostname,
         int maxHops = 30,
         int timeout = 1000,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<TracerouteHop, int, Task>? onHop = null)
     {
         if (string.IsNullOrWhiteSpace(hostname))
         {
@@ -282,6 +283,11 @@ public sealed class NetworkScannerService : INetworkScannerService
                 };
                 hops.Add(hop);
 
+                if (onHop is not null)
+                {
+                    await onHop(hop, ttl);
+                }
+
                 // Destination reached
                 if (reply.Status == IPStatus.Success)
                 {
@@ -300,11 +306,17 @@ public sealed class NetworkScannerService : INetworkScannerService
             catch (PingException ex)
             {
                 _logger.LogDebug(ex, "Ping exception at hop {Hop}", ttl);
-                hops.Add(new TracerouteHop
+                var hop = new TracerouteHop
                 {
                     HopNumber = ttl,
                     Status = IPStatus.Unknown
-                });
+                };
+                hops.Add(hop);
+
+                if (onHop is not null)
+                {
+                    await onHop(hop, ttl);
+                }
             }
         }
 

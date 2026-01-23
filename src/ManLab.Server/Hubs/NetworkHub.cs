@@ -251,22 +251,22 @@ public class NetworkHub : Hub
             MaxHops = maxHops
         });
 
-        var result = await _scanner.TraceRouteAsync(host, maxHops, timeout);
-
-        // Send each hop as it's discovered by replaying the result
-        int hopIndex = 0;
-        foreach (var hop in result.Hops)
-        {
-            hopIndex++;
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("TracerouteHop", new TracerouteHopEvent
+        var result = await _scanner.TraceRouteAsync(
+            host,
+            maxHops,
+            timeout,
+            Context.ConnectionAborted,
+            async (hop, hopNumber) =>
             {
-                ScanId = scanId,
-                HopNumber = hopIndex,
-                TotalHops = result.Hops.Count,
-                Hop = hop,
-                ReachedDestination = result.ReachedDestination && hopIndex == result.Hops.Count
+                await Clients.Group(GetScanGroup(scanId)).SendAsync("TracerouteHop", new TracerouteHopEvent
+                {
+                    ScanId = scanId,
+                    HopNumber = hopNumber,
+                    TotalHops = maxHops,
+                    Hop = hop,
+                    ReachedDestination = hop.Status == System.Net.NetworkInformation.IPStatus.Success
+                });
             });
-        }
 
         // Notify trace completed
         await Clients.Group(GetScanGroup(scanId)).SendAsync("TracerouteCompleted", result);
