@@ -800,7 +800,7 @@ export function PingTool() {
           <span className="text-muted-foreground font-medium flex items-center gap-2">
             <Timer className="h-4 w-4" /> Timeout
           </span>
-          <div className="flex items-center gap-3 w-[180px]">
+          <div className="flex items-center gap-3 w-45">
             <Slider
               value={[timeout]}
               onValueChange={(v) => {
@@ -813,7 +813,7 @@ export function PingTool() {
               disabled={isFormDisabled}
               className="flex-1"
             />
-            <span className="font-mono text-xs w-[45px] text-right">{timeout}ms</span>
+            <span className="font-mono text-xs w-11.25 text-right">{timeout}ms</span>
           </div>
         </div>
 
@@ -969,7 +969,7 @@ export function PingTool() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="px-0 pb-0">
-                    <Suspense fallback={<Skeleton className="h-[200px] w-full" />}>
+                    <Suspense fallback={<Skeleton className="h-50 w-full" />}>
                       <PingRttChart data={chartData} avgRtt={stats.avgRtt} />
                     </Suspense>
                   </CardContent>
@@ -1016,7 +1016,7 @@ export function PingTool() {
 
              {/* Recent History List */}
              {!isContinuous && history.length > 0 && (
-                 <Card className="h-[300px] flex flex-col">
+                 <Card className="h-75 flex flex-col">
                     <CardHeader className="py-3 px-4 border-b">
                         <CardTitle className="text-sm font-medium flex items-center gap-2">
                              <History className="h-4 w-4" /> Recent Pings

@@ -291,3 +291,219 @@ public record NetworkScanError
     /// </summary>
     public string? Details { get; init; }
 }
+
+/// <summary>
+/// DNS record types supported by the DNS lookup tool.
+/// </summary>
+public enum DnsRecordType
+{
+    A,
+    AAAA,
+    CNAME,
+    MX,
+    TXT,
+    NS,
+    SOA,
+    PTR
+}
+
+/// <summary>
+/// Represents a single DNS record.
+/// </summary>
+public record DnsRecord
+{
+    /// <summary>
+    /// Record name (owner).
+    /// </summary>
+    public required string Name { get; init; }
+
+    /// <summary>
+    /// DNS record type.
+    /// </summary>
+    public required DnsRecordType Type { get; init; }
+
+    /// <summary>
+    /// Record value (string representation).
+    /// </summary>
+    public required string Value { get; init; }
+
+    /// <summary>
+    /// TTL in seconds.
+    /// </summary>
+    public int? Ttl { get; init; }
+
+    /// <summary>
+    /// Priority (for MX records).
+    /// </summary>
+    public int? Priority { get; init; }
+}
+
+/// <summary>
+/// Result of a DNS lookup operation.
+/// </summary>
+public record DnsLookupResult
+{
+    /// <summary>
+    /// Original query (hostname or IP).
+    /// </summary>
+    public required string Query { get; init; }
+
+    /// <summary>
+    /// DNS records returned for the query.
+    /// </summary>
+    public List<DnsRecord> Records { get; init; } = [];
+
+    /// <summary>
+    /// Reverse lookup records for resolved IPs (PTR).
+    /// </summary>
+    public List<DnsRecord> ReverseRecords { get; init; } = [];
+}
+
+/// <summary>
+/// Result of a WHOIS lookup.
+/// </summary>
+public record WhoisResult
+{
+    /// <summary>
+    /// Original query.
+    /// </summary>
+    public required string Query { get; init; }
+
+    /// <summary>
+    /// WHOIS server used.
+    /// </summary>
+    public string? Server { get; init; }
+
+    /// <summary>
+    /// Raw WHOIS response.
+    /// </summary>
+    public required string Response { get; init; }
+}
+
+/// <summary>
+/// Result of a Wake-on-LAN request.
+/// </summary>
+public record WolSendResult
+{
+    /// <summary>
+    /// MAC address that was targeted.
+    /// </summary>
+    public required string MacAddress { get; init; }
+
+    /// <summary>
+    /// Broadcast address used.
+    /// </summary>
+    public required string BroadcastAddress { get; init; }
+
+    /// <summary>
+    /// UDP port used.
+    /// </summary>
+    public int Port { get; init; }
+
+    /// <summary>
+    /// Whether the packet was sent successfully.
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// Error message if send failed.
+    /// </summary>
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// SSL/TLS certificate details.
+/// </summary>
+public record SslCertificateInfo
+{
+    /// <summary>
+    /// Certificate subject.
+    /// </summary>
+    public required string Subject { get; init; }
+
+    /// <summary>
+    /// Certificate issuer.
+    /// </summary>
+    public required string Issuer { get; init; }
+
+    /// <summary>
+    /// NotBefore validity date.
+    /// </summary>
+    public DateTime NotBefore { get; init; }
+
+    /// <summary>
+    /// NotAfter validity date.
+    /// </summary>
+    public DateTime NotAfter { get; init; }
+
+    /// <summary>
+    /// Certificate thumbprint.
+    /// </summary>
+    public required string Thumbprint { get; init; }
+
+    /// <summary>
+    /// Certificate serial number.
+    /// </summary>
+    public required string SerialNumber { get; init; }
+
+    /// <summary>
+    /// Subject Alternative Names.
+    /// </summary>
+    public List<string> SubjectAlternativeNames { get; init; } = [];
+
+    /// <summary>
+    /// Signature algorithm.
+    /// </summary>
+    public string? SignatureAlgorithm { get; init; }
+
+    /// <summary>
+    /// Public key algorithm.
+    /// </summary>
+    public string? PublicKeyAlgorithm { get; init; }
+
+    /// <summary>
+    /// Public key size (bits).
+    /// </summary>
+    public int? KeySize { get; init; }
+
+    /// <summary>
+    /// Whether certificate is self-signed.
+    /// </summary>
+    public bool IsSelfSigned { get; init; }
+}
+
+/// <summary>
+/// SSL/TLS inspection result.
+/// </summary>
+public record SslInspectionResult
+{
+    /// <summary>
+    /// Hostname inspected.
+    /// </summary>
+    public required string Host { get; init; }
+
+    /// <summary>
+    /// Port inspected.
+    /// </summary>
+    public int Port { get; init; }
+
+    /// <summary>
+    /// When inspection occurred.
+    /// </summary>
+    public DateTime RetrievedAt { get; init; }
+
+    /// <summary>
+    /// Certificate chain (leaf first).
+    /// </summary>
+    public List<SslCertificateInfo> Chain { get; init; } = [];
+
+    /// <summary>
+    /// Days remaining before leaf expires.
+    /// </summary>
+    public int DaysRemaining { get; init; }
+
+    /// <summary>
+    /// Whether the leaf certificate is currently valid.
+    /// </summary>
+    public bool IsValidNow { get; init; }
+}

@@ -5,7 +5,7 @@
  * Includes quick action buttons to ping, port scan, or traceroute the device.
  */
 
-import { Copy, Layers, Radio, Route, Server } from "lucide-react";
+import { Copy, Layers, Power, Radio, Route, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +23,8 @@ import {
 import { DeviceDetailModal } from "./DeviceDetailModal";
 import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 import type { AggregatedDevice } from "./device-aggregation";
+import { sendWakeOnLan } from "@/api/networkApi";
+import { notify } from "@/lib/network-notify";
 
 interface AggregatedDeviceCardProps {
   device: AggregatedDevice;
@@ -75,6 +77,23 @@ export function AggregatedDeviceCard({ device }: AggregatedDeviceCardProps) {
   const handlePortScan = () => {
     if (networkTools) {
       networkTools.quickPortScan(device.ipAddress);
+    }
+  };
+
+  const handleWake = async () => {
+    const macAddress = window.prompt("Enter MAC address to wake", "");
+    if (!macAddress) return;
+
+    try {
+      const result = await sendWakeOnLan({ macAddress });
+      if (result.success) {
+        notify.success(`Wake-on-LAN sent to ${result.macAddress}`);
+      } else {
+        notify.error(result.error ?? "Wake-on-LAN failed");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Wake-on-LAN failed";
+      notify.error(message);
     }
   };
 
@@ -226,6 +245,19 @@ export function AggregatedDeviceCard({ device }: AggregatedDeviceCardProps) {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Port Scan</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleWake}
+                      aria-label="Wake device"
+                    >
+                      <Power className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Wake (WoL)</TooltipContent>
                 </Tooltip>
               </>
             )}

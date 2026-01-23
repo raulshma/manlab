@@ -1,6 +1,7 @@
 import {
   Copy,
   Globe,
+  Power,
   Radio,
   Route,
   Server,
@@ -17,6 +18,7 @@ import {
 import { notify } from "@/lib/network-notify";
 import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 import type { DiscoveredHost } from "@/api/networkApi";
+import { sendWakeOnLan } from "@/api/networkApi";
 
 interface HostCardProps {
   host: DiscoveredHost;
@@ -67,6 +69,23 @@ export function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardPro
       networkTools.quickPortScan(host.ipAddress);
     } else if (onPortScan) {
       onPortScan(host.ipAddress);
+    }
+  };
+
+  const handleWake = async () => {
+    const macAddress = host.macAddress ?? window.prompt("Enter MAC address to wake", "");
+    if (!macAddress) return;
+
+    try {
+      const result = await sendWakeOnLan({ macAddress });
+      if (result.success) {
+        notify.success(`Wake-on-LAN sent to ${result.macAddress}`);
+      } else {
+        notify.error(result.error ?? "Wake-on-LAN failed");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Wake-on-LAN failed";
+      notify.error(message);
     }
   };
 
@@ -166,6 +185,16 @@ export function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardPro
               <Server className="h-4 w-4" />
             </TooltipTrigger>
             <TooltipContent>Port Scan</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
+              onClick={handleWake}
+              aria-label="Wake device"
+            >
+              <Power className="h-4 w-4" />
+            </TooltipTrigger>
+            <TooltipContent>Wake (WoL)</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger

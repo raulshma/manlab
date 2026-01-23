@@ -49,6 +49,16 @@ public record GeoLocationResult
     /// IANA timezone identifier.
     /// </summary>
     public string? Timezone { get; init; }
+
+    /// <summary>
+    /// Autonomous system number (ASN).
+    /// </summary>
+    public long? Asn { get; init; }
+
+    /// <summary>
+    /// ISP or organization name.
+    /// </summary>
+    public string? Isp { get; init; }
     
     /// <summary>
     /// Whether the lookup was successful.

@@ -14,7 +14,11 @@ export type NetworkToolType =
   | "port-scan"
   | "subnet-scan"
   | "discovery"
-  | "wifi-scan";
+  | "wifi-scan"
+  | "dns-lookup"
+  | "whois"
+  | "wol"
+  | "ssl-inspect";
 
 /**
  * Parsed history entry for UI consumption.

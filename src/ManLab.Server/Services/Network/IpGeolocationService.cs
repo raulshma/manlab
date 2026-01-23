@@ -369,6 +369,8 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
         double? latitude = null;
         double? longitude = null;
         string? timezone = null;
+        long? asn = null;
+        string? isp = null;
 
         // Try to extract country info
         if (data.TryGetValue("country", out var countryObj) && countryObj is Dictionary<string, object> countryDict)
@@ -452,6 +454,33 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
                 timezone = tz?.ToString();
         }
 
+        // Extract ASN/ISP information (if available)
+        if (data.TryGetValue("traits", out var traitsObj) && traitsObj is Dictionary<string, object> traits)
+        {
+            if (traits.TryGetValue("autonomous_system_number", out var asnValue) && long.TryParse(asnValue?.ToString(), out var parsedAsn))
+            {
+                asn = parsedAsn;
+            }
+
+            if (traits.TryGetValue("autonomous_system_organization", out var orgValue))
+            {
+                isp = orgValue?.ToString();
+            }
+        }
+
+        if (asn is null && data.TryGetValue("asn", out var asnFallback) && long.TryParse(asnFallback?.ToString(), out var parsedFallbackAsn))
+        {
+            asn = parsedFallbackAsn;
+        }
+
+        if (isp is null)
+        {
+            if (data.TryGetValue("isp", out var ispValue))
+                isp = ispValue?.ToString();
+            else if (data.TryGetValue("organization", out var orgValue))
+                isp = orgValue?.ToString();
+        }
+
         return new GeoLocationResult
         {
             IpAddress = ipAddress,
@@ -462,7 +491,9 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
             PostalCode = postalCode,
             Latitude = latitude,
             Longitude = longitude,
-            Timezone = timezone
+            Timezone = timezone,
+            Asn = asn,
+            Isp = isp
         };
     }
 

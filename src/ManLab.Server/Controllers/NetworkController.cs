@@ -477,6 +477,274 @@ public class NetworkController : ControllerBase
     }
 
     /// <summary>
+    /// Performs DNS lookup for a hostname or IP address.
+    /// </summary>
+    [HttpPost("dns")]
+    public async Task<ActionResult<DnsLookupResult>> DnsLookup([FromBody] DnsLookupRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Query))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_QUERY",
+                Message = "Query is required"
+            });
+        }
+
+        var includeReverse = request.IncludeReverse ?? true;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _scanner.DnsLookupAsync(request.Query, includeReverse, ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.dns",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"DNS lookup for {request.Query}: {result.Records.Count} records"));
+
+            _ = _history.RecordAsync(
+                toolType: "dns-lookup",
+                target: request.Query,
+                input: new { query = request.Query, includeReverse },
+                result: result,
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "DNS lookup failed for {Query}", request.Query);
+
+            _ = _history.RecordAsync(
+                toolType: "dns-lookup",
+                target: request.Query,
+                input: new { query = request.Query, includeReverse },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "DNS_LOOKUP_FAILED",
+                Message = "DNS lookup failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Performs WHOIS lookup for a domain or IP.
+    /// </summary>
+    [HttpPost("whois")]
+    public async Task<ActionResult<WhoisResult>> Whois([FromBody] WhoisRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Query))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_QUERY",
+                Message = "Query is required"
+            });
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _scanner.WhoisAsync(request.Query, ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.whois",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"WHOIS lookup for {request.Query}"));
+
+            _ = _history.RecordAsync(
+                toolType: "whois",
+                target: request.Query,
+                input: new { query = request.Query },
+                result: new { result.Server },
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "WHOIS lookup failed for {Query}", request.Query);
+
+            _ = _history.RecordAsync(
+                toolType: "whois",
+                target: request.Query,
+                input: new { query = request.Query },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "WHOIS_FAILED",
+                Message = "WHOIS lookup failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Sends a Wake-on-LAN magic packet to a MAC address.
+    /// </summary>
+    [HttpPost("wol")]
+    public async Task<ActionResult<WolSendResult>> WakeOnLan([FromBody] WolRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.MacAddress))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_MAC",
+                Message = "MAC address is required"
+            });
+        }
+
+        var port = request.Port.HasValue ? Math.Clamp(request.Port.Value, 1, 65535) : 9;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _scanner.SendWakeOnLanAsync(request.MacAddress, request.BroadcastAddress, port, ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.wol",
+                httpContext: HttpContext,
+                success: result.Success,
+                statusCode: 200,
+                category: "network",
+                message: $"Wake-on-LAN sent to {result.MacAddress}"));
+
+            _ = _history.RecordAsync(
+                toolType: "wol",
+                target: result.MacAddress,
+                input: new { request.MacAddress, request.BroadcastAddress, port },
+                result: result,
+                success: result.Success,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: result.Error,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "WoL send failed for {Mac}", request.MacAddress);
+
+            _ = _history.RecordAsync(
+                toolType: "wol",
+                target: request.MacAddress,
+                input: new { request.MacAddress, request.BroadcastAddress, port },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "WOL_FAILED",
+                Message = "Wake-on-LAN failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Inspects SSL/TLS certificate chain for a host.
+    /// </summary>
+    [HttpPost("ssl/inspect")]
+    public async Task<ActionResult<SslInspectionResult>> InspectCertificate([FromBody] SslInspectRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Host))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_HOST",
+                Message = "Host is required"
+            });
+        }
+
+        var port = request.Port.HasValue ? Math.Clamp(request.Port.Value, 1, 65535) : 443;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _scanner.InspectCertificateAsync(request.Host, port, ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.ssl.inspect",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"SSL inspection for {request.Host}:{port}"));
+
+            _ = _history.RecordAsync(
+                toolType: "ssl-inspect",
+                target: request.Host,
+                input: new { host = request.Host, port },
+                result: new { result.DaysRemaining, result.IsValidNow, chainLength = result.Chain.Count },
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "SSL inspection failed for {Host}:{Port}", request.Host, port);
+
+            _ = _history.RecordAsync(
+                toolType: "ssl-inspect",
+                target: request.Host,
+                input: new { host = request.Host, port },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "SSL_INSPECT_FAILED",
+                Message = "SSL inspection failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
     /// Discovers devices on the local network using mDNS and UPnP/SSDP.
     /// </summary>
     /// <param name="request">The discovery request.</param>
@@ -1173,6 +1441,70 @@ public record PortScanRequest
     /// Timeout per port in milliseconds (default: 2000, max: 10000).
     /// </summary>
     public int? Timeout { get; init; }
+}
+
+/// <summary>
+/// Request for DNS lookup.
+/// </summary>
+public record DnsLookupRequest
+{
+    /// <summary>
+    /// Hostname or IP address to query.
+    /// </summary>
+    public string Query { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Whether to include reverse DNS lookups.
+    /// </summary>
+    public bool? IncludeReverse { get; init; }
+}
+
+/// <summary>
+/// Request for WHOIS lookup.
+/// </summary>
+public record WhoisRequest
+{
+    /// <summary>
+    /// Domain name or IP address.
+    /// </summary>
+    public string Query { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Request for Wake-on-LAN.
+/// </summary>
+public record WolRequest
+{
+    /// <summary>
+    /// MAC address to wake.
+    /// </summary>
+    public string MacAddress { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Optional broadcast address (default 255.255.255.255).
+    /// </summary>
+    public string? BroadcastAddress { get; init; }
+
+    /// <summary>
+    /// Optional UDP port (default 9).
+    /// </summary>
+    public int? Port { get; init; }
+}
+
+/// <summary>
+/// Request for SSL inspection.
+/// </summary>
+public record SslInspectRequest
+{
+    /// <summary>
+    /// Hostname to inspect.
+    /// </summary>
+    public string Host { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Port to connect to (default 443).
+    /// </summary>
+    public int? Port { get; init; }
 }
 
 /// <summary>

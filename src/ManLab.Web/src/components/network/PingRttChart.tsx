@@ -20,7 +20,7 @@ export default function PingRttChart({ data, avgRtt }: PingRttChartProps) {
   }
 
   return (
-    <div className="h-[250px] w-full p-4 pl-0">
+    <div className="h-62.5 w-full p-4 pl-0">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data}>
           <defs>

@@ -9,6 +9,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -38,15 +47,18 @@ import {
   Calendar,
   Globe,
   Info,
+  MapPin,
 } from "lucide-react";
 import {
   type GeoDatabaseStatus,
   type GeoDatabaseSource,
+  type GeoLocationResult,
   getGeolocationStatus,
   getGeolocationSources,
   downloadGeolocationDatabaseFromSource,
   updateGeolocationDatabase,
   deleteGeolocationDatabase,
+  lookupGeolocation,
 } from "@/api/networkApi";
 import { announce } from "@/lib/accessibility";
 
@@ -83,6 +95,10 @@ export function GeolocationDbManager() {
   const [deleting, setDeleting] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [lookupInput, setLookupInput] = useState("");
+  const [lookupResults, setLookupResults] = useState<GeoLocationResult[]>([]);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
 
   // Fetch status and sources
   const fetchData = useCallback(async () => {
@@ -195,6 +211,33 @@ export function GeolocationDbManager() {
   // Get selected source info
   const selectedSource = sources.find((s) => s.id === selectedSourceId);
   const activeSource = sources.find((s) => s.id === status?.activeSourceId);
+
+  const handleLookup = useCallback(async () => {
+    const ips = lookupInput
+      .split(/[\s,]+/)
+      .map((ip) => ip.trim())
+      .filter(Boolean);
+
+    if (ips.length === 0) {
+      setLookupError("Enter at least one IP address");
+      return;
+    }
+
+    setLookupLoading(true);
+    setLookupError(null);
+    setLookupResults([]);
+
+    try {
+      const results = await lookupGeolocation(ips);
+      setLookupResults(results);
+      announce("Geolocation lookup completed");
+    } catch (err) {
+      console.error("Geolocation lookup failed:", err);
+      setLookupError(err instanceof Error ? err.message : "Lookup failed");
+    } finally {
+      setLookupLoading(false);
+    }
+  }, [lookupInput]);
 
   if (loading) {
     return (
@@ -437,6 +480,94 @@ export function GeolocationDbManager() {
                 </AlertDialogContent>
               </AlertDialog>
             </>
+          )}
+        </div>
+
+        {/* GeoIP Lookup */}
+        <div className="pt-4 border-t space-y-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <MapPin className="h-4 w-4 text-primary" />
+            GeoIP Lookup
+          </div>
+          <div className="flex flex-col gap-3 md:flex-row md:items-end">
+            <div className="flex-1">
+              <Input
+                placeholder="Enter IPs (comma or space separated)"
+                value={lookupInput}
+                onChange={(e) => setLookupInput(e.target.value)}
+              />
+            </div>
+            <Button onClick={handleLookup} disabled={lookupLoading || !status?.isAvailable}>
+              {lookupLoading ? "Looking up..." : "Lookup"}
+            </Button>
+          </div>
+
+          {!status?.isAvailable && (
+            <div className="text-xs text-muted-foreground">
+              Install a geolocation database to enable lookups.
+            </div>
+          )}
+
+          {lookupError && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-3 text-red-600 dark:text-red-400 text-sm">
+              {lookupError}
+            </div>
+          )}
+
+          {lookupResults.length > 0 && (
+            <div className="rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>IP</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>ASN/ISP</TableHead>
+                    <TableHead>Coordinates</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lookupResults.map((result) => {
+                    const location = [result.city, result.state, result.country]
+                      .filter(Boolean)
+                      .join(", ");
+                    const coords =
+                      result.latitude !== null && result.longitude !== null
+                        ? `${result.latitude}, ${result.longitude}`
+                        : "—";
+                    const mapsLink =
+                      result.latitude !== null && result.longitude !== null
+                        ? `https://maps.google.com/?q=${result.latitude},${result.longitude}`
+                        : null;
+
+                    return (
+                      <TableRow key={result.ipAddress}>
+                        <TableCell className="font-mono text-xs">{result.ipAddress}</TableCell>
+                        <TableCell className="text-xs">
+                          {result.isFound ? location || "Unknown" : "Not found"}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {result.isp ?? (result.asn ? `AS${result.asn}` : "—")}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {mapsLink ? (
+                            <a
+                              href={mapsLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-primary hover:underline"
+                            >
+                              {coords}
+                            </a>
+                          ) : (
+                            coords
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </div>
       </CardContent>

@@ -1,10 +1,14 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Security;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Threading.Channels;
+using DnsClient;
 
 namespace ManLab.Server.Services.Network;
 
@@ -16,6 +20,7 @@ public sealed class NetworkScannerService : INetworkScannerService
     private readonly ILogger<NetworkScannerService> _logger;
     private readonly IArpService? _arpService;
     private readonly IOuiDatabase? _ouiDatabase;
+    private readonly LookupClient _dnsClient;
 
     /// <summary>
     /// Common ports to scan when no specific ports are provided.
@@ -52,6 +57,12 @@ public sealed class NetworkScannerService : INetworkScannerService
         _logger = logger;
         _arpService = arpService;
         _ouiDatabase = ouiDatabase;
+        _dnsClient = new LookupClient(new LookupClientOptions
+        {
+            UseCache = true,
+            Timeout = TimeSpan.FromSeconds(5),
+            Retries = 1
+        });
     }
 
     /// <inheritdoc />
@@ -455,6 +466,234 @@ public sealed class NetworkScannerService : INetworkScannerService
     }
 
     /// <inheritdoc />
+    public async Task<DnsLookupResult> DnsLookupAsync(string query, bool includeReverse = true, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            throw new ArgumentException("Query cannot be null or empty", nameof(query));
+        }
+
+        var records = new List<DnsRecord>();
+        var reverseRecords = new List<DnsRecord>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var types = new[]
+        {
+            QueryType.A,
+            QueryType.AAAA,
+            QueryType.CNAME,
+            QueryType.MX,
+            QueryType.TXT,
+            QueryType.NS,
+            QueryType.SOA
+        };
+
+        foreach (var type in types)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var response = await _dnsClient.QueryAsync(query, type, cancellationToken: ct);
+                foreach (var record in MapDnsRecords(type, response))
+                {
+                    if (seen.Add($"{record.Type}:{record.Name}:{record.Value}:{record.Priority}"))
+                    {
+                        records.Add(record);
+                    }
+                }
+            }
+            catch (DnsResponseException ex)
+            {
+                _logger.LogDebug(ex, "DNS lookup {Type} failed for {Query}", type, query);
+            }
+        }
+
+        if (includeReverse)
+        {
+            var ips = new List<IPAddress>();
+            if (IPAddress.TryParse(query, out var parsedIp))
+            {
+                ips.Add(parsedIp);
+            }
+            else
+            {
+                ips.AddRange(records
+                    .Where(r => r.Type is DnsRecordType.A or DnsRecordType.AAAA)
+                    .Select(r => IPAddress.TryParse(r.Value, out var ip) ? ip : null)
+                    .Where(ip => ip is not null)!
+                    .Select(ip => ip!));
+            }
+
+            foreach (var ip in ips.Distinct())
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var response = await _dnsClient.QueryReverseAsync(ip, ct);
+                    foreach (var ptr in response.Answers.PtrRecords())
+                    {
+                        reverseRecords.Add(new DnsRecord
+                        {
+                            Name = ptr.DomainName.Value,
+                            Type = DnsRecordType.PTR,
+                            Value = ptr.PtrDomainName.Value,
+                            Ttl = (int?)ptr.TimeToLive
+                        });
+                    }
+                }
+                catch (DnsResponseException ex)
+                {
+                    _logger.LogDebug(ex, "Reverse DNS lookup failed for {Ip}", ip);
+                }
+            }
+        }
+
+        return new DnsLookupResult
+        {
+            Query = query,
+            Records = records.OrderBy(r => r.Type).ThenBy(r => r.Name).ToList(),
+            ReverseRecords = reverseRecords.OrderBy(r => r.Name).ToList()
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<WhoisResult> WhoisAsync(string query, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            throw new ArgumentException("Query cannot be null or empty", nameof(query));
+        }
+
+        const string ianaServer = "whois.iana.org";
+        var initialResponse = await QueryWhoisServerAsync(ianaServer, query, ct);
+        var referral = TryParseWhoisReferral(initialResponse);
+
+        if (!string.IsNullOrWhiteSpace(referral))
+        {
+            var referralResponse = await QueryWhoisServerAsync(referral, query, ct);
+            return new WhoisResult
+            {
+                Query = query,
+                Server = referral,
+                Response = referralResponse
+            };
+        }
+
+        return new WhoisResult
+        {
+            Query = query,
+            Server = ianaServer,
+            Response = initialResponse
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<WolSendResult> SendWakeOnLanAsync(
+        string macAddress,
+        string? broadcastAddress = null,
+        int port = 9,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(macAddress))
+        {
+            throw new ArgumentException("MAC address is required", nameof(macAddress));
+        }
+
+        if (!TryParseMacAddress(macAddress, out var macBytes))
+        {
+            throw new ArgumentException("Invalid MAC address format", nameof(macAddress));
+        }
+
+        var broadcast = broadcastAddress ?? "255.255.255.255";
+        if (!IPAddress.TryParse(broadcast, out var broadcastIp))
+        {
+            throw new ArgumentException("Invalid broadcast address", nameof(broadcastAddress));
+        }
+
+        var packet = BuildMagicPacket(macBytes);
+        var formattedMac = string.Join(":", macBytes.Select(b => b.ToString("X2")));
+
+        try
+        {
+            using var udp = new UdpClient();
+            udp.EnableBroadcast = true;
+            ct.ThrowIfCancellationRequested();
+            await udp.SendAsync(packet, packet.Length, broadcastIp.ToString(), port).WaitAsync(ct);
+
+            return new WolSendResult
+            {
+                MacAddress = formattedMac,
+                BroadcastAddress = broadcastIp.ToString(),
+                Port = port,
+                Success = true
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to send WoL packet to {Mac}", formattedMac);
+            return new WolSendResult
+            {
+                MacAddress = formattedMac,
+                BroadcastAddress = broadcastIp.ToString(),
+                Port = port,
+                Success = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<SslInspectionResult> InspectCertificateAsync(string host, int port = 443, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            throw new ArgumentException("Host is required", nameof(host));
+        }
+
+        using var tcpClient = new TcpClient();
+        await tcpClient.ConnectAsync(host, port, ct);
+
+        await using var sslStream = new SslStream(
+            tcpClient.GetStream(),
+            leaveInnerStreamOpen: false,
+            userCertificateValidationCallback: (_, _, _, _) => true);
+
+        await sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+        {
+            TargetHost = host,
+            CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+        }, ct);
+
+        if (sslStream.RemoteCertificate is null)
+        {
+            throw new InvalidOperationException("No certificate returned by remote host.");
+        }
+
+        var leafCertificate = new X509Certificate2(sslStream.RemoteCertificate);
+        using var chain = new X509Chain();
+        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        chain.Build(leafCertificate);
+
+        var chainInfos = chain.ChainElements
+            .Cast<X509ChainElement>()
+            .Select(element => ToCertificateInfo(element.Certificate))
+            .ToList();
+
+        var daysRemaining = (int)Math.Floor((leafCertificate.NotAfter.ToUniversalTime() - DateTime.UtcNow).TotalDays);
+
+        return new SslInspectionResult
+        {
+            Host = host,
+            Port = port,
+            RetrievedAt = DateTime.UtcNow,
+            Chain = chainInfos,
+            DaysRemaining = daysRemaining,
+            IsValidNow = DateTime.UtcNow >= leafCertificate.NotBefore.ToUniversalTime()
+                         && DateTime.UtcNow <= leafCertificate.NotAfter.ToUniversalTime()
+        };
+    }
+
+    /// <inheritdoc />
     public IEnumerable<IPAddress> ParseCidr(string cidr)
     {
         if (string.IsNullOrWhiteSpace(cidr))
@@ -576,4 +815,232 @@ public sealed class NetworkScannerService : INetworkScannerService
 
     private static bool IsUnspecifiedAddress(IPAddress address)
         => address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any);
+
+    private static IEnumerable<DnsRecord> MapDnsRecords(QueryType type, IDnsQueryResponse response)
+    {
+        switch (type)
+        {
+            case QueryType.A:
+                return response.Answers.ARecords().Select(a => new DnsRecord
+                {
+                    Name = a.DomainName.Value,
+                    Type = DnsRecordType.A,
+                    Value = a.Address.ToString(),
+                    Ttl = (int?)a.TimeToLive
+                });
+            case QueryType.AAAA:
+                return response.Answers.AaaaRecords().Select(a => new DnsRecord
+                {
+                    Name = a.DomainName.Value,
+                    Type = DnsRecordType.AAAA,
+                    Value = a.Address.ToString(),
+                    Ttl = (int?)a.TimeToLive
+                });
+            case QueryType.CNAME:
+                return response.Answers.CnameRecords().Select(c => new DnsRecord
+                {
+                    Name = c.DomainName.Value,
+                    Type = DnsRecordType.CNAME,
+                    Value = c.CanonicalName.Value,
+                    Ttl = (int?)c.TimeToLive
+                });
+            case QueryType.MX:
+                return response.Answers.MxRecords().Select(mx => new DnsRecord
+                {
+                    Name = mx.DomainName.Value,
+                    Type = DnsRecordType.MX,
+                    Value = mx.Exchange.Value,
+                    Priority = mx.Preference,
+                    Ttl = (int?)mx.TimeToLive
+                });
+            case QueryType.TXT:
+                return response.Answers.TxtRecords().Select(txt => new DnsRecord
+                {
+                    Name = txt.DomainName.Value,
+                    Type = DnsRecordType.TXT,
+                    Value = string.Join(" ", txt.Text),
+                    Ttl = (int?)txt.TimeToLive
+                });
+            case QueryType.NS:
+                return response.Answers.NsRecords().Select(ns => new DnsRecord
+                {
+                    Name = ns.DomainName.Value,
+                    Type = DnsRecordType.NS,
+                    Value = ns.NSDName.Value,
+                    Ttl = (int?)ns.TimeToLive
+                });
+            case QueryType.SOA:
+                return response.Answers.SoaRecords().Select(soa => new DnsRecord
+                {
+                    Name = soa.DomainName.Value,
+                    Type = DnsRecordType.SOA,
+                    Value = $"{soa.MName.Value} {soa.RName.Value} {soa.Serial} {soa.Refresh} {soa.Retry} {soa.Expire} {soa.Minimum}",
+                    Ttl = (int?)soa.TimeToLive
+                });
+            default:
+                return Array.Empty<DnsRecord>();
+        }
+    }
+
+    private static async Task<string> QueryWhoisServerAsync(string server, string query, CancellationToken ct)
+    {
+        using var tcpClient = new TcpClient();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(7));
+
+        await tcpClient.ConnectAsync(server, 43, cts.Token);
+
+        await using var stream = tcpClient.GetStream();
+        var requestBytes = Encoding.ASCII.GetBytes(query + "\r\n");
+        await stream.WriteAsync(requestBytes, cts.Token);
+        await stream.FlushAsync(cts.Token);
+
+        var buffer = new byte[8192];
+        var builder = new StringBuilder();
+        int read;
+        while ((read = await stream.ReadAsync(buffer, cts.Token)) > 0)
+        {
+            builder.Append(Encoding.ASCII.GetString(buffer, 0, read));
+        }
+
+        return builder.ToString();
+    }
+
+    private static string? TryParseWhoisReferral(string response)
+    {
+        using var reader = new StringReader(response);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            if (line.StartsWith("refer:", StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith("whois:", StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith("referralserver:", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = line.Split(':', 2, StringSplitOptions.TrimEntries);
+                if (parts.Length == 2)
+                {
+                    var value = parts[1].Trim();
+                    if (value.StartsWith("whois://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = value.Replace("whois://", "", StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryParseMacAddress(string input, out byte[] macBytes)
+    {
+        macBytes = Array.Empty<byte>();
+
+        var cleaned = input
+            .Replace(":", "", StringComparison.Ordinal)
+            .Replace("-", "", StringComparison.Ordinal)
+            .Replace(".", "", StringComparison.Ordinal)
+            .Trim();
+
+        if (cleaned.Length != 12)
+        {
+            return false;
+        }
+
+        var bytes = new byte[6];
+        for (int i = 0; i < 6; i++)
+        {
+            var hex = cleaned.Substring(i * 2, 2);
+            if (!byte.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out bytes[i]))
+            {
+                return false;
+            }
+        }
+
+        macBytes = bytes;
+        return true;
+    }
+
+    private static byte[] BuildMagicPacket(byte[] macBytes)
+    {
+        var packet = new byte[6 + 16 * macBytes.Length];
+        for (int i = 0; i < 6; i++)
+        {
+            packet[i] = 0xFF;
+        }
+
+        for (int i = 0; i < 16; i++)
+        {
+            Buffer.BlockCopy(macBytes, 0, packet, 6 + i * macBytes.Length, macBytes.Length);
+        }
+
+        return packet;
+    }
+
+    private static SslCertificateInfo ToCertificateInfo(X509Certificate2 certificate)
+    {
+        return new SslCertificateInfo
+        {
+            Subject = certificate.Subject,
+            Issuer = certificate.Issuer,
+            NotBefore = certificate.NotBefore.ToUniversalTime(),
+            NotAfter = certificate.NotAfter.ToUniversalTime(),
+            Thumbprint = certificate.Thumbprint ?? string.Empty,
+            SerialNumber = certificate.SerialNumber ?? string.Empty,
+            SubjectAlternativeNames = ExtractSubjectAltNames(certificate),
+            SignatureAlgorithm = certificate.SignatureAlgorithm?.FriendlyName,
+            PublicKeyAlgorithm = certificate.PublicKey?.Oid?.FriendlyName,
+            KeySize = GetPublicKeySize(certificate),
+            IsSelfSigned = string.Equals(certificate.Subject, certificate.Issuer, StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    private static int? GetPublicKeySize(X509Certificate2 certificate)
+    {
+        using var rsa = certificate.GetRSAPublicKey();
+        if (rsa is not null)
+        {
+            return rsa.KeySize;
+        }
+
+        using var ecdsa = certificate.GetECDsaPublicKey();
+        if (ecdsa is not null)
+        {
+            return ecdsa.KeySize;
+        }
+
+        using var dsa = certificate.GetDSAPublicKey();
+        if (dsa is not null)
+        {
+            return dsa.KeySize;
+        }
+
+        return null;
+    }
+
+    private static List<string> ExtractSubjectAltNames(X509Certificate2 certificate)
+    {
+        var extension = certificate.Extensions["2.5.29.17"];
+        if (extension is null)
+        {
+            return [];
+        }
+
+        var formatted = extension.Format(false);
+        if (string.IsNullOrWhiteSpace(formatted))
+        {
+            return [];
+        }
+
+        return formatted
+            .Split([", ", ","], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(value => value
+                .Replace("DNS Name=", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("IP Address=", "", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
 }

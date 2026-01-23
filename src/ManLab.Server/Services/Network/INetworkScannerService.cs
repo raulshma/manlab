@@ -66,6 +66,42 @@ public interface INetworkScannerService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Device information.</returns>
     Task<DeviceInfo> GetDeviceInfoAsync(string ip, CancellationToken ct = default);
+
+    /// <summary>
+    /// Performs DNS lookups for common record types and reverse DNS.
+    /// </summary>
+    /// <param name="query">Hostname or IP address.</param>
+    /// <param name="includeReverse">Whether to perform reverse lookups for IPs.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>DNS lookup result.</returns>
+    Task<DnsLookupResult> DnsLookupAsync(string query, bool includeReverse = true, CancellationToken ct = default);
+
+    /// <summary>
+    /// Performs a WHOIS lookup for a domain or IP.
+    /// </summary>
+    /// <param name="query">Domain name or IP address.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>WHOIS result.</returns>
+    Task<WhoisResult> WhoisAsync(string query, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sends a Wake-on-LAN magic packet to a MAC address.
+    /// </summary>
+    /// <param name="macAddress">MAC address to wake.</param>
+    /// <param name="broadcastAddress">Optional broadcast address (default: 255.255.255.255).</param>
+    /// <param name="port">UDP port (default: 9).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Result of the WoL send operation.</returns>
+    Task<WolSendResult> SendWakeOnLanAsync(string macAddress, string? broadcastAddress = null, int port = 9, CancellationToken ct = default);
+
+    /// <summary>
+    /// Inspects the SSL/TLS certificate chain of a host.
+    /// </summary>
+    /// <param name="host">Hostname to inspect.</param>
+    /// <param name="port">Port to connect to (default 443).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>SSL inspection result.</returns>
+    Task<SslInspectionResult> InspectCertificateAsync(string host, int port = 443, CancellationToken ct = default);
     
     /// <summary>
     /// Parses a CIDR notation string and returns the IP range.

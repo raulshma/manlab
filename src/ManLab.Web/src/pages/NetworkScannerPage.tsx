@@ -15,6 +15,8 @@ import {
   Radar,
   History,
   Database,
+  Globe,
+  ShieldCheck,
   RefreshCw,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -27,6 +29,8 @@ import { TracerouteTool } from "@/components/network/TracerouteTool";
 import { PortScanTool } from "@/components/network/PortScanTool";
 import { DeviceDiscoveryTool } from "@/components/network/DeviceDiscoveryTool";
 import { WifiScannerTool } from "@/components/network/WifiScannerTool";
+import { DnsTool } from "@/components/network/DnsTool";
+import { SslInspectorTool } from "@/components/network/SslInspectorTool";
 import { GeolocationDbManager } from "@/components/network/GeolocationDbManager";
 import { NetworkToolHistoryPanel } from "@/components/network/NetworkToolHistoryPanel";
 import { NetworkErrorBoundary } from "@/components/network/NetworkErrorBoundary";
@@ -197,6 +201,14 @@ export function NetworkScannerPage() {
                 <Server className="h-4 w-4" />
                 <span className="inline">Ports</span>
               </TabsTrigger>
+              <TabsTrigger value="dns" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Globe className="h-4 w-4" />
+                <span className="inline">DNS</span>
+              </TabsTrigger>
+              <TabsTrigger value="ssl" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <ShieldCheck className="h-4 w-4" />
+                <span className="inline">SSL</span>
+              </TabsTrigger>
               <TabsTrigger value="discovery" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
                 <Radar className="h-4 w-4" />
                 <span className="inline">Discovery</span>
@@ -238,6 +250,18 @@ export function NetworkScannerPage() {
             <TabsContent value="ports" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="Port Scanner Error">
                 <PortScanTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="dns" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="DNS Tool Error">
+                <DnsTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="ssl" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="SSL Inspector Error">
+                <SslInspectorTool />
               </NetworkErrorBoundary>
             </TabsContent>
 

@@ -10,7 +10,7 @@ import { createContext, type ReactNode } from "react";
 // ============================================================================
 
 /** Available network tool tabs */
-export type NetworkToolTab = "ping" | "subnet" | "traceroute" | "ports" | "discovery" | "wifi" | "geodb";
+export type NetworkToolTab = "ping" | "subnet" | "traceroute" | "ports" | "dns" | "ssl" | "discovery" | "wifi" | "geodb";
 
 /** Pending action to execute when switching tabs */
 export interface PendingToolAction {

@@ -161,6 +161,120 @@ export interface DeviceInfo {
 }
 
 /**
+ * DNS record type.
+ */
+export type DnsRecordType =
+  | "A"
+  | "AAAA"
+  | "CNAME"
+  | "MX"
+  | "TXT"
+  | "NS"
+  | "SOA"
+  | "PTR";
+
+/**
+ * DNS record.
+ */
+export interface DnsRecord {
+  name: string;
+  type: DnsRecordType;
+  value: string;
+  ttl?: number | null;
+  priority?: number | null;
+}
+
+/**
+ * DNS lookup request.
+ */
+export interface DnsLookupRequest {
+  query: string;
+  includeReverse?: boolean;
+}
+
+/**
+ * DNS lookup result.
+ */
+export interface DnsLookupResult {
+  query: string;
+  records: DnsRecord[];
+  reverseRecords: DnsRecord[];
+}
+
+/**
+ * WHOIS lookup request.
+ */
+export interface WhoisRequest {
+  query: string;
+}
+
+/**
+ * WHOIS lookup result.
+ */
+export interface WhoisResult {
+  query: string;
+  server: string | null;
+  response: string;
+}
+
+/**
+ * Wake-on-LAN request.
+ */
+export interface WolRequest {
+  macAddress: string;
+  broadcastAddress?: string | null;
+  port?: number | null;
+}
+
+/**
+ * Wake-on-LAN result.
+ */
+export interface WolSendResult {
+  macAddress: string;
+  broadcastAddress: string;
+  port: number;
+  success: boolean;
+  error?: string | null;
+}
+
+/**
+ * SSL inspection request.
+ */
+export interface SslInspectRequest {
+  host: string;
+  port?: number;
+}
+
+/**
+ * SSL certificate info.
+ */
+export interface SslCertificateInfo {
+  subject: string;
+  issuer: string;
+  notBefore: string;
+  notAfter: string;
+  thumbprint: string;
+  serialNumber: string;
+  subjectAlternativeNames: string[];
+  signatureAlgorithm?: string | null;
+  publicKeyAlgorithm?: string | null;
+  keySize?: number | null;
+  isSelfSigned: boolean;
+}
+
+/**
+ * SSL inspection result.
+ */
+export interface SslInspectionResult {
+  host: string;
+  port: number;
+  retrievedAt: string;
+  chain: SslCertificateInfo[];
+  daysRemaining: number;
+  isValidNow: boolean;
+}
+
+/**
  * mDNS/UPnP discovery request.
  */
 export interface DiscoveryRequest {
@@ -437,6 +551,74 @@ export async function getDeviceInfo(ip: string): Promise<DeviceInfo> {
 }
 
 /**
+ * Perform DNS lookup.
+ */
+export async function dnsLookup(
+  request: DnsLookupRequest,
+  options?: RequestOptions
+): Promise<DnsLookupResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<DnsLookupResult>(
+      "/network/dns",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Perform WHOIS lookup.
+ */
+export async function whoisLookup(
+  request: WhoisRequest,
+  options?: RequestOptions
+): Promise<WhoisResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<WhoisResult>(
+      "/network/whois",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Send Wake-on-LAN magic packet.
+ */
+export async function sendWakeOnLan(
+  request: WolRequest,
+  options?: RequestOptions
+): Promise<WolSendResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<WolSendResult>(
+      "/network/wol",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Inspect SSL/TLS certificate chain.
+ */
+export async function inspectCertificate(
+  request: SslInspectRequest,
+  options?: RequestOptions
+): Promise<SslInspectionResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<SslInspectionResult>(
+      "/network/ssl/inspect",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
  * Perform combined mDNS and UPnP discovery.
  */
 export async function discoverDevices(
@@ -599,6 +781,8 @@ export interface GeoLocationResult {
   latitude: number | null;
   longitude: number | null;
   timezone: string | null;
+  asn?: number | null;
+  isp?: string | null;
   isFound: boolean;
 }
 
@@ -866,7 +1050,11 @@ export type NetworkToolType =
   | "port-scan"
   | "subnet-scan"
   | "discovery"
-  | "wifi-scan";
+  | "wifi-scan"
+  | "dns-lookup"
+  | "whois"
+  | "wol"
+  | "ssl-inspect";
 
 /**
  * Network tool history entry from the server.

@@ -459,6 +459,44 @@ public class NetworkHub : Hub
         return result;
     }
 
+    /// <summary>
+    /// Sends a Wake-on-LAN magic packet.
+    /// </summary>
+    public async Task<WolSendResult> SendWolMagicPacket(string macAddress, string? broadcastAddress = null, int port = 9)
+    {
+        if (string.IsNullOrWhiteSpace(macAddress))
+        {
+            throw new HubException("MAC address is required");
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = await _scanner.SendWakeOnLanAsync(macAddress, broadcastAddress, port, Context.ConnectionAborted);
+        sw.Stop();
+
+        _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
+            kind: "activity",
+            eventName: "network.wol",
+            context: Context,
+            hub: nameof(NetworkHub),
+            hubMethod: nameof(SendWolMagicPacket),
+            success: result.Success,
+            nodeId: null,
+            category: "network",
+            message: $"Wake-on-LAN sent to {result.MacAddress}"));
+
+        _ = _history.RecordAsync(
+            toolType: "wol",
+            target: result.MacAddress,
+            input: new { macAddress, broadcastAddress, port },
+            result: result,
+            success: result.Success,
+            durationMs: (int)sw.ElapsedMilliseconds,
+            error: result.Error,
+            connectionId: Context.ConnectionId);
+
+        return result;
+    }
+
     #region Private Methods
 
     private async Task RunSubnetScanAsync(string scanId, string cidr, int totalHosts, int concurrencyLimit, int timeout, string connectionId)

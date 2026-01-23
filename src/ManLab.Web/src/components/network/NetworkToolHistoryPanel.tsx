@@ -21,6 +21,10 @@ import {
   Clock,
   Loader2,
   AlertCircle,
+  Globe,
+  BookText,
+  Power,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,6 +77,14 @@ function getToolIcon(toolType: NetworkToolType) {
       return <Search className="h-4 w-4" />;
     case "wifi-scan":
       return <Wifi className="h-4 w-4" />;
+    case "dns-lookup":
+      return <Globe className="h-4 w-4" />;
+    case "whois":
+      return <BookText className="h-4 w-4" />;
+    case "wol":
+      return <Power className="h-4 w-4" />;
+    case "ssl-inspect":
+      return <ShieldCheck className="h-4 w-4" />;
     default:
       return <History className="h-4 w-4" />;
   }
@@ -95,6 +107,14 @@ function getToolLabel(toolType: NetworkToolType): string {
       return "Device Discovery";
     case "wifi-scan":
       return "WiFi Scan";
+    case "dns-lookup":
+      return "DNS Lookup";
+    case "whois":
+      return "WHOIS";
+    case "wol":
+      return "Wake-on-LAN";
+    case "ssl-inspect":
+      return "SSL Inspect";
     default:
       return toolType;
   }
@@ -260,6 +280,10 @@ export function NetworkToolHistoryPanel() {
     "subnet-scan",
     "discovery",
     "wifi-scan",
+    "dns-lookup",
+    "whois",
+    "wol",
+    "ssl-inspect",
   ];
 
   return (
@@ -283,7 +307,7 @@ export function NetworkToolHistoryPanel() {
                   setFilter(value === "all" ? null : (value as NetworkToolType))
                 }
               >
-                <SelectTrigger className="w-[160px]">
+                <SelectTrigger className="w-40">
                   <SelectValue placeholder="Filter by tool" />
                 </SelectTrigger>
                 <SelectContent>
@@ -349,12 +373,12 @@ export function NetworkToolHistoryPanel() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[180px]">Tool</TableHead>
+                    <TableHead className="w-45">Tool</TableHead>
                     <TableHead>Target</TableHead>
-                    <TableHead className="w-[100px]">Status</TableHead>
-                    <TableHead className="w-[100px]">Duration</TableHead>
-                    <TableHead className="w-[140px]">Time</TableHead>
-                    <TableHead className="w-[80px]" />
+                    <TableHead className="w-25">Status</TableHead>
+                    <TableHead className="w-25">Duration</TableHead>
+                    <TableHead className="w-35">Time</TableHead>
+                    <TableHead className="w-20" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
