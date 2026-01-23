@@ -13,17 +13,18 @@
 
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Radio,
-  Loader2,
-  Download,
-  Trash2,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  MapPin,
+  Play,
+  Square,
   Timer,
+  Wifi,
+  History,
+  Trash2,
+  Download,
+  AlertCircle,
   Activity,
-  AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  Minus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,7 +34,6 @@ import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -45,17 +45,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { notify } from "@/lib/network-notify";
 import { pingHost, type PingResult } from "@/api/networkApi";
 import { StatusBadge } from "@/components/network/StatusIndicators";
 import { announce } from "@/lib/accessibility";
 import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
 
 const PingRttChart = lazy(() => import("@/components/network/PingRttChart"));
 
@@ -68,8 +65,18 @@ interface PingHistoryEntry extends PingResult {
   timestamp: Date;
 }
 
+interface AggregatedPingEntry {
+  timeWindow: Date;
+  avgRtt: number;
+  minRtt: number;
+  maxRtt: number;
+  totalPings: number;
+  successfulPings: number;
+}
+
 const PING_HOST_KEY = "manlab:network:ping-host";
 const PING_TIMEOUT_KEY = "manlab:network:ping-timeout";
+const MAX_AGGREGATED_ENTRIES = 300; // Store up to 5 minutes of aggregated data (300 seconds)
 
 // ============================================================================
 // Utility Functions
@@ -164,6 +171,49 @@ function getStoredNumber(key: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/**
+ * Aggregate ping data into time windows for performance optimization
+ * In infinite mode, we aggregate pings per second rather than storing each individual ping
+ */
+function aggregatePing(
+  aggregatedData: AggregatedPingEntry[],
+  currentWindowPings: number[],
+  windowStart: Date
+): { aggregatedData: AggregatedPingEntry[] } {
+  // The windowStart is already truncated to seconds from the caller
+
+  // If window changed or no current window, commit previous data
+  let updatedAggregatedData = [...aggregatedData];
+
+  if (currentWindowPings.length > 0) {
+    const avgRtt = Math.round(
+      currentWindowPings.reduce((sum, rtt) => sum + rtt, 0) / currentWindowPings.length
+    );
+    const minRtt = Math.min(...currentWindowPings);
+    const maxRtt = Math.max(...currentWindowPings);
+
+    const entry: AggregatedPingEntry = {
+      timeWindow: windowStart,
+      avgRtt,
+      minRtt,
+      maxRtt,
+      totalPings: currentWindowPings.length,
+      successfulPings: currentWindowPings.length,
+    };
+
+    updatedAggregatedData = [...updatedAggregatedData, entry];
+
+    // Limit array size for performance (FIFO)
+    if (updatedAggregatedData.length > MAX_AGGREGATED_ENTRIES) {
+      updatedAggregatedData = updatedAggregatedData.slice(-MAX_AGGREGATED_ENTRIES);
+    }
+  }
+
+  return {
+    aggregatedData: updatedAggregatedData,
+  };
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -180,12 +230,22 @@ export function PingTool() {
   const [isContinuousRunning, setIsContinuousRunning] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
+  const [tick, setTick] = useState(0); // Force re-render for ref updates
 
   // Result state
   const [lastResult, setLastResult] = useState<PingResult | null>(null);
   const [history, setHistory] = useState<PingHistoryEntry[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const continuousRef = useRef(false);
+  
+  // Aggregated data for infinite mode (performance optimized)
+  const aggregatedDataRef = useRef<AggregatedPingEntry[]>([]);
+  const currentAggregationWindowRef = useRef<Date | null>(null);
+  const currentWindowPingsRef = useRef<number[]>([]);
+
+  // Track previous RTT for diff calculation
+  const latestRttRef = useRef<number | null>(null);
+  const [rttDiff, setRttDiff] = useState<number | null>(null);
 
   // Input ref for focus
   const inputRef = useRef<HTMLInputElement>(null);
@@ -229,6 +289,9 @@ export function PingTool() {
     } else {
       setValidationError(null);
     }
+    // Reset comparison when host changes
+    latestRttRef.current = null;
+    setRttDiff(null);
   }, []);
 
   // Handle ping submission
@@ -239,6 +302,7 @@ export function PingTool() {
       return false;
     }
 
+    setLastResult(null);
     setIsLoading(true);
     setValidationError(null);
     setRateLimitMessage(null);
@@ -254,13 +318,56 @@ export function PingTool() {
       );
       setLastResult(result);
 
-      // Add to history (keep last 10)
-      const newEntry: PingHistoryEntry = {
-        ...result,
-        id: crypto.randomUUID(),
-        timestamp: new Date(),
-      };
-      setHistory((prev) => [newEntry, ...prev].slice(0, 10));
+      const currentTime = new Date();
+      
+      // In continuous mode, use aggregated data for performance
+      if (isContinuous) {
+        const windowStart = new Date(currentTime);
+        windowStart.setMilliseconds(0);
+
+        // Check if we've moved to a new aggregation window
+        if (
+          currentAggregationWindowRef.current &&
+          currentAggregationWindowRef.current.getTime() !== windowStart.getTime()
+        ) {
+          // Commit the previous window's data
+          const { aggregatedData: newData } = aggregatePing(
+            aggregatedDataRef.current,
+            currentWindowPingsRef.current,
+            currentAggregationWindowRef.current
+          );
+          aggregatedDataRef.current = newData;
+          currentWindowPingsRef.current = [];
+          currentAggregationWindowRef.current = windowStart;
+          setTick(t => t + 1);
+        } else if (!currentAggregationWindowRef.current) {
+          currentAggregationWindowRef.current = windowStart;
+        }
+
+        // Add current ping to window
+        if (result.isSuccess) {
+          currentWindowPingsRef.current.push(result.roundtripTime);
+        }
+      } else {
+        // Single ping mode: add to history (keep last 10)
+        const newEntry: PingHistoryEntry = {
+          ...result,
+          id: crypto.randomUUID(),
+          timestamp: currentTime,
+        };
+        setHistory((prev) => [newEntry, ...prev].slice(0, 10));
+      }
+
+      if (result.isSuccess) {
+        if (latestRttRef.current !== null) {
+          setRttDiff(result.roundtripTime - latestRttRef.current);
+        } else {
+          setRttDiff(null);
+        }
+        latestRttRef.current = result.roundtripTime;
+      } else {
+        setRttDiff(null);
+      }
 
       if (notifyUser) {
         if (result.isSuccess) {
@@ -292,40 +399,63 @@ export function PingTool() {
     } finally {
       setIsLoading(false);
     }
-  }, [host, timeout]);
+  }, [host, timeout, isContinuous]);
 
   const stopContinuous = useCallback(() => {
     continuousRef.current = false;
     abortRef.current?.abort();
+    
+    // Commit any remaining aggregated data
+    if (currentWindowPingsRef.current.length > 0 && currentAggregationWindowRef.current) {
+      const { aggregatedData: newData } = aggregatePing(
+        aggregatedDataRef.current,
+        currentWindowPingsRef.current,
+        currentAggregationWindowRef.current
+      );
+      aggregatedDataRef.current = newData;
+      currentWindowPingsRef.current = [];
+      currentAggregationWindowRef.current = null;
+    }
+    
     setIsContinuousRunning(false);
   }, []);
 
   const startContinuous = useCallback(async () => {
     if (isContinuousRunning) return;
 
+    // Reset aggregated data on fresh start
+    aggregatedDataRef.current = [];
+    currentAggregationWindowRef.current = null;
+    currentWindowPingsRef.current = [];
+    setTick(0);
+
     continuousRef.current = true;
     setIsContinuousRunning(true);
 
     while (continuousRef.current) {
       await performPing(false);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(() => resolve(), 1000);
+      });
     }
 
     setIsContinuousRunning(false);
   }, [isContinuousRunning, performPing]);
 
   const handlePing = useCallback(async () => {
+    // If running continuous or just loading (single ping), treat as stop/cancel
+    if (isContinuousRunning || isLoading) {
+      stopContinuous();
+      return;
+    }
+
     if (isContinuous) {
-      if (isContinuousRunning) {
-        stopContinuous();
-        return;
-      }
       await startContinuous();
       return;
     }
 
     await performPing(true);
-  }, [isContinuous, isContinuousRunning, performPing, startContinuous, stopContinuous]);
+  }, [isContinuous, isContinuousRunning, isLoading, performPing, startContinuous, stopContinuous]);
 
   // Handle Enter key press
   const handleKeyDown = useCallback(
@@ -341,6 +471,8 @@ export function PingTool() {
   const handleClearHistory = useCallback(() => {
     setHistory([]);
     setLastResult(null);
+    latestRttRef.current = null;
+    setRttDiff(null);
     notify.info("Ping history cleared");
     announce("Ping history cleared", "polite");
   }, []);
@@ -355,26 +487,61 @@ export function PingTool() {
     notify.success("Exported to CSV");
   }, [history]);
 
-  // Prepare chart data
+  // Prepare chart data - use aggregated data in continuous mode, individual pings otherwise
   const successfulPings = useMemo(
     () => history.filter((entry) => entry.isSuccess),
     [history]
   );
 
-  const chartData = useMemo(
-    () =>
-      [...successfulPings]
-        .reverse()
-        .map((entry) => ({
-          time: formatTime(entry.timestamp),
-          rtt: entry.roundtripTime,
-        })),
-    [successfulPings]
-  );
+  const chartData = useMemo(() => {
+    if (isContinuous && aggregatedDataRef.current.length > 0) {
+      // Use aggregated data from continuous mode (performance optimized)
+      return aggregatedDataRef.current.map((entry) => ({
+        time: formatTime(entry.timeWindow),
+        rtt: entry.avgRtt,
+        minRtt: entry.minRtt,
+        maxRtt: entry.maxRtt,
+      }));
+    }
+    
+    // Use individual ping data for single ping mode
+    return [...successfulPings]
+      .reverse()
+      .map((entry) => ({
+        time: formatTime(entry.timestamp),
+        rtt: entry.roundtripTime,
+        minRtt: entry.roundtripTime,
+        maxRtt: entry.roundtripTime,
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isContinuous, successfulPings, tick]);
 
   const stats = useMemo(() => {
-    const avg =
-      successfulPings.length > 0
+    if (isContinuous && aggregatedDataRef.current.length > 0) {
+      // Calculate stats from aggregated data
+      const aggregated = aggregatedDataRef.current;
+      const avg = Math.round(
+        aggregated.reduce((sum, h) => sum + h.avgRtt * h.totalPings, 0) /
+          aggregated.reduce((sum, h) => sum + h.totalPings, 0)
+      );
+      const min = Math.min(...aggregated.map((h) => h.minRtt));
+      const max = Math.max(...aggregated.map((h) => h.maxRtt));
+      const totalPings = aggregated.reduce((sum, h) => sum + h.totalPings, 0);
+      const successfulPingsTotal = aggregated.reduce((sum, h) => sum + h.successfulPings, 0);
+      const successRateValue = totalPings > 0
+        ? Math.round((successfulPingsTotal / totalPings) * 100)
+        : 100;
+
+      return {
+        avgRtt: avg,
+        minRtt: min,
+        maxRtt: max,
+        successRate: successRateValue,
+      };
+    }
+    
+    // Calculate stats from history for single ping mode
+    const avg = successfulPings.length > 0
         ? Math.round(
             successfulPings.reduce((sum, h) => sum + h.roundtripTime, 0) /
               successfulPings.length
@@ -401,373 +568,343 @@ export function PingTool() {
       minRtt: min,
       maxRtt: max,
       successRate: successRateValue,
+      isSuccess: successfulPings.length > 0
     };
-  }, [history, successfulPings]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isContinuous, history, successfulPings, tick]);
 
-  const isFormDisabled = isLoading || isContinuousRunning;
+  const isFormDisabled = isContinuousRunning; // Only disable inputs in continuous mode
+
+  // Animation variants
+  const containerVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeInOut" as const } },
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Input Section */}
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Radio className="h-5 w-5" />
-            Ping Host
-          </CardTitle>
-          <CardDescription>
-            Check if a host is reachable and measure round-trip latency
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-6 md:grid-cols-[1fr_200px_160px_auto]">
-            {/* Host Input */}
-            <div className="space-y-2">
-              <Label htmlFor="ping-host">Hostname or IP Address</Label>
-              <Input
-                id="ping-host"
-                ref={inputRef}
-                placeholder="e.g., google.com or 8.8.8.8"
-                value={host}
-                onChange={(e) => handleHostChange(e.target.value)}
-                onKeyDown={handleKeyDown}
-                className={validationError ? "border-destructive" : ""}
-                disabled={isFormDisabled}
-                aria-invalid={!!validationError}
-                aria-describedby={validationError ? "ping-host-error" : undefined}
-              />
-              {validationError && (
-                <p id="ping-host-error" className="text-sm text-destructive" role="alert">
-                  {validationError}
-                </p>
-              )}
-            </div>
-
-            {/* Timeout Slider */}
-            <div className="space-y-2">
-              <Label>Timeout: {timeout}ms</Label>
-              <Slider
-                value={[timeout]}
-                onValueChange={(value) => {
-                  const newValue = Array.isArray(value) ? value[0] : value;
-                  setTimeout(newValue);
-                }}
-                min={100}
-                max={5000}
-                step={100}
-                disabled={isFormDisabled}
-                className="mt-3"
-              />
-              <p className="text-xs text-muted-foreground">100ms - 5000ms</p>
-            </div>
-
-            {/* Continuous Mode */}
-            <div className="space-y-2">
-              <Label htmlFor="ping-continuous">Infinite</Label>
-              <div className="flex items-center gap-2 mt-3">
-                <Switch
-                  id="ping-continuous"
-                  checked={isContinuous}
-                  onCheckedChange={(checked) => {
-                    setIsContinuous(checked);
-                    if (!checked && isContinuousRunning) {
-                      stopContinuous();
-                    }
-                  }}
-                  disabled={isLoading}
-                />
-                <span className="text-xs text-muted-foreground">
-                  {isContinuousRunning ? "Running" : "Off"}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">Continuous ping until stopped</p>
-            </div>
-
-            {/* Submit Button */}
-            <div className="flex items-end">
-              <Button
-                onClick={handlePing}
-                disabled={!host || (!isContinuousRunning && isLoading)}
-                className="w-full md:w-auto min-h-11"
-              >
-                {isContinuousRunning ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Stop
-                  </>
-                ) : isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {isContinuous ? "Starting..." : "Pinging..."}
-                  </>
-                ) : (
-                  <>
-                    <Radio className="mr-2 h-4 w-4" />
-                    {isContinuous ? "Start" : "Ping"}
-                  </>
-                )}
-              </Button>
-            </div>
+    <motion.div
+      initial="hidden"
+      animate="visible"
+      variants={containerVariants}
+      className="space-y-6 max-w-4xl mx-auto"
+    >
+      {/* Search Header */}
+      <div className="relative flex items-center gap-2">
+        <div className="relative flex-1">
+          <Input
+            id="ping-host"
+            ref={inputRef}
+            placeholder="Enter hostname or IP (e.g., google.com)"
+            value={host}
+            onChange={(e) => handleHostChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className={cn(
+              "h-14 pl-12 text-lg font-medium shadow-sm transition-all focus-visible:ring-2 bg-card/50 backdrop-blur-sm border-muted-foreground/20",
+              validationError ? "border-destructive focus-visible:ring-destructive/30" : ""
+            )}
+            disabled={isFormDisabled}
+          />
+          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">
+            {isLoading || isContinuousRunning ? (
+              <Activity className="h-5 w-5 animate-pulse text-primary" />
+            ) : (
+              <Wifi className="h-5 w-5" />
+            )}
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Loading Skeleton */}
-      {isLoading && !lastResult && history.length === 0 && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="grid gap-4 md:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="flex items-center gap-3">
-                  <Skeleton className="h-10 w-10 rounded-full" />
-                  <div className="space-y-2">
-                    <Skeleton className="h-3 w-24" />
-                    <Skeleton className="h-6 w-20" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Last Result Display */}
-      {rateLimitMessage && (
-        <Card className="border-orange-500/40 bg-orange-500/5">
-          <CardContent className="pt-4 flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400">
-            <AlertTriangle className="h-4 w-4" />
-            {rateLimitMessage}
-          </CardContent>
-        </Card>
-      )}
-
-      {lastResult && (
-        <Card
-          className={`border-l-4 ${lastResult.isSuccess ? "border-l-green-500" : "border-l-red-500"}`}
-        >
-          <CardContent className="pt-6">
-            <div className="grid gap-4 md:grid-cols-4">
-              {/* Status */}
-              <div className="flex items-center gap-3">
-                {lastResult.isSuccess ? (
-                  <CheckCircle2 className="h-8 w-8 text-green-500" />
-                ) : (
-                  <XCircle className="h-8 w-8 text-red-500" />
-                )}
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <StatusBadge
-                    status={lastResult.isSuccess ? "success" : lastResult.status}
-                    label={lastResult.isSuccess ? "Success" : lastResult.status}
-                  />
-                </div>
-              </div>
-
-              {/* RTT */}
-              <div className="flex items-center gap-3">
-                <Timer className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Round-Trip Time
-                  </p>
-                  <p
-                    className={`text-2xl font-bold ${lastResult.isSuccess ? getRttColor(lastResult.roundtripTime) : "text-muted-foreground"}`}
-                  >
-                    {lastResult.isSuccess
-                      ? `${lastResult.roundtripTime}ms`
-                      : "—"}
-                  </p>
-                </div>
-              </div>
-
-              {/* TTL */}
-              <div className="flex items-center gap-3">
-                <Clock className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="text-sm text-muted-foreground">TTL</p>
-                  <p className="text-2xl font-bold">
-                    {lastResult.ttl ?? "—"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Resolved IP */}
-              <div className="flex items-center gap-3">
-                <MapPin className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Resolved IP</p>
-                  <p className="text-lg font-mono">
-                    {lastResult.resolvedAddress || lastResult.address}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Stats and Chart Row */}
-      {history.length > 0 && (
-        <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-          {/* Statistics Card */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Activity className="h-4 w-4" />
-                Statistics
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">Average RTT</p>
-                  <p className="text-xl font-bold">{stats.avgRtt}ms</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Success Rate</p>
-                  <p
-                    className={`text-xl font-bold ${stats.successRate === 100 ? "text-green-500" : stats.successRate >= 80 ? "text-yellow-500" : "text-red-500"}`}
-                  >
-                    {stats.successRate}%
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Min RTT</p>
-                  <p className="text-lg font-medium text-green-500">
-                    {stats.minRtt}ms
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Max RTT</p>
-                  <p className="text-lg font-medium text-orange-500">
-                    {stats.maxRtt}ms
-                  </p>
-                </div>
-              </div>
-              <div className="border-t pt-4">
-                <p className="text-xs text-muted-foreground mb-1">
-                  Total Pings
-                </p>
-                <p className="text-lg font-medium">
-                  {history.length}{" "}
-                  <span className="text-sm text-muted-foreground">
-                    ({successfulPings.length} successful)
-                  </span>
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* RTT Chart */}
-          {chartData.length > 1 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">RTT over Time</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Suspense fallback={<Skeleton className="h-52 w-full" />}>
-                  <PingRttChart data={chartData} avgRtt={stats.avgRtt} />
-                </Suspense>
-              </CardContent>
-            </Card>
-          )}
         </div>
+
+        <Button
+          size="lg"
+          onClick={handlePing}
+          disabled={!host} // Allow cancelling even if loading
+          className={cn(
+            "h-14 px-8 text-base font-semibold shadow-md transition-all",
+            (isContinuousRunning || isLoading) ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground" : ""
+          )}
+        >
+          {isContinuousRunning ? (
+            <span className="flex items-center gap-2"><Square className="h-4 w-4 fill-current" /> Stop</span>
+          ) : isLoading ? (
+            <span className="flex items-center gap-2"><Square className="h-4 w-4 fill-current" /> Cancel</span>
+          ) : (
+            <span className="flex items-center gap-2"><Play className="h-4 w-4 fill-current" /> Ping</span>
+          )}
+        </Button>
+      </div>
+
+      {validationError && (
+        <motion.p
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          className="text-sm font-medium text-destructive px-1"
+        >
+          {validationError}
+        </motion.p>
       )}
 
-      {/* History Table */}
-      {history.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm">Ping History</CardTitle>
-              <div className="flex gap-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleExport}
-                      aria-label="Export ping history to CSV"
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Export to CSV</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleClearHistory}
-                      aria-label="Clear ping history"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Clear History</TooltipContent>
-                </Tooltip>
-              </div>
+      {/* Control Bar */}
+      <div className="flex flex-wrap items-center gap-6 px-4 py-3 rounded-lg border bg-card/30 backdrop-blur-sm text-sm">
+        <div className="flex items-center gap-3">
+          <span className="text-muted-foreground font-medium flex items-center gap-2">
+            <Timer className="h-4 w-4" /> Timeout
+          </span>
+          <div className="flex items-center gap-3 w-[180px]">
+            <Slider
+              value={[timeout]}
+              onValueChange={(v) => {
+                const val = Array.isArray(v) ? v[0] : v; 
+                setTimeout(Number(val));
+              }}
+              min={100}
+              max={5000}
+              step={100}
+              disabled={isFormDisabled}
+              className="flex-1"
+            />
+            <span className="font-mono text-xs w-[45px] text-right">{timeout}ms</span>
+          </div>
+        </div>
+
+        <div className="h-4 w-px bg-border hidden sm:block" />
+
+        <div className="flex items-center gap-3">
+          <Label htmlFor="ping-continuous" className="text-muted-foreground font-medium cursor-pointer">
+            Infinite Mode
+          </Label>
+          <Switch
+            id="ping-continuous"
+            checked={isContinuous}
+            onCheckedChange={(checked) => {
+               setIsContinuous(checked);
+               if (!checked && isContinuousRunning) stopContinuous();
+            }}
+            disabled={isLoading}
+          />
+        </div>
+        
+        <div className="flex-1" />
+        
+        {history.length > 0 && (
+            <div className="flex items-center gap-1">
+                 <Button variant="ghost" size="sm" onClick={handleExport} className="text-muted-foreground hover:text-foreground">
+                    <Download className="h-4 w-4 mr-2" /> CSV
+                 </Button>
+                  <Button variant="ghost" size="sm" onClick={handleClearHistory} className="text-muted-foreground hover:text-destructive">
+                    <Trash2 className="h-4 w-4 mr-2" /> Clear
+                 </Button>
             </div>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead scope="col">Time</TableHead>
-                  <TableHead scope="col">Host</TableHead>
-                  <TableHead scope="col">Resolved IP</TableHead>
-                  <TableHead scope="col">Status</TableHead>
-                  <TableHead scope="col" className="text-right">RTT</TableHead>
-                  <TableHead scope="col" className="text-right">TTL</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {history.map((entry) => (
-                  <TableRow key={entry.id}>
-                    <TableCell className="font-mono text-sm">
-                      {formatTime(entry.timestamp)}
-                    </TableCell>
-                    <TableCell>{entry.address}</TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {entry.resolvedAddress || "—"}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge
-                        status={entry.isSuccess ? "success" : entry.status}
-                        label={entry.isSuccess ? "Success" : entry.status}
-                        className="text-xs"
-                      />
-                    </TableCell>
-                    <TableCell
-                      className={`text-right font-mono ${entry.isSuccess ? getRttColor(entry.roundtripTime) : "text-muted-foreground"}`}
-                    >
-                      {entry.isSuccess ? `${entry.roundtripTime}ms` : "—"}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {entry.ttl ?? "—"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+        )}
+      </div>
+
+      {rateLimitMessage && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center gap-3 text-orange-600 dark:text-orange-400"
+        >
+          <AlertCircle className="h-5 w-5" />
+          <p className="text-sm font-medium">{rateLimitMessage}</p>
+        </motion.div>
       )}
 
-      {/* Empty State */}
-      {history.length === 0 && !lastResult && (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <Radio className="h-12 w-12 mb-4 text-muted-foreground opacity-50" />
-            <h3 className="text-lg font-medium mb-2">No ping results yet</h3>
-            <p className="text-sm text-muted-foreground max-w-sm">
-              Enter a hostname or IP address above and click "Ping" to check
-              connectivity and measure latency.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-    </div>
+      {/* Main Results Grid */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Left Column: Live Status & Chart */}
+        <div className="space-y-6">
+          <AnimatePresence mode="wait">
+            {lastResult ? (
+              <motion.div
+                key="result"
+                layout
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+              >
+                  <Card className={cn(
+                      "relative overflow-hidden border-2 transition-colors",
+                      lastResult.isSuccess ? "border-green-500/20 hover:border-green-500/40" : "border-red-500/20 hover:border-red-500/40"
+                  )}>
+                    <div className="absolute inset-0 bg-linear-to-br from-background via-transparent to-muted/10" />
+                    <CardContent className="relative p-6">
+                        <div className="flex items-start justify-between mb-8">
+                            <div>
+                                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1">Status</h3>
+                                <StatusBadge
+                                    status={lastResult.isSuccess ? "success" : "error"}
+                                    label={lastResult.isSuccess ? "Active" : lastResult.status}
+                                    className="text-base py-1 px-3"
+                                />
+                            </div>
+                            <div className="text-right">
+                                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1">Latency</h3>
+                                  <div className="flex items-baseline justify-end gap-1">
+                                    <span className={cn("text-4xl font-bold tracking-tight", lastResult.isSuccess ? getRttColor(lastResult.roundtripTime) : "text-muted-foreground")}>
+                                      {lastResult.isSuccess ? lastResult.roundtripTime : "—"}
+                                    </span>
+                                    <span className="text-sm text-muted-foreground">ms</span>
+                                  </div>
+                                  {rttDiff !== null && (
+                                    <div className="flex items-center justify-end gap-1 text-xs font-medium mt-1">
+                                      {rttDiff > 0 ? (
+                                        <ArrowUp className="h-3 w-3 text-red-500" />
+                                      ) : rttDiff < 0 ? (
+                                        <ArrowDown className="h-3 w-3 text-green-500" />
+                                      ) : (
+                                        <Minus className="h-3 w-3 text-muted-foreground" />
+                                      )}
+                                      <span className={cn(
+                                        rttDiff > 0 ? "text-red-500" : rttDiff < 0 ? "text-green-500" : "text-muted-foreground"
+                                      )}>
+                                        {Math.abs(rttDiff)}ms
+                                      </span>
+                                    </div>
+                                  )}
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                             <div className="p-3 bg-muted/30 rounded-lg">
+                                 <p className="text-xs text-muted-foreground mb-1">IP Address</p>
+                                 <p className="font-mono text-sm">{lastResult.resolvedAddress || lastResult.address}</p>
+                             </div>
+                             <div className="p-3 bg-muted/30 rounded-lg">
+                                 <p className="text-xs text-muted-foreground mb-1">TTL</p>
+                                 <p className="font-mono text-sm">{lastResult.ttl?.toString() ?? "—"}</p>
+                             </div>
+                        </div>
+                    </CardContent>
+                  </Card>
+              </motion.div>
+            ) : isLoading ? (
+               <motion.div key="skeleton" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                     <Card>
+                         <CardContent className="p-6">
+                             <div className="flex justify-between mb-8">
+                                 <div className="space-y-2">
+                                     <Skeleton className="h-4 w-12" />
+                                     <Skeleton className="h-8 w-24" />
+                                 </div>
+                                 <div className="space-y-2 items-end flex flex-col">
+                                     <Skeleton className="h-4 w-16" />
+                                     <Skeleton className="h-10 w-32" />
+                                 </div>
+                             </div>
+                             <div className="grid grid-cols-2 gap-4">
+                                 <Skeleton className="h-12 w-full" />
+                                 <Skeleton className="h-12 w-full" />
+                             </div>
+                         </CardContent>
+                     </Card>
+               </motion.div>
+            ) : (
+                <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                    <Card className="border-dashed">
+                        <CardContent className="p-12 text-center text-muted-foreground">
+                            <Wifi className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                            <p>Enter a host to start pinging</p>
+                        </CardContent>
+                    </Card>
+                </motion.div>
+            )}
+          </AnimatePresence>
+
+            {/* Chart Section */}
+            {(history.length > 0 || isContinuous) && (
+                <Card className="border-none shadow-none bg-transparent">
+                  <CardHeader className="px-0 pt-0">
+                    <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                      <Activity className="h-4 w-4" /> Latency History
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-0 pb-0">
+                    <Suspense fallback={<Skeleton className="h-[200px] w-full" />}>
+                      <PingRttChart data={chartData} avgRtt={stats.avgRtt} />
+                    </Suspense>
+                  </CardContent>
+                </Card>
+            )}
+        </div>
+
+        {/* Right Column: Statistics & History */}
+        <div className="space-y-6">
+             {/* Statistics Grid */}
+             <div className="grid grid-cols-2 gap-4">
+                 <Card className="bg-primary/5 border-primary/10">
+                    <CardContent className="p-4">
+                        <p className="text-xs text-muted-foreground mb-1">Avg Latency</p>
+                        <p className="text-2xl font-bold tracking-tight">{stats.avgRtt}<span className="text-sm font-normal text-muted-foreground ml-1">ms</span></p>
+                    </CardContent>
+                 </Card>
+                 <Card className="bg-primary/5 border-primary/10">
+                    <CardContent className="p-4">
+                        <p className="text-xs text-muted-foreground mb-1">Success Rate</p>
+                        <p className={cn("text-2xl font-bold tracking-tight", stats.successRate === 100 ? "text-green-500" : stats.successRate >= 80 ? "text-yellow-500" : "text-destructive")}>
+                            {stats.successRate}<span className="text-sm font-normal text-muted-foreground ml-1">%</span>
+                        </p>
+                    </CardContent>
+                 </Card>
+                 <Card>
+                    <CardContent className="p-4">
+                        <p className="text-xs text-muted-foreground mb-1">Min / Max</p>
+                        <div className="flex items-center gap-2">
+                             <span className="text-lg font-semibold text-green-600 dark:text-green-400">{stats.minRtt}</span>
+                             <span className="text-muted-foreground">/</span>
+                             <span className="text-lg font-semibold text-orange-600 dark:text-orange-400">{stats.maxRtt}</span>
+                             <span className="text-xs text-muted-foreground">ms</span>
+                        </div>
+                    </CardContent>
+                 </Card>
+                 <Card>
+                    <CardContent className="p-4">
+                         <p className="text-xs text-muted-foreground mb-1">Total Pings</p>
+                         <p className="text-2xl font-bold tracking-tight">{isContinuous ? aggregatedDataRef.current.reduce((acc, curr) => acc + curr.totalPings, 0) : history.length}</p>
+                    </CardContent>
+                 </Card>
+             </div>
+
+             {/* Recent History List */}
+             {!isContinuous && history.length > 0 && (
+                 <Card className="h-[300px] flex flex-col">
+                    <CardHeader className="py-3 px-4 border-b">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2">
+                             <History className="h-4 w-4" /> Recent Pings
+                        </CardTitle>
+                    </CardHeader>
+                    <div className="flex-1 overflow-auto">
+                        <Table>
+                            <TableHeader className="sticky top-0 bg-card z-10">
+                                <TableRow>
+                                    <TableHead className="h-8 text-xs">Time</TableHead>
+                                    <TableHead className="h-8 text-xs">Status</TableHead>
+                                    <TableHead className="h-8 text-xs text-right">RTT</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {history.map((entry) => (
+                                    <TableRow key={entry.id} className="cursor-default hover:bg-muted/50">
+                                        <TableCell className="py-2 text-xs font-mono text-muted-foreground">
+                                            {formatTime(entry.timestamp)}
+                                        </TableCell>
+                                        <TableCell className="py-2">
+                                            <StatusBadge
+                                                status={entry.isSuccess ? "success" : "error"}
+                                                label={entry.isSuccess ? "Success" : "Failed"}
+                                                className="scale-75 origin-left"
+                                            />
+                                        </TableCell>
+                                        <TableCell className={cn("py-2 text-xs font-mono text-right", getRttColor(entry.roundtripTime))}>
+                                            {entry.isSuccess ? `${entry.roundtripTime}ms` : "-"}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                 </Card>
+             )}
+        </div>
+      </div>
+    </motion.div>
   );
 }
+
