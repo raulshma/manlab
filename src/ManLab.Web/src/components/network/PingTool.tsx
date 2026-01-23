@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { notify } from "@/lib/network-notify";
-import { pingHost, type PingResult } from "@/api/networkApi";
+import { pingHost, recordPingAggregateHistory, updatePingAggregateHistory, type PingResult } from "@/api/networkApi";
 import { StatusBadge } from "@/components/network/StatusIndicators";
 import { announce } from "@/lib/accessibility";
 import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
@@ -76,6 +76,7 @@ interface AggregatedPingEntry {
 
 const PING_HOST_KEY = "manlab:network:ping-host";
 const PING_TIMEOUT_KEY = "manlab:network:ping-timeout";
+const MAX_HISTORY_ENTRIES = 10;
 const MAX_AGGREGATED_ENTRIES = 300; // Store up to 5 minutes of aggregated data (300 seconds)
 
 // ============================================================================
@@ -179,11 +180,12 @@ function aggregatePing(
   aggregatedData: AggregatedPingEntry[],
   currentWindowPings: number[],
   windowStart: Date
-): { aggregatedData: AggregatedPingEntry[] } {
+): { aggregatedData: AggregatedPingEntry[]; entry: AggregatedPingEntry | null } {
   // The windowStart is already truncated to seconds from the caller
 
   // If window changed or no current window, commit previous data
   let updatedAggregatedData = [...aggregatedData];
+  let committedEntry: AggregatedPingEntry | null = null;
 
   if (currentWindowPings.length > 0) {
     const avgRtt = Math.round(
@@ -201,6 +203,7 @@ function aggregatePing(
       successfulPings: currentWindowPings.length,
     };
 
+    committedEntry = entry;
     updatedAggregatedData = [...updatedAggregatedData, entry];
 
     // Limit array size for performance (FIFO)
@@ -211,7 +214,83 @@ function aggregatePing(
 
   return {
     aggregatedData: updatedAggregatedData,
+    entry: committedEntry,
   };
+}
+
+function createAggregatedHistoryEntry(
+  entry: AggregatedPingEntry,
+  host: string,
+  referenceResult: PingResult | null
+): PingHistoryEntry {
+  return {
+    id: crypto.randomUUID(),
+    timestamp: entry.timeWindow,
+    address: host,
+    resolvedAddress: referenceResult?.resolvedAddress ?? null,
+    status: "Aggregated",
+    roundtripTime: entry.avgRtt,
+    ttl: referenceResult?.ttl ?? null,
+    isSuccess: true,
+  };
+}
+
+function summarizeAggregatedData(
+  entries: AggregatedPingEntry[]
+): Omit<AggregatedPingEntry, "timeWindow"> | null {
+  if (entries.length === 0) return null;
+
+  const totalPings = entries.reduce((sum, e) => sum + e.totalPings, 0);
+  if (totalPings === 0) return null;
+
+  const successfulPings = entries.reduce((sum, e) => sum + e.successfulPings, 0);
+  const avgRtt = Math.round(
+    entries.reduce((sum, e) => sum + e.avgRtt * e.totalPings, 0) / totalPings
+  );
+  const minRtt = Math.min(...entries.map((e) => e.minRtt));
+  const maxRtt = Math.max(...entries.map((e) => e.maxRtt));
+
+  return {
+    avgRtt,
+    minRtt,
+    maxRtt,
+    totalPings,
+    successfulPings,
+  };
+}
+
+function buildAggregatedEntryFromWindow(
+  pings: number[],
+  windowStart: Date
+): AggregatedPingEntry | null {
+  if (pings.length === 0) return null;
+  const avgRtt = Math.round(pings.reduce((sum, rtt) => sum + rtt, 0) / pings.length);
+  const minRtt = Math.min(...pings);
+  const maxRtt = Math.max(...pings);
+
+  return {
+    timeWindow: windowStart,
+    avgRtt,
+    minRtt,
+    maxRtt,
+    totalPings: pings.length,
+    successfulPings: pings.length,
+  };
+}
+
+function summarizeAggregatedSnapshot(
+  aggregatedData: AggregatedPingEntry[],
+  currentWindowPings: number[],
+  currentWindowStart: Date | null
+): Omit<AggregatedPingEntry, "timeWindow"> | null {
+  const entries = [...aggregatedData];
+  if (currentWindowPings.length > 0) {
+    const windowStart = currentWindowStart ?? new Date();
+    const currentEntry = buildAggregatedEntryFromWindow(currentWindowPings, windowStart);
+    if (currentEntry) entries.push(currentEntry);
+  }
+
+  return summarizeAggregatedData(entries);
 }
 
 // ============================================================================
@@ -237,6 +316,8 @@ export function PingTool() {
   const [history, setHistory] = useState<PingHistoryEntry[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const continuousRef = useRef(false);
+  const continuousHistoryIdRef = useRef<string | null>(null);
+  const continuousPingCountRef = useRef(0);
   
   // Aggregated data for infinite mode (performance optimized)
   const aggregatedDataRef = useRef<AggregatedPingEntry[]>([]);
@@ -295,7 +376,10 @@ export function PingTool() {
   }, []);
 
   // Handle ping submission
-  const performPing = useCallback(async (notifyUser: boolean) => {
+  const performPing = useCallback(async (
+    notifyUser: boolean,
+    options?: { recordHistory?: boolean }
+  ) => {
     if (!host || !isValidHost(host)) {
       setValidationError("Please enter a valid hostname or IP address");
       inputRef.current?.focus();
@@ -313,7 +397,7 @@ export function PingTool() {
       abortRef.current = controller;
 
       const result = await pingHost(
-        { host, timeout },
+        { host, timeout, recordHistory: options?.recordHistory ?? true },
         { signal: controller.signal }
       );
       setLastResult(result);
@@ -322,6 +406,7 @@ export function PingTool() {
       
       // In continuous mode, use aggregated data for performance
       if (isContinuous) {
+        continuousPingCountRef.current += 1;
         const windowStart = new Date(currentTime);
         windowStart.setMilliseconds(0);
 
@@ -348,6 +433,37 @@ export function PingTool() {
         if (result.isSuccess) {
           currentWindowPingsRef.current.push(result.roundtripTime);
         }
+
+        if (continuousPingCountRef.current % 10 === 0) {
+          const summary = summarizeAggregatedSnapshot(
+            aggregatedDataRef.current,
+            currentWindowPingsRef.current,
+            currentAggregationWindowRef.current
+          );
+
+          if (summary) {
+            const request = {
+              host,
+              timeout,
+              windowStartUtc: new Date().toISOString(),
+              avgRtt: summary.avgRtt,
+              minRtt: summary.minRtt,
+              maxRtt: summary.maxRtt,
+              totalPings: summary.totalPings,
+              successfulPings: summary.successfulPings,
+              resolvedAddress: result.resolvedAddress ?? null,
+              ttl: result.ttl ?? null,
+            };
+
+            if (continuousHistoryIdRef.current) {
+              void updatePingAggregateHistory(continuousHistoryIdRef.current, request);
+            } else {
+              void recordPingAggregateHistory(request).then(({ id }) => {
+                continuousHistoryIdRef.current = id;
+              });
+            }
+          }
+        }
       } else {
         // Single ping mode: add to history (keep last 10)
         const newEntry: PingHistoryEntry = {
@@ -355,7 +471,7 @@ export function PingTool() {
           id: crypto.randomUUID(),
           timestamp: currentTime,
         };
-        setHistory((prev) => [newEntry, ...prev].slice(0, 10));
+        setHistory((prev) => [newEntry, ...prev].slice(0, MAX_HISTORY_ENTRIES));
       }
 
       if (result.isSuccess) {
@@ -416,9 +532,43 @@ export function PingTool() {
       currentWindowPingsRef.current = [];
       currentAggregationWindowRef.current = null;
     }
+
+    const summary = summarizeAggregatedSnapshot(
+      aggregatedDataRef.current,
+      currentWindowPingsRef.current,
+      currentAggregationWindowRef.current
+    );
+    if (summary) {
+      const historyEntry = createAggregatedHistoryEntry(
+        { timeWindow: new Date(), ...summary },
+        host,
+        lastResult
+      );
+      setHistory((prev) => [historyEntry, ...prev].slice(0, MAX_HISTORY_ENTRIES));
+      const request = {
+        host,
+        timeout,
+        windowStartUtc: historyEntry.timestamp.toISOString(),
+        avgRtt: summary.avgRtt,
+        minRtt: summary.minRtt,
+        maxRtt: summary.maxRtt,
+        totalPings: summary.totalPings,
+        successfulPings: summary.successfulPings,
+        resolvedAddress: lastResult?.resolvedAddress ?? null,
+        ttl: lastResult?.ttl ?? null,
+      };
+
+      if (continuousHistoryIdRef.current) {
+        void updatePingAggregateHistory(continuousHistoryIdRef.current, request);
+      } else {
+        void recordPingAggregateHistory(request).then(({ id }) => {
+          continuousHistoryIdRef.current = id;
+        });
+      }
+    }
     
     setIsContinuousRunning(false);
-  }, []);
+  }, [host, lastResult, timeout]);
 
   const startContinuous = useCallback(async () => {
     if (isContinuousRunning) return;
@@ -427,13 +577,15 @@ export function PingTool() {
     aggregatedDataRef.current = [];
     currentAggregationWindowRef.current = null;
     currentWindowPingsRef.current = [];
+    continuousHistoryIdRef.current = null;
+    continuousPingCountRef.current = 0;
     setTick(0);
 
     continuousRef.current = true;
     setIsContinuousRunning(true);
 
     while (continuousRef.current) {
-      await performPing(false);
+      await performPing(false, { recordHistory: false });
       await new Promise<void>((resolve) => {
         globalThis.setTimeout(() => resolve(), 1000);
       });
@@ -454,7 +606,7 @@ export function PingTool() {
       return;
     }
 
-    await performPing(true);
+    await performPing(true, { recordHistory: true });
   }, [isContinuous, isContinuousRunning, isLoading, performPing, startContinuous, stopContinuous]);
 
   // Handle Enter key press

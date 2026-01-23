@@ -51,4 +51,16 @@ public interface INetworkToolHistoryService
     /// Deletes entries older than the specified cutoff.
     /// </summary>
     Task<int> DeleteOlderThanAsync(DateTime cutoffUtc);
+
+    /// <summary>
+    /// Updates an existing history entry.
+    /// </summary>
+    Task<bool> UpdateAsync(
+        Guid id,
+        object? input,
+        object? result,
+        bool success,
+        int durationMs,
+        string? error = null,
+        string? target = null);
 }

@@ -15,6 +15,23 @@ import { api } from "../api";
 export interface PingRequest {
   host: string;
   timeout?: number;
+  recordHistory?: boolean;
+}
+
+/**
+ * Aggregated ping history record request.
+ */
+export interface PingAggregateHistoryRequest {
+  host: string;
+  timeout?: number;
+  windowStartUtc: string;
+  avgRtt: number;
+  minRtt: number;
+  maxRtt: number;
+  totalPings: number;
+  successfulPings: number;
+  resolvedAddress?: string | null;
+  ttl?: number | null;
 }
 
 /**
@@ -325,6 +342,36 @@ export async function pingHost(
       options
     );
     return data;
+  });
+}
+
+/**
+ * Record aggregated ping history (used for infinite mode).
+ */
+export async function recordPingAggregateHistory(
+  request: PingAggregateHistoryRequest,
+  options?: RequestOptions
+): Promise<{ id: string }> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<{ id: string }>(
+      "/network/ping/aggregate",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Update aggregated ping history entry (used for infinite mode).
+ */
+export async function updatePingAggregateHistory(
+  id: string,
+  request: PingAggregateHistoryRequest,
+  options?: RequestOptions
+): Promise<void> {
+  await withNetworkRetry(async () => {
+    await api.put(`/network/ping/aggregate/${encodeURIComponent(id)}`, request, options);
   });
 }
 

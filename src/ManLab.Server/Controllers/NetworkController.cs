@@ -16,6 +16,7 @@ public class NetworkController : ControllerBase
     private readonly IDeviceDiscoveryService _discovery;
     private readonly IWifiScannerService _wifiScanner;
     private readonly IIpGeolocationService _geolocation;
+    private readonly INetworkToolHistoryService _history;
     private readonly ILogger<NetworkController> _logger;
     private readonly IAuditLog _audit;
 
@@ -24,6 +25,7 @@ public class NetworkController : ControllerBase
         IDeviceDiscoveryService discovery,
         IWifiScannerService wifiScanner,
         IIpGeolocationService geolocation,
+        INetworkToolHistoryService history,
         ILogger<NetworkController> logger,
         IAuditLog audit)
     {
@@ -31,6 +33,7 @@ public class NetworkController : ControllerBase
         _discovery = discovery;
         _wifiScanner = wifiScanner;
         _geolocation = geolocation;
+        _history = history;
         _logger = logger;
         _audit = audit;
     }
@@ -53,10 +56,13 @@ public class NetworkController : ControllerBase
         }
 
         var timeout = Math.Clamp(request.Timeout ?? 1000, 100, 10000);
+        var shouldRecordHistory = request.RecordHistory ?? true;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
             var result = await _scanner.PingAsync(request.Host, timeout, ct);
+            sw.Stop();
 
             _audit.TryEnqueue(AuditEventFactory.CreateHttp(
                 kind: "activity",
@@ -67,11 +73,38 @@ public class NetworkController : ControllerBase
                 category: "network",
                 message: $"Ping to {request.Host}: {result.StatusMessage}"));
 
+            if (shouldRecordHistory)
+            {
+                _ = _history.RecordAsync(
+                    toolType: "ping",
+                    target: request.Host,
+                    input: new { host = request.Host, timeout },
+                    result: result,
+                    success: result.IsSuccess,
+                    durationMs: (int)sw.ElapsedMilliseconds,
+                    connectionId: HttpContext.Connection.Id);
+            }
+
             return Ok(result);
         }
         catch (Exception ex)
         {
+            sw.Stop();
             _logger.LogError(ex, "Ping failed for host {Host}", request.Host);
+
+            if (shouldRecordHistory)
+            {
+                _ = _history.RecordAsync(
+                    toolType: "ping",
+                    target: request.Host,
+                    input: new { host = request.Host, timeout },
+                    result: null,
+                    success: false,
+                    durationMs: (int)sw.ElapsedMilliseconds,
+                    error: ex.Message,
+                    connectionId: HttpContext.Connection.Id);
+            }
+
             return StatusCode(500, new NetworkScanError
             {
                 Code = "PING_FAILED",
@@ -79,6 +112,103 @@ public class NetworkController : ControllerBase
                 Details = ex.Message
             });
         }
+    }
+
+    /// <summary>
+    /// Records an aggregated ping history entry (for infinite mode).
+    /// </summary>
+    [HttpPost("ping/aggregate")]
+    public async Task<ActionResult<object>> RecordPingAggregate([FromBody] PingAggregateRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Host))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_HOST",
+                Message = "Host is required"
+            });
+        }
+
+        var timeout = Math.Clamp(request.Timeout ?? 1000, 100, 10000);
+        var durationMs = Math.Max(0, request.TotalPings * 1000);
+        var success = request.SuccessfulPings > 0;
+
+        var id = await _history.RecordAsync(
+            toolType: "ping",
+            target: request.Host,
+            input: new
+            {
+                host = request.Host,
+                timeout,
+                windowStartUtc = request.WindowStartUtc,
+                totalPings = request.TotalPings,
+                successfulPings = request.SuccessfulPings,
+                mode = "aggregated"
+            },
+            result: new
+            {
+                avgRtt = request.AvgRtt,
+                minRtt = request.MinRtt,
+                maxRtt = request.MaxRtt,
+                resolvedAddress = request.ResolvedAddress,
+                ttl = request.Ttl
+            },
+            success: success,
+            durationMs: durationMs,
+            connectionId: HttpContext.Connection.Id);
+
+        return Ok(new { success = true, id });
+    }
+
+    /// <summary>
+    /// Updates an aggregated ping history entry (for infinite mode).
+    /// </summary>
+    [HttpPut("ping/aggregate/{id:guid}")]
+    public async Task<ActionResult> UpdatePingAggregate(Guid id, [FromBody] PingAggregateRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Host))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_HOST",
+                Message = "Host is required"
+            });
+        }
+
+        var timeout = Math.Clamp(request.Timeout ?? 1000, 100, 10000);
+        var durationMs = Math.Max(0, request.TotalPings * 1000);
+        var success = request.SuccessfulPings > 0;
+
+        var updated = await _history.UpdateAsync(
+            id,
+            input: new
+            {
+                host = request.Host,
+                timeout,
+                windowStartUtc = request.WindowStartUtc,
+                totalPings = request.TotalPings,
+                successfulPings = request.SuccessfulPings,
+                mode = "aggregated"
+            },
+            result: new
+            {
+                avgRtt = request.AvgRtt,
+                minRtt = request.MinRtt,
+                maxRtt = request.MaxRtt,
+                resolvedAddress = request.ResolvedAddress,
+                ttl = request.Ttl
+            },
+            success: success,
+            durationMs: durationMs,
+            error: null,
+            target: request.Host);
+
+        if (!updated)
+        {
+            return NotFound();
+        }
+
+        return Ok(new { success = true });
     }
 
     /// <summary>
@@ -914,6 +1044,67 @@ public record PingRequest
     /// Timeout in milliseconds (default: 1000, max: 10000).
     /// </summary>
     public int? Timeout { get; init; }
+
+    /// <summary>
+    /// Whether to record the ping in history (default: true).
+    /// </summary>
+    public bool? RecordHistory { get; init; }
+}
+
+/// <summary>
+/// Request for recording aggregated ping history.
+/// </summary>
+public record PingAggregateRequest
+{
+    /// <summary>
+    /// Hostname or IP address that was pinged.
+    /// </summary>
+    public string Host { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Timeout in milliseconds (default: 1000, max: 10000).
+    /// </summary>
+    public int? Timeout { get; init; }
+
+    /// <summary>
+    /// Aggregation window start time in UTC.
+    /// </summary>
+    public DateTime WindowStartUtc { get; init; }
+
+    /// <summary>
+    /// Average RTT in milliseconds for the window.
+    /// </summary>
+    public int AvgRtt { get; init; }
+
+    /// <summary>
+    /// Minimum RTT in milliseconds for the window.
+    /// </summary>
+    public int MinRtt { get; init; }
+
+    /// <summary>
+    /// Maximum RTT in milliseconds for the window.
+    /// </summary>
+    public int MaxRtt { get; init; }
+
+    /// <summary>
+    /// Total pings observed in the window.
+    /// </summary>
+    public int TotalPings { get; init; }
+
+    /// <summary>
+    /// Successful pings observed in the window.
+    /// </summary>
+    public int SuccessfulPings { get; init; }
+
+    /// <summary>
+    /// Resolved IP address (if available).
+    /// </summary>
+    public string? ResolvedAddress { get; init; }
+
+    /// <summary>
+    /// TTL from the latest ping (if available).
+    /// </summary>
+    public int? Ttl { get; init; }
 }
 
 /// <summary>

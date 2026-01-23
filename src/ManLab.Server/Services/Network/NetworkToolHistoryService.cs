@@ -124,6 +124,39 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
             .ExecuteDeleteAsync();
     }
 
+    public async Task<bool> UpdateAsync(
+        Guid id,
+        object? input,
+        object? result,
+        bool success,
+        int durationMs,
+        string? error = null,
+        string? target = null)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var entry = await db.NetworkToolHistory.FirstOrDefaultAsync(e => e.Id == id);
+        if (entry is null)
+        {
+            return false;
+        }
+
+        entry.TimestampUtc = DateTime.UtcNow;
+        entry.InputJson = SerializeToJson(input);
+        entry.ResultJson = SerializeToJson(result);
+        entry.Success = success;
+        entry.DurationMs = durationMs;
+        entry.ErrorMessage = TruncateString(error, 2048);
+        if (!string.IsNullOrWhiteSpace(target))
+        {
+            entry.Target = TruncateString(target, 256);
+        }
+
+        await db.SaveChangesAsync();
+        return true;
+    }
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
