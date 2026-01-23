@@ -58,6 +58,9 @@ public class DataContext : DbContext
     public DbSet<FileBrowserPolicy> FileBrowserPolicies => Set<FileBrowserPolicy>();
     public DbSet<TerminalSession> TerminalSessions => Set<TerminalSession>();
 
+    /// <summary>Network tool execution history for analytics.</summary>
+    public DbSet<NetworkToolHistoryEntry> NetworkToolHistory => Set<NetworkToolHistoryEntry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -316,6 +319,18 @@ public class DataContext : DbContext
                 .WithMany(n => n.TerminalSessions)
                 .HasForeignKey(e => e.NodeId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Network tool execution history
+        modelBuilder.Entity<NetworkToolHistoryEntry>(entity =>
+        {
+            entity.HasIndex(e => e.TimestampUtc);
+            entity.HasIndex(e => e.ToolType);
+            entity.HasIndex(e => new { e.ToolType, e.TimestampUtc });
+
+            // Store as jsonb for efficient queryability
+            entity.Property(e => e.InputJson).HasColumnType("jsonb");
+            entity.Property(e => e.ResultJson).HasColumnType("jsonb");
         });
     }
 }

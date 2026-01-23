@@ -17,6 +17,7 @@ public class NetworkHub : Hub
     private readonly IAuditLog _audit;
     private readonly NetworkRateLimitService _rateLimit;
     private readonly IHubContext<NetworkHub> _hubContext;
+    private readonly INetworkToolHistoryService _history;
 
     public NetworkHub(
         ILogger<NetworkHub> logger,
@@ -25,7 +26,8 @@ public class NetworkHub : Hub
         IWifiScannerService wifiScanner,
         IAuditLog audit,
         NetworkRateLimitService rateLimit,
-        IHubContext<NetworkHub> hubContext)
+        IHubContext<NetworkHub> hubContext,
+        INetworkToolHistoryService history)
     {
         _logger = logger;
         _scanner = scanner;
@@ -34,6 +36,7 @@ public class NetworkHub : Hub
         _audit = audit;
         _rateLimit = rateLimit;
         _hubContext = hubContext;
+        _history = history;
     }
 
     /// <summary>
@@ -201,8 +204,20 @@ public class NetworkHub : Hub
         }
 
         timeout = Math.Clamp(timeout, 100, 10000);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         
         var result = await _scanner.PingAsync(host, timeout);
+        sw.Stop();
+        
+        // Record to history
+        _ = _history.RecordAsync(
+            toolType: "ping",
+            target: host,
+            input: new { host, timeout },
+            result: result,
+            success: result.IsSuccess,
+            durationMs: (int)sw.ElapsedMilliseconds,
+            connectionId: Context.ConnectionId);
         
         // Broadcast result to all clients for real-time dashboard updates
         await Clients.All.SendAsync("PingCompleted", result);
@@ -256,6 +271,17 @@ public class NetworkHub : Hub
         // Notify trace completed
         await Clients.Group(GetScanGroup(scanId)).SendAsync("TracerouteCompleted", result);
 
+        // Record to history
+        var traceDuration = (int)(result.Hops.Sum(h => h.RoundtripTime) + 100); // approximate
+        _ = _history.RecordAsync(
+            toolType: "traceroute",
+            target: host,
+            input: new { host, maxHops, timeout },
+            result: result,
+            success: result.ReachedDestination,
+            durationMs: traceDuration,
+            connectionId: Context.ConnectionId);
+
         return result;
     }
 
@@ -308,6 +334,16 @@ public class NetworkHub : Hub
         // Notify scan completed
         await Clients.Group(GetScanGroup(scanId)).SendAsync("PortScanCompleted", result);
 
+        // Record to history
+        _ = _history.RecordAsync(
+            toolType: "port-scan",
+            target: host,
+            input: new { host, ports = portsToScan, concurrency, timeout },
+            result: result,
+            success: result.OpenPorts.Count > 0 || result.ScannedPorts > 0,
+            durationMs: (int)result.DurationMs,
+            connectionId: Context.ConnectionId);
+
         return result;
     }
 
@@ -351,6 +387,16 @@ public class NetworkHub : Hub
         }
 
         await Clients.Group(GetScanGroup(scanId)).SendAsync("DiscoveryCompleted", result);
+
+        // Record to history
+        _ = _history.RecordAsync(
+            toolType: "discovery",
+            target: "local-network",
+            input: new { scanDurationSeconds },
+            result: result,
+            success: result.MdnsDevices.Count > 0 || result.UpnpDevices.Count > 0,
+            durationMs: scanDurationSeconds * 1000,
+            connectionId: Context.ConnectionId);
 
         return result;
     }
@@ -398,6 +444,17 @@ public class NetworkHub : Hub
         }
 
         await Clients.Group(GetScanGroup(scanId)).SendAsync("WifiScanCompleted", result);
+
+        // Record to history
+        _ = _history.RecordAsync(
+            toolType: "wifi-scan",
+            target: adapterName ?? "default",
+            input: new { adapterName },
+            result: result,
+            success: result.Success,
+            durationMs: (int)result.DurationMs,
+            error: result.ErrorMessage,
+            connectionId: Context.ConnectionId);
 
         return result;
     }
@@ -468,6 +525,17 @@ public class NetworkHub : Hub
 
             _logger.LogInformation("Subnet scan {ScanId} completed: {HostsFound}/{TotalHosts} hosts found", 
                 scanId, foundHosts.Count, totalHosts);
+
+            // Record to history
+            var durationMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+            _ = _history.RecordAsync(
+                toolType: "subnet-scan",
+                target: cidr,
+                input: new { cidr, concurrencyLimit, timeout },
+                result: new { hostsFound = foundHosts.Count, totalHosts },
+                success: true,
+                durationMs: durationMs,
+                connectionId: connectionId);
         }
         catch (Exception ex)
         {

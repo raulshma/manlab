@@ -147,6 +147,13 @@ builder.Services.AddSingleton<ManLab.Server.Services.Network.IIpGeolocationServi
 // Network rate limiting for SignalR hub
 builder.Services.AddSingleton<ManLab.Server.Services.Network.NetworkRateLimitService>();
 
+// Network tool history tracking for analytics
+builder.Services.AddSingleton<ManLab.Server.Services.Network.NetworkToolHistoryService>();
+builder.Services.AddSingleton<ManLab.Server.Services.Network.INetworkToolHistoryService>(sp =>
+    sp.GetRequiredService<ManLab.Server.Services.Network.NetworkToolHistoryService>());
+builder.Services.AddHostedService(sp =>
+    sp.GetRequiredService<ManLab.Server.Services.Network.NetworkToolHistoryService>());
+
 builder.Services.AddHostedService<CommandDispatchService>();
 
 // Background services

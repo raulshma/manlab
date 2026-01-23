@@ -803,3 +803,94 @@ export interface WifiNetworkFoundEvent {
 export interface WifiScanCompletedEvent {
   result: WifiScanResult;
 }
+
+// ============================================================================
+// Network Tool History Types & Functions
+// ============================================================================
+
+/**
+ * Network tool types tracked in history.
+ */
+export type NetworkToolType =
+  | "ping"
+  | "traceroute"
+  | "port-scan"
+  | "subnet-scan"
+  | "discovery"
+  | "wifi-scan";
+
+/**
+ * Network tool history entry from the server.
+ */
+export interface NetworkToolHistoryEntry {
+  id: string;
+  timestampUtc: string;
+  toolType: NetworkToolType;
+  target: string | null;
+  inputJson: string | null;
+  resultJson: string | null;
+  success: boolean;
+  durationMs: number;
+  errorMessage: string | null;
+}
+
+/**
+ * Get recent network tool history entries.
+ */
+export async function getNetworkToolHistory(
+  count: number = 50,
+  toolType?: NetworkToolType,
+  options?: RequestOptions
+): Promise<NetworkToolHistoryEntry[]> {
+  return withNetworkRetry(async () => {
+    const params = new URLSearchParams();
+    if (count) params.set("count", String(count));
+    if (toolType) params.set("toolType", toolType);
+    
+    const { data } = await api.get<NetworkToolHistoryEntry[]>(
+      `/network/history?${params.toString()}`,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Get a single network tool history entry by ID.
+ */
+export async function getNetworkToolHistoryById(
+  id: string,
+  options?: RequestOptions
+): Promise<NetworkToolHistoryEntry> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<NetworkToolHistoryEntry>(
+      `/network/history/${encodeURIComponent(id)}`,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Delete a single network tool history entry.
+ */
+export async function deleteNetworkToolHistoryEntry(
+  id: string,
+  options?: RequestOptions
+): Promise<void> {
+  await api.delete(`/network/history/${encodeURIComponent(id)}`, options);
+}
+
+/**
+ * Delete history entries older than the specified number of days.
+ */
+export async function deleteOldNetworkToolHistory(
+  daysOld: number = 30,
+  options?: RequestOptions
+): Promise<{ deletedCount: number }> {
+  const { data } = await api.delete<{ deletedCount: number }>(
+    `/network/history?daysOld=${daysOld}`,
+    options
+  );
+  return data;
+}

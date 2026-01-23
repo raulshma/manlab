@@ -13,7 +13,7 @@ import {
   Server,
   Wifi,
   Radar,
-
+  History,
   Database,
   RefreshCw,
 } from "lucide-react";
@@ -28,7 +28,9 @@ import { PortScanTool } from "@/components/network/PortScanTool";
 import { DeviceDiscoveryTool } from "@/components/network/DeviceDiscoveryTool";
 import { WifiScannerTool } from "@/components/network/WifiScannerTool";
 import { GeolocationDbManager } from "@/components/network/GeolocationDbManager";
+import { NetworkToolHistoryPanel } from "@/components/network/NetworkToolHistoryPanel";
 import { NetworkErrorBoundary } from "@/components/network/NetworkErrorBoundary";
+import { NetworkToolHistoryProvider } from "@/contexts/NetworkToolHistoryContext";
 import { Switch } from "@/components/ui/switch";
 import {
   isRealtimeEnabled,
@@ -207,6 +209,10 @@ export function NetworkScannerPage() {
                 <Database className="h-4 w-4" />
                 <span className="inline">GeoIP</span>
               </TabsTrigger>
+              <TabsTrigger value="history" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <History className="h-4 w-4" />
+                <span className="inline">History</span>
+              </TabsTrigger>
             </TabsList>
           </CardHeader>
 
@@ -250,6 +256,14 @@ export function NetworkScannerPage() {
             <TabsContent value="geodb" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="Geolocation Database Error">
                 <GeolocationDbManager />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="history" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="History Panel Error">
+                <NetworkToolHistoryProvider autoRefreshMs={30000}>
+                  <NetworkToolHistoryPanel />
+                </NetworkToolHistoryProvider>
               </NetworkErrorBoundary>
             </TabsContent>
           </CardContent>
