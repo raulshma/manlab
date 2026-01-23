@@ -54,6 +54,7 @@ import { notify } from "@/lib/network-notify";
 import { pingHost, type PingResult } from "@/api/networkApi";
 import { StatusBadge } from "@/components/network/StatusIndicators";
 import { announce } from "@/lib/accessibility";
+import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 
 const PingRttChart = lazy(() => import("@/components/network/PingRttChart"));
 
@@ -167,6 +168,9 @@ function getStoredNumber(key: string, fallback: number): number {
 // ============================================================================
 
 export function PingTool() {
+  // Network tools context for quick actions
+  const networkTools = useNetworkToolsOptional();
+
   // Form state
   const [host, setHost] = useState(() => getStoredString(PING_HOST_KEY, ""));
   const [timeout, setTimeout] = useState(() => getStoredNumber(PING_TIMEOUT_KEY, 1000));
@@ -179,6 +183,27 @@ export function PingTool() {
   const [history, setHistory] = useState<PingHistoryEntry[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Input ref for focus
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Handle pending action from context (e.g., quick ping from HostCard)
+  useEffect(() => {
+    if (
+      networkTools?.pendingAction?.type === "ping" &&
+      networkTools.pendingAction.target
+    ) {
+      const target = networkTools.pendingAction.target;
+      setHost(target);
+      setValidationError(null);
+      networkTools.clearPendingAction();
+      // Focus the input after setting the host
+      globalThis.setTimeout(() => {
+        inputRef.current?.focus();
+        notify.info(`Ready to ping ${target}`);
+      }, 100);
+    }
+  }, [networkTools, networkTools?.pendingAction]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     localStorage.setItem(PING_HOST_KEY, host);
@@ -190,9 +215,6 @@ export function PingTool() {
       abortRef.current?.abort();
     };
   }, []);
-
-  // Input ref for focus
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // Handle input change with validation
   const handleHostChange = useCallback((value: string) => {

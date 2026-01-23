@@ -56,6 +56,7 @@ import {
   type TracerouteHop,
 } from "@/api/networkApi";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
+import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 import { announce, announceScanEvent } from "@/lib/accessibility";
 
 // ============================================================================
@@ -348,10 +349,13 @@ function HopCard({ hop, isDestination, isFirst, maxRtt }: HopCardProps) {
 // ============================================================================
 
 export function TracerouteTool() {
+  // Network tools context for quick actions
+  const networkTools = useNetworkToolsOptional();
+
   // Form state
   const [host, setHost] = useState(() => getStoredString(TRACE_HOST_KEY, ""));
   const [maxHops, setMaxHops] = useState(() => getStoredNumber(TRACE_MAXHOPS_KEY, 30));
-  const [timeout, setTimeout] = useState(() => getStoredNumber(TRACE_TIMEOUT_KEY, 1000));
+  const [timeout, setTimeoutMs] = useState(() => getStoredNumber(TRACE_TIMEOUT_KEY, 1000));
   const [isLoading, setIsLoading] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
@@ -362,6 +366,27 @@ export function TracerouteTool() {
   const [isTracing, setIsTracing] = useState(false);
   const [history, setHistory] = useState<TracerouteHistoryEntry[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Input ref for focus
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Handle pending action from context (e.g., quick traceroute from HostCard)
+  useEffect(() => {
+    if (
+      networkTools?.pendingAction?.type === "traceroute" &&
+      networkTools.pendingAction.target
+    ) {
+      const target = networkTools.pendingAction.target;
+      setHost(target);
+      setValidationError(null);
+      networkTools.clearPendingAction();
+      // Focus the input after setting the host
+      globalThis.setTimeout(() => {
+        inputRef.current?.focus();
+        notify.info(`Ready to trace route to ${target}`);
+      }, 100);
+    }
+  }, [networkTools, networkTools?.pendingAction]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -379,9 +404,6 @@ export function TracerouteTool() {
   // SignalR
   const { isConnected, subscribeToTraceroute, traceroute: hubTraceroute } =
     useNetworkHub();
-
-  // Input ref for focus
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // Subscribe to traceroute events
   useEffect(() => {
@@ -647,7 +669,7 @@ export function TracerouteTool() {
                 value={[timeout]}
                 onValueChange={(value) => {
                   const newValue = Array.isArray(value) ? value[0] : value;
-                  setTimeout(newValue);
+                  setTimeoutMs(newValue);
                 }}
                 min={100}
                 max={5000}

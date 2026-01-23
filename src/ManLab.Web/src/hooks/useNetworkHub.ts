@@ -18,6 +18,7 @@ import type {
   PingResult,
   TracerouteResult,
   PortScanResult,
+  SubnetScanResult,
   DiscoveryScanResult,
   WifiScanResult,
   ScanStartedEvent,
@@ -38,6 +39,7 @@ import type {
   WifiScanStartedEvent,
   WifiNetworkFoundEvent,
   WifiScanCompletedEvent,
+  OpenPort,
 } from "../api/networkApi";
 
 // ============================================================================
@@ -180,6 +182,128 @@ function stopSharedConnection(state: SharedConnectionState) {
   ) {
     connection.stop();
   }
+}
+
+// ============================================================================
+// Payload Normalization (SignalR → UI)
+// ============================================================================
+
+function normalizeOpenPort(value: unknown): OpenPort {
+  if (typeof value === "number") {
+    return { port: value, serviceName: null, serviceDescription: null };
+  }
+
+  if (value && typeof value === "object") {
+    const port = (value as { port?: number }).port ?? 0;
+    const serviceName = (value as { serviceName?: string | null }).serviceName ?? null;
+    const serviceDescription =
+      (value as { serviceDescription?: string | null }).serviceDescription ?? null;
+    return { port, serviceName, serviceDescription };
+  }
+
+  return { port: 0, serviceName: null, serviceDescription: null };
+}
+
+function normalizePortScanResult(result: unknown): PortScanResult {
+  const base = (result ?? {}) as PortScanResult & { openPorts?: unknown[] };
+  const openPorts = Array.isArray(base.openPorts)
+    ? base.openPorts.map(normalizeOpenPort)
+    : [];
+
+  return {
+    host: base.host ?? "",
+    resolvedAddress: base.resolvedAddress ?? null,
+    openPorts,
+    scannedPorts: base.scannedPorts ?? 0,
+    scanDurationMs: base.scanDurationMs ?? 0,
+  };
+}
+
+function normalizeScanStarted(event: unknown): ScanStartedEvent {
+  const payload = (event ?? {}) as {
+    scanId?: string;
+    cidr?: string;
+    totalHosts?: number;
+    totalCount?: number;
+  };
+
+  return {
+    scanId: payload.scanId ?? "",
+    cidr: payload.cidr ?? "",
+    totalHosts: payload.totalHosts ?? payload.totalCount ?? 0,
+  };
+}
+
+function normalizeScanProgress(event: unknown): ScanProgressEvent {
+  const payload = (event ?? {}) as {
+    scanId?: string;
+    scannedHosts?: number;
+    scannedCount?: number;
+    totalHosts?: number;
+    totalCount?: number;
+    percentComplete?: number;
+  };
+
+  const scannedCount = payload.scannedHosts ?? payload.scannedCount ?? 0;
+  const totalCount = payload.totalHosts ?? payload.totalCount ?? 0;
+  const percentComplete =
+    typeof payload.percentComplete === "number"
+      ? payload.percentComplete
+      : totalCount > 0
+        ? Math.round((scannedCount / totalCount) * 100)
+        : 0;
+
+  return {
+    scanId: payload.scanId ?? "",
+    scannedCount,
+    totalCount,
+    percentComplete,
+  };
+}
+
+function normalizeScanCompleted(event: unknown): ScanCompletedEvent {
+  const payload = (event ?? {}) as ScanCompletedEvent & {
+    result?: SubnetScanResult;
+    hosts?: SubnetScanResult["hosts"];
+    hostsFound?: number;
+    totalHosts?: number;
+    totalScanned?: number;
+    cidr?: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
+
+  if (payload.result) {
+    return payload as ScanCompletedEvent;
+  }
+
+  const startedAt = payload.startedAt ? Date.parse(payload.startedAt) : null;
+  const completedAt = payload.completedAt ? Date.parse(payload.completedAt) : null;
+  const scanDurationMs =
+    startedAt && completedAt ? Math.max(0, completedAt - startedAt) : 0;
+
+  const hosts = Array.isArray(payload.hosts) ? payload.hosts : [];
+  const hostsFound = payload.hostsFound ?? hosts.length;
+  const totalScanned = payload.totalHosts ?? payload.totalScanned ?? hostsFound;
+
+  return {
+    scanId: payload.scanId ?? "",
+    result: {
+      cidr: payload.cidr ?? "",
+      hosts,
+      totalScanned,
+      hostsFound,
+      scanDurationMs,
+    },
+  };
+}
+
+function normalizeScanFailed(event: unknown): ScanFailedEvent {
+  const payload = (event ?? {}) as { scanId?: string; error?: string };
+  return {
+    scanId: payload.scanId ?? "",
+    error: payload.error ?? "Unknown error",
+  };
 }
 
 function retainSharedConnection(hubUrl: string): () => void {
@@ -413,13 +537,14 @@ export function useNetworkHub(
       if (!connectionRef.current) {
         throw new Error("Not connected to Network Hub");
       }
-      return await connectionRef.current.invoke<PortScanResult>(
+      const result = await connectionRef.current.invoke<PortScanResult>(
         "ScanPorts",
         host,
         ports,
         concurrency,
         timeout
       );
+      return normalizePortScanResult(result);
     },
     []
   );
@@ -475,19 +600,27 @@ export function useNetworkHub(
       const conn = connectionRef.current;
 
       if (handlers.onScanStarted) {
-        conn.on("ScanStarted", handlers.onScanStarted);
+        conn.on("ScanStarted", (event) =>
+          handlers.onScanStarted?.(normalizeScanStarted(event))
+        );
       }
       if (handlers.onScanProgress) {
-        conn.on("ScanProgress", handlers.onScanProgress);
+        conn.on("ScanProgress", (event) =>
+          handlers.onScanProgress?.(normalizeScanProgress(event))
+        );
       }
       if (handlers.onHostFound) {
         conn.on("HostFound", handlers.onHostFound);
       }
       if (handlers.onScanCompleted) {
-        conn.on("ScanCompleted", handlers.onScanCompleted);
+        conn.on("ScanCompleted", (event) =>
+          handlers.onScanCompleted?.(normalizeScanCompleted(event))
+        );
       }
       if (handlers.onScanFailed) {
-        conn.on("ScanFailed", handlers.onScanFailed);
+        conn.on("ScanFailed", (event) =>
+          handlers.onScanFailed?.(normalizeScanFailed(event))
+        );
       }
 
       return () => {
@@ -514,7 +647,9 @@ export function useNetworkHub(
         conn.on("TracerouteHop", handlers.onTracerouteHop);
       }
       if (handlers.onTracerouteCompleted) {
-        conn.on("TracerouteCompleted", handlers.onTracerouteCompleted);
+        conn.on("TracerouteCompleted", (event) =>
+          handlers.onTracerouteCompleted?.({ result: event as TracerouteResult })
+        );
       }
 
       return () => {
@@ -536,10 +671,36 @@ export function useNetworkHub(
         conn.on("PortScanStarted", handlers.onPortScanStarted);
       }
       if (handlers.onPortFound) {
-        conn.on("PortFound", handlers.onPortFound);
+        conn.on("PortFound", (event) => {
+          const payload = event as {
+            host?: string;
+            port?: number | OpenPort;
+            serviceName?: string;
+            serviceDescription?: string | null;
+          };
+
+          const normalized = normalizeOpenPort(
+            typeof payload.port === "number"
+              ? {
+                  port: payload.port,
+                  serviceName: payload.serviceName ?? null,
+                  serviceDescription: payload.serviceDescription ?? null,
+                }
+              : payload.port
+          );
+
+          handlers.onPortFound?.({
+            host: payload.host ?? "",
+            port: normalized,
+          });
+        });
       }
       if (handlers.onPortScanCompleted) {
-        conn.on("PortScanCompleted", handlers.onPortScanCompleted);
+        conn.on("PortScanCompleted", (event) => {
+          handlers.onPortScanCompleted?.({
+            result: normalizePortScanResult(event),
+          });
+        });
       }
 
       return () => {
@@ -561,13 +722,25 @@ export function useNetworkHub(
         conn.on("DiscoveryStarted", handlers.onDiscoveryStarted);
       }
       if (handlers.onMdnsDeviceFound) {
-        conn.on("MdnsDeviceFound", handlers.onMdnsDeviceFound);
+        conn.on("MdnsDeviceFound", (event) => {
+          const payload = event as { device?: MdnsDeviceFoundEvent["service"]; service?: MdnsDeviceFoundEvent["service"] };
+          const service = payload.service ?? payload.device;
+          if (service) {
+            handlers.onMdnsDeviceFound?.({
+              service,
+            });
+          }
+        });
       }
       if (handlers.onUpnpDeviceFound) {
         conn.on("UpnpDeviceFound", handlers.onUpnpDeviceFound);
       }
       if (handlers.onDiscoveryCompleted) {
-        conn.on("DiscoveryCompleted", handlers.onDiscoveryCompleted);
+        conn.on("DiscoveryCompleted", (event) => {
+          handlers.onDiscoveryCompleted?.({
+            result: event as DiscoveryScanResult,
+          });
+        });
       }
 
       return () => {
@@ -593,7 +766,9 @@ export function useNetworkHub(
         conn.on("WifiNetworkFound", handlers.onWifiNetworkFound);
       }
       if (handlers.onWifiScanCompleted) {
-        conn.on("WifiScanCompleted", handlers.onWifiScanCompleted);
+        conn.on("WifiScanCompleted", (event) =>
+          handlers.onWifiScanCompleted?.({ result: event as WifiScanResult })
+        );
       }
 
       return () => {

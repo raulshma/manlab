@@ -1,6 +1,8 @@
 import {
   Copy,
   ExternalLink,
+  Radio,
+  Route,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -20,6 +22,7 @@ import {
   getRiskColor,
 } from "./port-constants";
 import { CategoryIcon } from "./CategoryIcon";
+import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 
 interface PortCardProps {
   port: OpenPort;
@@ -27,6 +30,7 @@ interface PortCardProps {
 }
 
 export function PortCard({ port, host }: PortCardProps) {
+  const networkTools = useNetworkToolsOptional();
   const info = getPortInfo(port);
   const isWebPort = [80, 443, 8080, 8443, 3000, 4000, 5000].includes(port.port);
   const webProtocol = [443, 8443].includes(port.port) ? "https" : "http";
@@ -34,6 +38,20 @@ export function PortCard({ port, host }: PortCardProps) {
   const handleTestConnection = () => {
     window.open(`${webProtocol}://${host}:${port.port}`, "_blank");
   };
+
+  const handlePing = () => {
+    if (networkTools) {
+      networkTools.quickPing(host);
+    }
+  };
+
+  const handleTraceroute = () => {
+    if (networkTools) {
+      networkTools.quickTraceroute(host);
+    }
+  };
+
+  const hasQuickActions = !!networkTools;
 
   return (
     <div
@@ -92,6 +110,38 @@ export function PortCard({ port, host }: PortCardProps) {
                     : "Low: Generally safe when configured properly"}
             </TooltipContent>
           </Tooltip>
+
+          {/* Quick Actions */}
+          {hasQuickActions && (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handlePing}
+                    aria-label="Ping host"
+                  >
+                    <Radio className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Ping Host</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleTraceroute}
+                    aria-label="Traceroute to host"
+                  >
+                    <Route className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Traceroute</TooltipContent>
+              </Tooltip>
+            </>
+          )}
 
           {/* Copy Port */}
           <Tooltip>

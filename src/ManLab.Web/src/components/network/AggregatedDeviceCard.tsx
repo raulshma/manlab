@@ -2,9 +2,10 @@
  * AggregatedDeviceCard Component
  * Displays a card for a device grouped by IP address,
  * showing summary info with a button to view all details in a modal.
+ * Includes quick action buttons to ping, port scan, or traceroute the device.
  */
 
-import { Copy, Layers, Server } from "lucide-react";
+import { Copy, Layers, Radio, Route, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +21,7 @@ import {
   getUpnpDeviceType,
 } from "./device-constants";
 import { DeviceDetailModal } from "./DeviceDetailModal";
+import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 import type { AggregatedDevice } from "./device-aggregation";
 
 interface AggregatedDeviceCardProps {
@@ -27,6 +29,7 @@ interface AggregatedDeviceCardProps {
 }
 
 export function AggregatedDeviceCard({ device }: AggregatedDeviceCardProps) {
+  const networkTools = useNetworkToolsOptional();
   const totalServices = device.mdnsServices.length + device.upnpDevices.length;
   
   // Determine the primary device type for the icon
@@ -55,6 +58,27 @@ export function AggregatedDeviceCard({ device }: AggregatedDeviceCardProps) {
       ),
     ]),
   ].slice(0, 3);
+
+  // Quick action handlers
+  const handlePing = () => {
+    if (networkTools) {
+      networkTools.quickPing(device.ipAddress);
+    }
+  };
+
+  const handleTraceroute = () => {
+    if (networkTools) {
+      networkTools.quickTraceroute(device.ipAddress);
+    }
+  };
+
+  const handlePortScan = () => {
+    if (networkTools) {
+      networkTools.quickPortScan(device.ipAddress);
+    }
+  };
+
+  const hasQuickActions = !!networkTools;
 
   return (
     <Card className="hover:border-primary/50 transition-colors">
@@ -160,6 +184,51 @@ export function AggregatedDeviceCard({ device }: AggregatedDeviceCardProps) {
               </TooltipTrigger>
               <TooltipContent>Copy IP</TooltipContent>
             </Tooltip>
+            
+            {/* Quick Actions - only show if context is available */}
+            {hasQuickActions && (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handlePing}
+                      aria-label="Ping device"
+                    >
+                      <Radio className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Ping</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleTraceroute}
+                      aria-label="Traceroute to device"
+                    >
+                      <Route className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Traceroute</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handlePortScan}
+                      aria-label="Port scan device"
+                    >
+                      <Server className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Port Scan</TooltipContent>
+                </Tooltip>
+              </>
+            )}
           </div>
           
           {/* View All button that opens modal */}
@@ -167,7 +236,6 @@ export function AggregatedDeviceCard({ device }: AggregatedDeviceCardProps) {
             device={device}
             trigger={
               <Button variant="outline" size="sm">
-                <Server className="h-4 w-4 mr-1" />
                 View Details
               </Button>
             }

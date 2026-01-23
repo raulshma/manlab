@@ -16,6 +16,7 @@ public class NetworkHub : Hub
     private readonly IWifiScannerService _wifiScanner;
     private readonly IAuditLog _audit;
     private readonly NetworkRateLimitService _rateLimit;
+    private readonly IHubContext<NetworkHub> _hubContext;
 
     public NetworkHub(
         ILogger<NetworkHub> logger,
@@ -23,7 +24,8 @@ public class NetworkHub : Hub
         IDeviceDiscoveryService discovery,
         IWifiScannerService wifiScanner,
         IAuditLog audit,
-        NetworkRateLimitService rateLimit)
+        NetworkRateLimitService rateLimit,
+        IHubContext<NetworkHub> hubContext)
     {
         _logger = logger;
         _scanner = scanner;
@@ -31,6 +33,7 @@ public class NetworkHub : Hub
         _wifiScanner = wifiScanner;
         _audit = audit;
         _rateLimit = rateLimit;
+        _hubContext = hubContext;
     }
 
     /// <summary>
@@ -423,7 +426,7 @@ public class NetworkHub : Hub
                 foundHostCount++;
 
                 // Send host found event
-                await Clients.Group(GetScanGroup(scanId)).SendAsync("HostFound", new HostFoundEvent
+                await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("HostFound", new HostFoundEvent
                 {
                     ScanId = scanId,
                     Host = host
@@ -437,7 +440,7 @@ public class NetworkHub : Hub
                     var elapsedMs = (now - startedAt).TotalMilliseconds;
                     var estimatedScannedHosts = Math.Min(totalHosts, (int)(elapsedMs / estimatedTotalTimeMs * totalHosts));
                     
-                    await Clients.Group(GetScanGroup(scanId)).SendAsync("ScanProgress", new ScanProgressUpdate
+                    await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("ScanProgress", new ScanProgressUpdate
                     {
                         ScanId = scanId,
                         Cidr = cidr,
@@ -452,7 +455,7 @@ public class NetworkHub : Hub
             }
 
             // Send completion event
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("ScanCompleted", new ScanCompletedEvent
+            await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("ScanCompleted", new ScanCompletedEvent
             {
                 ScanId = scanId,
                 Cidr = cidr,
@@ -470,7 +473,7 @@ public class NetworkHub : Hub
         {
             _logger.LogError(ex, "Subnet scan {ScanId} failed", scanId);
 
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("ScanFailed", new ScanFailedEvent
+            await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("ScanFailed", new ScanFailedEvent
             {
                 ScanId = scanId,
                 Cidr = cidr,

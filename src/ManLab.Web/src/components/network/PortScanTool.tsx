@@ -88,6 +88,7 @@ import {
   ALL_COMMON_PORTS,
 } from "@/components/network/port-constants";
 import { announce, announceScanEvent } from "@/lib/accessibility";
+import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 const PortDistributionChart = lazy(
   () => import("@/components/network/PortDistributionChart")
 );
@@ -316,6 +317,9 @@ function exportToJSON(result: PortScanResult): void {
 // ============================================================================
 
 export function PortScanTool() {
+  // Network tools context for quick actions
+  const networkTools = useNetworkToolsOptional();
+
   // Form state
   const [host, setHost] = useState(() => getStoredString(PORT_HOST_KEY, ""));
   const [portMode, setPortMode] = useState<PortMode>("common");
@@ -323,7 +327,7 @@ export function PortScanTool() {
   const [customRangeEnd, setCustomRangeEnd] = useState("1000");
   const [specificPorts, setSpecificPorts] = useState("");
   const [concurrency, setConcurrency] = useState(() => getStoredNumber(PORT_CONCURRENCY_KEY, 50));
-  const [timeout, setTimeout] = useState(() => getStoredNumber(PORT_TIMEOUT_KEY, 2000));
+  const [timeout, setTimeoutMs] = useState(() => getStoredNumber(PORT_TIMEOUT_KEY, 2000));
   const [isLoading, setIsLoading] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [portValidationError, setPortValidationError] = useState<string | null>(null);
@@ -346,6 +350,32 @@ export function PortScanTool() {
 
   // Input ref for focus
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Handle pending action from context (e.g., quick port-scan from HostCard)
+  useEffect(() => {
+    if (
+      networkTools?.pendingAction?.type === "port-scan" &&
+      networkTools.pendingAction.target
+    ) {
+      const target = networkTools.pendingAction.target;
+      const options = networkTools.pendingAction.options;
+      setHost(target);
+      setValidationError(null);
+      
+      // If specific ports were requested, set them
+      if (options?.ports && options.ports.length > 0) {
+        setPortMode("specific");
+        setSpecificPorts(options.ports.join(", "));
+      }
+      
+      networkTools.clearPendingAction();
+      // Focus the input after setting the host
+      globalThis.setTimeout(() => {
+        inputRef.current?.focus();
+        notify.info(`Ready to scan ports on ${target}`);
+      }, 100);
+    }
+  }, [networkTools, networkTools?.pendingAction]);
 
   // Get ports based on mode
   const getPortsToScan = useCallback((): number[] => {
@@ -852,7 +882,7 @@ export function PortScanTool() {
                 value={[timeout]}
                 onValueChange={(value) => {
                   const newValue = Array.isArray(value) ? value[0] : value;
-                  setTimeout(newValue);
+                  setTimeoutMs(newValue);
                 }}
                 min={500}
                 max={10000}

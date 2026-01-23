@@ -13,13 +13,12 @@ import {
   Server,
   Wifi,
   Radar,
-  Activity,
-  ChevronDown,
+
   Database,
   RefreshCw,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
 import { PingTool } from "@/components/network/PingTool";
@@ -39,7 +38,7 @@ import {
   subscribeNotificationPreference,
   subscribeRealtimePreference,
 } from "@/lib/network-preferences";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { NetworkToolsProvider, type NetworkToolTab } from "@/contexts/NetworkToolsContext";
 
 // Connection status indicator with enhanced retry functionality
 function ConnectionIndicator({ 
@@ -106,11 +105,11 @@ function ConnectionIndicator({
 }
 
 export function NetworkScannerPage() {
-  const [activeTab, setActiveTab] = useState("ping");
+  const [activeTab, setActiveTab] = useState<NetworkToolTab>("ping");
   const { status, error } = useNetworkHub();
   const [realtimeEnabled, setRealtimeEnabledState] = useState(isRealtimeEnabled());
   const [notificationsEnabled, setNotificationsEnabledState] = useState(isNotificationsEnabled());
-  const [showQuickTools, setShowQuickTools] = useState(false);
+
 
   // Force reconnect by toggling realtime off and on
   const handleRetryConnection = useCallback(() => {
@@ -128,6 +127,10 @@ export function NetworkScannerPage() {
   }, []);
 
   return (
+    <NetworkToolsProvider
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+    >
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -169,361 +172,90 @@ export function NetworkScannerPage() {
         </div>
       </div>
 
-      {/* Tools Overview Cards - Quick Stats */}
-      <Collapsible open={showQuickTools} onOpenChange={setShowQuickTools}>
-        <div className="flex items-center justify-between sm:hidden">
-          <p className="text-sm font-medium text-muted-foreground">Quick tools</p>
-          <CollapsibleTrigger className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-2">
-            {showQuickTools ? "Hide" : "Show"}
-            <ChevronDown className={`h-4 w-4 transition-transform ${showQuickTools ? "rotate-180" : ""}`} />
-          </CollapsibleTrigger>
-        </div>
-        <CollapsibleContent className="sm:hidden">
-          <div className="grid gap-4">
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'ping' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('ping')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Radio className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Ping</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'subnet' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('subnet')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Search className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Subnet Scan</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'traceroute' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('traceroute')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Route className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Traceroute</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'ports' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('ports')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Server className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Port Scan</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'discovery' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('discovery')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Radar className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Discovery</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'wifi' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('wifi')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Wifi className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">WiFi</span>
-              </CardContent>
-            </Card>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
 
-      <div className="grid gap-6 lg:grid-cols-[260px_1fr] xl:grid-cols-[260px_1fr_320px]">
-        <aside className="hidden lg:block space-y-4">
-          <div className="grid gap-4">
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'ping' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('ping')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Radio className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Ping</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'subnet' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('subnet')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Search className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Subnet Scan</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'traceroute' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('traceroute')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Route className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Traceroute</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'ports' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('ports')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Server className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Port Scan</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'discovery' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('discovery')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Radar className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Discovery</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'wifi' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('wifi')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Wifi className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">WiFi</span>
-              </CardContent>
-            </Card>
-          </div>
-        </aside>
 
-        <div className="space-y-6">
-          <div className="hidden sm:grid lg:hidden gap-4 sm:grid-cols-2">
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'ping' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('ping')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Radio className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Ping</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'subnet' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('subnet')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Search className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Subnet Scan</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'traceroute' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('traceroute')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Route className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Traceroute</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'ports' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('ports')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Server className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Port Scan</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'discovery' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('discovery')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Radar className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">Discovery</span>
-              </CardContent>
-            </Card>
-            <Card 
-              className={`cursor-pointer transition-all hover:border-primary/50 ${activeTab === 'wifi' ? 'border-primary bg-primary/5' : ''}`}
-              onClick={() => setActiveTab('wifi')}
-            >
-              <CardContent className="p-4 flex flex-col items-center text-center">
-                <Wifi className="h-8 w-8 mb-2 text-primary" />
-                <span className="text-sm font-medium">WiFi</span>
-              </CardContent>
-            </Card>
-          </div>
+      {/* Main Content with Tabs */}
+      <Card className="border-0 shadow-none sm:border sm:shadow">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <CardHeader className="px-0 sm:px-6 pb-2">
+            <TabsList className="flex w-full overflow-x-auto justify-start h-auto p-1 scrollbar-hide snap-x bg-muted/50 rounded-lg">
+              <TabsTrigger value="ping" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Radio className="h-4 w-4" />
+                <span className="inline">Ping</span>
+              </TabsTrigger>
+              <TabsTrigger value="subnet" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Search className="h-4 w-4" />
+                <span className="inline">Subnet</span>
+              </TabsTrigger>
+              <TabsTrigger value="traceroute" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Route className="h-4 w-4" />
+                <span className="inline">Traceroute</span>
+              </TabsTrigger>
+              <TabsTrigger value="ports" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Server className="h-4 w-4" />
+                <span className="inline">Ports</span>
+              </TabsTrigger>
+              <TabsTrigger value="discovery" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Radar className="h-4 w-4" />
+                <span className="inline">Discovery</span>
+              </TabsTrigger>
+              <TabsTrigger value="wifi" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Wifi className="h-4 w-4" />
+                <span className="inline">WiFi</span>
+              </TabsTrigger>
+              <TabsTrigger value="geodb" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Database className="h-4 w-4" />
+                <span className="inline">GeoIP</span>
+              </TabsTrigger>
+            </TabsList>
+          </CardHeader>
 
-          {/* Main Content with Tabs */}
-          <Card>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <CardHeader className="pb-0">
-                <TabsList className="flex w-full overflow-x-auto justify-start h-auto p-1 scrollbar-hide snap-x sm:grid sm:grid-cols-4 lg:grid-cols-7">
-                  <TabsTrigger value="ping" className="gap-2 min-w-fit px-3 sm:px-2 flex-1 shrink-0 snap-center">
-                    <Radio className="h-4 w-4" />
-                    <span className="inline">Ping</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="subnet" className="gap-2 min-w-fit px-3 sm:px-2 flex-1 shrink-0 snap-center">
-                    <Search className="h-4 w-4" />
-                    <span className="inline">Subnet</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="traceroute" className="gap-2 min-w-fit px-3 sm:px-2 flex-1 shrink-0 snap-center">
-                    <Route className="h-4 w-4" />
-                    <span className="inline">Traceroute</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="ports" className="gap-2 min-w-fit px-3 sm:px-2 flex-1 shrink-0 snap-center">
-                    <Server className="h-4 w-4" />
-                    <span className="inline">Ports</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="discovery" className="gap-2 min-w-fit px-3 sm:px-2 flex-1 shrink-0 snap-center">
-                    <Radar className="h-4 w-4" />
-                    <span className="inline">Discovery</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="wifi" className="gap-2 min-w-fit px-3 sm:px-2 flex-1 shrink-0 snap-center">
-                    <Wifi className="h-4 w-4" />
-                    <span className="inline">WiFi</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="geodb" className="gap-2 min-w-fit px-3 sm:px-2 flex-1 shrink-0 snap-center">
-                    <Database className="h-4 w-4" />
-                    <span className="inline">GeoIP</span>
-                  </TabsTrigger>
-                </TabsList>
-              </CardHeader>
+          <CardContent className="pt-2 px-0 sm:px-6">
+            <TabsContent value="ping" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Ping Tool Error">
+                <PingTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
 
-              <CardContent className="pt-6">
-                <TabsContent value="ping" className="mt-0">
-                  <NetworkErrorBoundary fallbackTitle="Ping Tool Error">
-                    <PingTool />
-                  </NetworkErrorBoundary>
-                </TabsContent>
+            <TabsContent value="subnet" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Subnet Scanner Error">
+                <SubnetScanTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
 
-                <TabsContent value="subnet" className="mt-0">
-                  <NetworkErrorBoundary fallbackTitle="Subnet Scanner Error">
-                    <SubnetScanTool />
-                  </NetworkErrorBoundary>
-                </TabsContent>
+            <TabsContent value="traceroute" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Traceroute Tool Error">
+                <TracerouteTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
 
-                <TabsContent value="traceroute" className="mt-0">
-                  <NetworkErrorBoundary fallbackTitle="Traceroute Tool Error">
-                    <TracerouteTool />
-                  </NetworkErrorBoundary>
-                </TabsContent>
+            <TabsContent value="ports" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Port Scanner Error">
+                <PortScanTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
 
-                <TabsContent value="ports" className="mt-0">
-                  <NetworkErrorBoundary fallbackTitle="Port Scanner Error">
-                    <PortScanTool />
-                  </NetworkErrorBoundary>
-                </TabsContent>
+            <TabsContent value="discovery" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Device Discovery Error">
+                <DeviceDiscoveryTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
 
-                <TabsContent value="discovery" className="mt-0">
-                  <NetworkErrorBoundary fallbackTitle="Device Discovery Error">
-                    <DeviceDiscoveryTool />
-                  </NetworkErrorBoundary>
-                </TabsContent>
+            <TabsContent value="wifi" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="WiFi Scanner Error">
+                <WifiScannerTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
 
-                <TabsContent value="wifi" className="mt-0">
-                  <NetworkErrorBoundary fallbackTitle="WiFi Scanner Error">
-                    <WifiScannerTool />
-                  </NetworkErrorBoundary>
-                </TabsContent>
-
-                <TabsContent value="geodb" className="mt-0">
-                  <NetworkErrorBoundary fallbackTitle="Geolocation Database Error">
-                    <GeolocationDbManager />
-                  </NetworkErrorBoundary>
-                </TabsContent>
-              </CardContent>
-            </Tabs>
-          </Card>
-
-          {/* Feature Info Footer (below on smaller screens) */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2 xl:hidden">
-            <Card className="border-dashed">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-green-500" />
-                  Real-Time Updates
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CardDescription>
-                  All scanning operations support real-time progress updates via SignalR WebSocket connection.
-                </CardDescription>
-              </CardContent>
-            </Card>
-            <Card className="border-dashed">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Server className="h-4 w-4 text-blue-500" />
-                  Cross-Platform
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CardDescription>
-                  Network scanning works on both Windows and Linux servers with platform-specific optimizations.
-                </CardDescription>
-              </CardContent>
-            </Card>
-            <Card className="border-dashed">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Network className="h-4 w-4 text-purple-500" />
-                  Secure Scanning
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CardDescription>
-                  Scans are restricted to private network ranges with rate limiting and audit logging.
-                </CardDescription>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-
-        <div className="hidden xl:grid gap-4">
-          <Card className="border-dashed">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Activity className="h-4 w-4 text-green-500" />
-                Real-Time Updates
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <CardDescription>
-                All scanning operations support real-time progress updates via SignalR WebSocket connection.
-              </CardDescription>
-            </CardContent>
-          </Card>
-          <Card className="border-dashed">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Server className="h-4 w-4 text-blue-500" />
-                Cross-Platform
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <CardDescription>
-                Network scanning works on both Windows and Linux servers with platform-specific optimizations.
-              </CardDescription>
-            </CardContent>
-          </Card>
-          <Card className="border-dashed">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Network className="h-4 w-4 text-purple-500" />
-                Secure Scanning
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <CardDescription>
-                Scans are restricted to private network ranges with rate limiting and audit logging.
-              </CardDescription>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+            <TabsContent value="geodb" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Geolocation Database Error">
+                <GeolocationDbManager />
+              </NetworkErrorBoundary>
+            </TabsContent>
+          </CardContent>
+        </Tabs>
+      </Card>
     </div>
+    </NetworkToolsProvider>
   );
 }

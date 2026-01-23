@@ -152,7 +152,7 @@ function normalizeUpnpDevice(raw: UpnpDeviceLike): UpnpDevice {
 
 export function DeviceDiscoveryTool() {
   // Configuration state
-  const [scanDuration, setScanDuration] = useState(() => getStoredNumber(DISCOVERY_DURATION_KEY, 5));
+  const [scanDuration, setScanDuration] = useState(() => getStoredNumber(DISCOVERY_DURATION_KEY, 10));
   const [discoveryMode, setDiscoveryMode] = useState<DiscoveryMode>(
     () => getStoredString(DISCOVERY_MODE_KEY, "both") as DiscoveryMode
   );
@@ -450,7 +450,8 @@ export function DeviceDiscoveryTool() {
             Device Discovery
           </CardTitle>
           <CardDescription>
-            Discover smart devices on your network using mDNS (Bonjour/Avahi) and UPnP/SSDP protocols
+            Discover smart devices on your network using mDNS (Bonjour/Avahi) and UPnP/SSDP protocols.
+            Devices that do not advertise these protocols (phones, laptops, many IoT devices) may not appear—use Subnet Scan for a full inventory.
           </CardDescription>
         </CardHeader>
         <CardContent>

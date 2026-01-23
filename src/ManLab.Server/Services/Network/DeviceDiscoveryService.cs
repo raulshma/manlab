@@ -71,48 +71,55 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(scanDurationSeconds));
 
-            // Create service browser for each service type
             var browsers = new List<ServiceBrowser>();
             
+            // Track which service types we've already started browsing to avoid duplicates
+            var browsedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Handler for discovered services
+            void HandleServiceAdded(object? sender, ServiceAnnouncementEventArgs e)
+            {
+                try
+                {
+                    var key = $"{e.Announcement.Hostname}:{e.Announcement.Port}:{e.Announcement.Type}";
+                    
+                    var device = new MdnsDiscoveredDevice
+                    {
+                        Name = e.Announcement.Instance,
+                        ServiceType = e.Announcement.Type,
+                        Hostname = e.Announcement.Hostname,
+                        IpAddresses = e.Announcement.Addresses?.Select(a => a.ToString()).ToList() ?? [],
+                        Port = e.Announcement.Port,
+                        TxtRecords = e.Announcement.Txt?.ToDictionary(t => 
+                            t.Contains('=') ? t.Split('=')[0] : t,
+                            t => t.Contains('=') ? t.Split('=', 2)[1] : string.Empty) ?? [],
+                        NetworkInterface = e.Announcement.NetworkInterface?.Name,
+                        DiscoveredAt = DateTime.UtcNow
+                    };
+
+                    discovered.TryAdd(key, device);
+                    
+                    _logger.LogDebug(
+                        "mDNS: Discovered {Name} ({Type}) at {Host}:{Port}",
+                        device.Name,
+                        device.ServiceType,
+                        device.Hostname,
+                        device.Port);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error processing mDNS service announcement");
+                }
+            }
+
+            // Create service browser for each predefined service type
             foreach (var serviceType in serviceTypes)
             {
+                if (!browsedTypes.Add(serviceType))
+                    continue;
+                    
                 var browser = new ServiceBrowser();
-                
-                browser.ServiceAdded += (s, e) =>
-                {
-                    try
-                    {
-                        var key = $"{e.Announcement.Hostname}:{e.Announcement.Port}:{e.Announcement.Type}";
-                        
-                        var device = new MdnsDiscoveredDevice
-                        {
-                            Name = e.Announcement.Instance,
-                            ServiceType = e.Announcement.Type,
-                            Hostname = e.Announcement.Hostname,
-                            IpAddresses = e.Announcement.Addresses?.Select(a => a.ToString()).ToList() ?? [],
-                            Port = e.Announcement.Port,
-                            TxtRecords = e.Announcement.Txt?.ToDictionary(t => 
-                                t.Contains('=') ? t.Split('=')[0] : t,
-                                t => t.Contains('=') ? t.Split('=', 2)[1] : string.Empty) ?? [],
-                            NetworkInterface = e.Announcement.NetworkInterface?.Name,
-                            DiscoveredAt = DateTime.UtcNow
-                        };
-
-                        discovered.TryAdd(key, device);
-                        
-                        _logger.LogDebug(
-                            "mDNS: Discovered {Name} ({Type}) at {Host}:{Port}",
-                            device.Name,
-                            device.ServiceType,
-                            device.Hostname,
-                            device.Port);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Error processing mDNS service announcement");
-                    }
-                };
-
+                browser.ServiceAdded += HandleServiceAdded;
                 browser.StartBrowse(serviceType);
                 browsers.Add(browser);
             }
@@ -127,7 +134,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                 // Expected when duration expires or caller cancels
             }
 
-            // Cleanup browsers
+            // Cleanup all browsers
             foreach (var browser in browsers)
             {
                 try

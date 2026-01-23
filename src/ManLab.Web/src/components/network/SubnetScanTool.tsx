@@ -320,6 +320,8 @@ export function SubnetScanTool() {
 
   // Subscribe to scan events
   useEffect(() => {
+    if (!isConnected) return;
+
     const unsubscribe = subscribeToSubnetScan({
       onScanStarted: (event) => {
         setRateLimitMessage(null);
@@ -398,7 +400,7 @@ export function SubnetScanTool() {
     });
 
     return unsubscribe;
-  }, [subscribeToSubnetScan]);
+  }, [isConnected, subscribeToSubnetScan]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

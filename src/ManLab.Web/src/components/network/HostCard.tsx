@@ -15,12 +15,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { notify } from "@/lib/network-notify";
+import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 import type { DiscoveredHost } from "@/api/networkApi";
 
 interface HostCardProps {
   host: DiscoveredHost;
+  /** @deprecated Use NetworkToolsContext instead - will use context if available */
   onPing?: (ip: string) => void;
+  /** @deprecated Use NetworkToolsContext instead - will use context if available */
   onTraceroute?: (ip: string) => void;
+  /** @deprecated Use NetworkToolsContext instead - will use context if available */
   onPortScan?: (ip: string) => void;
 }
 
@@ -39,6 +43,33 @@ async function copyToClipboard(text: string): Promise<void> {
 }
 
 export function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardProps) {
+  // Use context if available, fallback to props
+  const networkTools = useNetworkToolsOptional();
+
+  const handlePing = () => {
+    if (networkTools) {
+      networkTools.quickPing(host.ipAddress);
+    } else if (onPing) {
+      onPing(host.ipAddress);
+    }
+  };
+
+  const handleTraceroute = () => {
+    if (networkTools) {
+      networkTools.quickTraceroute(host.ipAddress);
+    } else if (onTraceroute) {
+      onTraceroute(host.ipAddress);
+    }
+  };
+
+  const handlePortScan = () => {
+    if (networkTools) {
+      networkTools.quickPortScan(host.ipAddress);
+    } else if (onPortScan) {
+      onPortScan(host.ipAddress);
+    }
+  };
+
   return (
     <Card className="hover:border-primary/50 transition-colors">
       <CardContent className="p-4">
@@ -104,7 +135,7 @@ export function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardPro
           <Tooltip>
             <TooltipTrigger
               className={buttonVariants({ variant: "ghost", size: "sm" })}
-              onClick={() => onPing?.(host.ipAddress)}
+              onClick={handlePing}
               aria-label="Ping host"
             >
               <Radio className="h-4 w-4" />
@@ -114,7 +145,7 @@ export function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardPro
           <Tooltip>
             <TooltipTrigger
               className={buttonVariants({ variant: "ghost", size: "sm" })}
-              onClick={() => onTraceroute?.(host.ipAddress)}
+              onClick={handleTraceroute}
               aria-label="Traceroute host"
             >
               <Route className="h-4 w-4" />
@@ -124,7 +155,7 @@ export function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardPro
           <Tooltip>
             <TooltipTrigger
               className={buttonVariants({ variant: "ghost", size: "sm" })}
-              onClick={() => onPortScan?.(host.ipAddress)}
+              onClick={handlePortScan}
               aria-label="Port scan host"
             >
               <Server className="h-4 w-4" />
