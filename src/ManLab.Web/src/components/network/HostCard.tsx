@@ -102,8 +102,8 @@ export function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardPro
               </div>
             )}
 
-            {/* MAC Address & Vendor */}
-            {(host.macAddress || host.vendor) && (
+            {/* MAC Address, Vendor & Device Type */}
+            {(host.macAddress || host.vendor || host.deviceType) && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 {host.macAddress && (
                   <span className="font-mono">{host.macAddress}</span>
@@ -111,6 +111,11 @@ export function HostCard({ host, onPing, onTraceroute, onPortScan }: HostCardPro
                 {host.vendor && (
                   <Badge variant="outline" className="text-xs">
                     {host.vendor}
+                  </Badge>
+                )}
+                {host.deviceType && (
+                  <Badge variant="secondary" className="text-xs">
+                    {host.deviceType}
                   </Badge>
                 )}
               </div>

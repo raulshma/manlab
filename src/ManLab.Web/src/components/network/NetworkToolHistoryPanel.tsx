@@ -50,11 +50,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -146,7 +141,7 @@ function HistoryRow({ entry, onDelete }: HistoryRowProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+    <>
       <TableRow className="group">
         <TableCell>
           <div className="flex items-center gap-2">
@@ -181,15 +176,18 @@ function HistoryRow({ entry, onDelete }: HistoryRowProps) {
         </TableCell>
         <TableCell>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <CollapsibleTrigger>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                {isOpen ? (
-                  <ChevronUp className="h-4 w-4" />
-                ) : (
-                  <ChevronDown className="h-4 w-4" />
-                )}
-              </Button>
-            </CollapsibleTrigger>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-8 w-8"
+              onClick={() => setIsOpen(!isOpen)}
+            >
+              {isOpen ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </Button>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -206,7 +204,7 @@ function HistoryRow({ entry, onDelete }: HistoryRowProps) {
           </div>
         </TableCell>
       </TableRow>
-      <CollapsibleContent>
+      {isOpen && (
         <TableRow className="bg-muted/30">
           <TableCell colSpan={6} className="p-4">
             <div className="grid gap-4 md:grid-cols-2">
@@ -239,8 +237,8 @@ function HistoryRow({ entry, onDelete }: HistoryRowProps) {
             </div>
           </TableCell>
         </TableRow>
-      </CollapsibleContent>
-    </Collapsible>
+      )}
+    </>
   );
 }
 
@@ -351,11 +349,11 @@ export function NetworkToolHistoryPanel() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[140px]">Tool</TableHead>
+                    <TableHead className="w-[180px]">Tool</TableHead>
                     <TableHead>Target</TableHead>
                     <TableHead className="w-[100px]">Status</TableHead>
                     <TableHead className="w-[100px]">Duration</TableHead>
-                    <TableHead className="w-[120px]">Time</TableHead>
+                    <TableHead className="w-[140px]">Time</TableHead>
                     <TableHead className="w-[80px]" />
                   </TableRow>
                 </TableHeader>

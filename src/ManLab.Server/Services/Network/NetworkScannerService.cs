@@ -147,6 +147,36 @@ public sealed class NetworkScannerService : INetworkScannerService
                                 }
                                 catch (SocketException) { /* No DNS entry */ }
 
+                                // MAC Address + Vendor (best effort)
+                                if (_arpService is not null)
+                                {
+                                    try
+                                    {
+                                        var mac = await _arpService.GetMacAddressAsync(ip, ct);
+                                        if (mac is not null)
+                                        {
+                                            host = host with { MacAddress = mac };
+
+                                            if (_ouiDatabase is not null)
+                                            {
+                                                var vendor = _ouiDatabase.LookupVendor(mac);
+                                                host = host with { Vendor = vendor };
+                                            }
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogDebug(ex, "Failed to get MAC/vendor for {IP}", ip);
+                                    }
+                                }
+
+                                // Device type inference (best effort)
+                                var deviceType = InferDeviceType(host.Vendor, host.Hostname);
+                                if (!string.IsNullOrWhiteSpace(deviceType))
+                                {
+                                    host = host with { DeviceType = deviceType };
+                                }
+
                                 await channel.Writer.WriteAsync(host, ct);
                             }
                         }
@@ -231,7 +261,7 @@ public sealed class NetworkScannerService : INetworkScannerService
                 var reply = await ping.SendPingAsync(hostname, timeout, buffer, options);
                 
                 string? hopHostname = null;
-                if (reply.Address is not null)
+                if (reply.Address is not null && !IsUnspecifiedAddress(reply.Address))
                 {
                     try
                     {
@@ -239,6 +269,7 @@ public sealed class NetworkScannerService : INetworkScannerService
                         hopHostname = hostEntry.HostName;
                     }
                     catch (SocketException) { /* No reverse DNS */ }
+                    catch (ArgumentException) { /* Unspecified/invalid address */ }
                 }
 
                 var hop = new TracerouteHop
@@ -402,6 +433,12 @@ public sealed class NetworkScannerService : INetworkScannerService
             }
         }
 
+        var inferredType = InferDeviceType(info.Vendor, info.Hostname);
+        if (!string.IsNullOrWhiteSpace(inferredType))
+        {
+            info = info with { DeviceType = inferredType };
+        }
+
         return info;
     }
 
@@ -467,4 +504,64 @@ public sealed class NetworkScannerService : INetworkScannerService
             yield return new IPAddress(ipBytes);
         }
     }
+
+    private static string? InferDeviceType(string? vendor, string? hostname)
+    {
+        static bool Contains(string? value, string token)
+            => value?.Contains(token, StringComparison.OrdinalIgnoreCase) == true;
+
+        if (Contains(vendor, "raspberry") || Contains(hostname, "raspberry") || Contains(hostname, "raspberrypi"))
+            return "Raspberry Pi";
+
+        if (Contains(vendor, "apple") || Contains(hostname, "iphone") || Contains(hostname, "ipad") ||
+            Contains(hostname, "mac") || Contains(hostname, "apple"))
+            return "Apple";
+
+        if (Contains(vendor, "samsung") || Contains(hostname, "samsung") || Contains(hostname, "galaxy"))
+            return "Samsung";
+
+        if (Contains(vendor, "tuya") || Contains(vendor, "espressif") || Contains(vendor, "sonoff") ||
+            Contains(vendor, "shelly") || Contains(vendor, "aqara") || Contains(vendor, "xiaomi") ||
+            Contains(vendor, "hue") || Contains(vendor, "philips") || Contains(hostname, "iot"))
+            return "IoT";
+
+        if (Contains(vendor, "tp-link") || Contains(vendor, "tplink") || Contains(vendor, "netgear") ||
+            Contains(vendor, "linksys") || Contains(vendor, "cisco") || Contains(vendor, "mikrotik") ||
+            Contains(vendor, "ubiquiti") || Contains(vendor, "asus") || Contains(hostname, "router") ||
+            Contains(hostname, "gateway"))
+            return "Router";
+
+        if (Contains(vendor, "printer") || Contains(vendor, "hp") || Contains(vendor, "hewlett") ||
+            Contains(vendor, "epson") || Contains(vendor, "brother") || Contains(vendor, "canon") ||
+            Contains(hostname, "printer"))
+            return "Printer";
+
+        if (Contains(vendor, "camera") || Contains(vendor, "hikvision") || Contains(vendor, "dahua") ||
+            Contains(hostname, "camera"))
+            return "Camera";
+
+        if (Contains(vendor, "tv") || Contains(vendor, "television") || Contains(vendor, "roku") ||
+            Contains(vendor, "chromecast") || Contains(vendor, "firetv") || Contains(vendor, "lg") ||
+            Contains(hostname, "tv") || Contains(hostname, "television"))
+            return "TV";
+
+        if (Contains(vendor, "speaker") || Contains(vendor, "sonos") || Contains(hostname, "speaker"))
+            return "Speaker";
+
+        if (Contains(vendor, "synology") || Contains(vendor, "qnap") || Contains(vendor, "server") ||
+            Contains(hostname, "server") || Contains(hostname, "nas"))
+            return "Server";
+
+        if (Contains(hostname, "laptop") || Contains(hostname, "desktop") || Contains(hostname, "pc") ||
+            Contains(hostname, "windows") || Contains(hostname, "macbook") || Contains(hostname, "imac"))
+            return "Computer";
+
+        if (Contains(hostname, "phone") || Contains(hostname, "android") || Contains(hostname, "iphone"))
+            return "Phone";
+
+        return null;
+    }
+
+    private static bool IsUnspecifiedAddress(IPAddress address)
+        => address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any);
 }

@@ -72,6 +72,11 @@ public record DiscoveredHost
     /// The vendor name (from OUI database lookup).
     /// </summary>
     public string? Vendor { get; init; }
+
+    /// <summary>
+    /// The inferred device type (best-effort).
+    /// </summary>
+    public string? DeviceType { get; init; }
     
     /// <summary>
     /// When this host was discovered.
@@ -249,6 +254,11 @@ public record DeviceInfo
     /// The vendor name (from OUI database).
     /// </summary>
     public string? Vendor { get; init; }
+
+    /// <summary>
+    /// The inferred device type (best-effort).
+    /// </summary>
+    public string? DeviceType { get; init; }
     
     /// <summary>
     /// Response time in milliseconds.

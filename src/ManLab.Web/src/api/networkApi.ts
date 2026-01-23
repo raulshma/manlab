@@ -46,6 +46,7 @@ export interface DiscoveredHost {
   hostname: string | null;
   macAddress: string | null;
   vendor: string | null;
+  deviceType: string | null;
   roundtripTime: number;
   ttl: number | null;
 }
@@ -138,6 +139,7 @@ export interface DeviceInfo {
   hostname: string | null;
   macAddress: string | null;
   vendor: string | null;
+  deviceType: string | null;
   responseTimeMs: number | null;
 }
 

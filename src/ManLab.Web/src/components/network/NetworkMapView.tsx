@@ -541,6 +541,12 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                         <p className="text-sm">{selectedNode.host.vendor}</p>
                       </div>
                     )}
+                    {selectedNode.host.deviceType && (
+                      <div>
+                        <p className="text-xs text-muted-foreground">Device Type</p>
+                        <p className="text-sm">{selectedNode.host.deviceType}</p>
+                      </div>
+                    )}
                     <div>
                       <p className="text-xs text-muted-foreground">Response Time</p>
                       <p className="text-sm">{selectedNode.host.roundtripTime}ms</p>

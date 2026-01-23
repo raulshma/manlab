@@ -74,7 +74,7 @@ import {
 // Types
 // ============================================================================
 
-type SortField = "ip" | "hostname" | "rtt" | "vendor";
+type SortField = "ip" | "hostname" | "rtt" | "vendor" | "type";
 type SortDirection = "asc" | "desc";
 
 interface ScanState {
@@ -207,6 +207,9 @@ function sortHosts(
       case "vendor":
         comparison = (a.vendor || "").localeCompare(b.vendor || "");
         break;
+      case "type":
+        comparison = (a.deviceType || "").localeCompare(b.deviceType || "");
+        break;
     }
 
     return direction === "asc" ? comparison : -comparison;
@@ -224,7 +227,8 @@ function filterHosts(hosts: DiscoveredHost[], query: string): DiscoveredHost[] {
       h.ipAddress.includes(lowerQuery) ||
       h.hostname?.toLowerCase().includes(lowerQuery) ||
       h.macAddress?.toLowerCase().includes(lowerQuery) ||
-      h.vendor?.toLowerCase().includes(lowerQuery)
+      h.vendor?.toLowerCase().includes(lowerQuery) ||
+      h.deviceType?.toLowerCase().includes(lowerQuery)
   );
 }
 
@@ -232,12 +236,21 @@ function filterHosts(hosts: DiscoveredHost[], query: string): DiscoveredHost[] {
  * Export hosts to CSV
  */
 function exportToCSV(hosts: DiscoveredHost[]): void {
-  const headers = ["IP Address", "Hostname", "MAC Address", "Vendor", "RTT (ms)", "TTL"];
+  const headers = [
+    "IP Address",
+    "Hostname",
+    "MAC Address",
+    "Vendor",
+    "Device Type",
+    "RTT (ms)",
+    "TTL",
+  ];
   const rows = hosts.map((h) => [
     h.ipAddress,
     h.hostname || "",
     h.macAddress || "",
     h.vendor || "",
+    h.deviceType || "",
     h.roundtripTime.toString(),
     h.ttl?.toString() || "",
   ]);
@@ -792,6 +805,7 @@ export function SubnetScanTool() {
                   <SelectItem value="hostname">Hostname</SelectItem>
                   <SelectItem value="rtt">Response Time</SelectItem>
                   <SelectItem value="vendor">Vendor</SelectItem>
+                  <SelectItem value="type">Device Type</SelectItem>
                 </SelectContent>
               </Select>
 
