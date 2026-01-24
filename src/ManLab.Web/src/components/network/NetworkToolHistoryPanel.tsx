@@ -66,6 +66,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuCheckboxItem,
@@ -649,26 +650,27 @@ export function NetworkToolHistoryPanel() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-56">
-                    <DropdownMenuLabel>Filter tools</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {TOOL_TYPES.map((type) => (
-                      <DropdownMenuCheckboxItem
-                        key={type}
-                        checked={query.toolTypes.includes(type)}
-                        onCheckedChange={(checked) => {
-                          setQuery({
-                            toolTypes: checked
-                              ? [...query.toolTypes, type]
-                              : query.toolTypes.filter((item) => item !== type),
-                          });
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          {getToolIcon(type)}
-                          {getToolLabel(type)}
-                        </div>
-                      </DropdownMenuCheckboxItem>
-                    ))}
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>Filter tools</DropdownMenuLabel>
+                      {TOOL_TYPES.map((type) => (
+                        <DropdownMenuCheckboxItem
+                          key={type}
+                          checked={query.toolTypes.includes(type)}
+                          onCheckedChange={(checked) => {
+                            setQuery({
+                              toolTypes: checked
+                                ? [...query.toolTypes, type]
+                                : query.toolTypes.filter((item) => item !== type),
+                            });
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            {getToolIcon(type)}
+                            {getToolLabel(type)}
+                          </div>
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuGroup>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => setQuery({ toolTypes: [] })}>Clear filters</DropdownMenuItem>
                   </DropdownMenuContent>
