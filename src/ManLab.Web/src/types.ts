@@ -339,6 +339,75 @@ export interface ServiceMonitorConfig {
 }
 
 /**
+ * Monitoring: HTTP health monitor configuration
+ */
+export interface HttpMonitorConfig {
+  id: string;
+  name: string;
+  url: string;
+  method: string | null;
+  expectedStatus: number | null;
+  bodyContains: string | null;
+  timeoutMs: number;
+  cron: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAtUtc: string | null;
+  lastSuccessAtUtc: string | null;
+}
+
+export interface HttpMonitorCheck {
+  id: number;
+  monitorId: string;
+  timestampUtc: string;
+  statusCode: number | null;
+  success: boolean;
+  responseTimeMs: number;
+  keywordMatched: boolean | null;
+  sslDaysRemaining: number | null;
+  errorMessage: string | null;
+}
+
+/**
+ * Monitoring: traffic monitor config + samples
+ */
+export interface TrafficMonitorConfig {
+  id: string;
+  interfaceName: string | null;
+  cron: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAtUtc: string | null;
+}
+
+export interface TrafficSample {
+  id: number;
+  interfaceName: string;
+  timestampUtc: string;
+  rxBytesPerSec: number | null;
+  txBytesPerSec: number | null;
+  rxErrors: number | null;
+  txErrors: number | null;
+  speedBps: number | null;
+  utilizationPercent: number | null;
+}
+
+/**
+ * Monitoring: job summary
+ */
+export interface MonitorJobSummary {
+  id: string;
+  type: "http" | "traffic";
+  name: string;
+  schedule: string;
+  enabled: boolean;
+  lastRunAtUtc: string | null;
+  nextRunAtUtc: string | null;
+}
+
+/**
  * Enhancements: Log viewer policy + session
  */
 export interface LogViewerPolicy {

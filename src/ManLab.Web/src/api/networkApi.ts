@@ -1712,6 +1712,145 @@ export interface WifiScanCompletedEvent {
 }
 
 // ============================================================================
+// Syslog + Packet Capture API
+// ============================================================================
+
+export async function getSyslogStatus(options?: RequestOptions): Promise<SyslogStatus> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<SyslogStatus>("/network/syslog/status", options);
+    return data;
+  });
+}
+
+export async function getRecentSyslogMessages(
+  count: number = 200,
+  options?: RequestOptions
+): Promise<SyslogMessage[]> {
+  return withNetworkRetry(async () => {
+    const params = new URLSearchParams({ count: String(count) });
+    const { data } = await api.get<SyslogMessage[]>(`/network/syslog/recent?${params.toString()}`, options);
+    return data;
+  });
+}
+
+export async function clearSyslogMessages(options?: RequestOptions): Promise<void> {
+  await withNetworkRetry(async () => {
+    await api.post("/network/syslog/clear", {}, options);
+  });
+}
+
+export async function getPacketCaptureStatus(options?: RequestOptions): Promise<PacketCaptureStatus> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<PacketCaptureStatus>("/network/packet-capture/status", options);
+    return data;
+  });
+}
+
+export async function getPacketCaptureDevices(options?: RequestOptions): Promise<PacketCaptureDeviceInfo[]> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<PacketCaptureDeviceInfo[]>("/network/packet-capture/devices", options);
+    return data;
+  });
+}
+
+export async function getRecentCapturedPackets(
+  count: number = 200,
+  options?: RequestOptions
+): Promise<PacketCaptureRecord[]> {
+  return withNetworkRetry(async () => {
+    const params = new URLSearchParams({ count: String(count) });
+    const { data } = await api.get<PacketCaptureRecord[]>(`/network/packet-capture/recent?${params.toString()}`, options);
+    return data;
+  });
+}
+
+export async function startPacketCapture(
+  request: PacketCaptureStartRequest,
+  options?: RequestOptions
+): Promise<PacketCaptureStatus> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<PacketCaptureStatus>("/network/packet-capture/start", request, options);
+    return data;
+  });
+}
+
+export async function stopPacketCapture(options?: RequestOptions): Promise<PacketCaptureStatus> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<PacketCaptureStatus>("/network/packet-capture/stop", {}, options);
+    return data;
+  });
+}
+
+export async function clearPacketCapture(options?: RequestOptions): Promise<void> {
+  await withNetworkRetry(async () => {
+    await api.post("/network/packet-capture/clear", {}, options);
+  });
+}
+
+// ============================================================================
+// Syslog + Packet Capture Types
+// ============================================================================
+
+export interface SyslogStatus {
+  enabled: boolean;
+  isListening: boolean;
+  port: number;
+  error: string | null;
+  bufferedCount: number;
+  droppedCount: number;
+}
+
+export interface SyslogMessage {
+  id: number;
+  receivedAtUtc: string;
+  facility: number | null;
+  severity: number | null;
+  host: string | null;
+  appName: string | null;
+  procId: string | null;
+  msgId: string | null;
+  message: string;
+  raw: string;
+  sourceIp: string | null;
+  sourcePort: number | null;
+}
+
+export interface PacketCaptureStatus {
+  enabled: boolean;
+  isCapturing: boolean;
+  deviceName: string | null;
+  filter: string | null;
+  error: string | null;
+  bufferedCount: number;
+  droppedCount: number;
+}
+
+export interface PacketCaptureDeviceInfo {
+  name: string;
+  description: string | null;
+  isLoopback: boolean;
+}
+
+export interface PacketCaptureRecord {
+  id: number;
+  capturedAtUtc: string;
+  source: string | null;
+  destination: string | null;
+  protocol: string | null;
+  length: number;
+  sourcePort: number | null;
+  destinationPort: number | null;
+  sourceMac: string | null;
+  destinationMac: string | null;
+  info: string | null;
+}
+
+export interface PacketCaptureStartRequest {
+  deviceName?: string | null;
+  filter?: string | null;
+}
+
+// ============================================================================
 // Network Tool History Types & Functions
 // ============================================================================
 

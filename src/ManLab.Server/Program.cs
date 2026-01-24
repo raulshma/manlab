@@ -6,12 +6,14 @@ using ManLab.Server.Services.Commands;
 using ManLab.Server.Services.Enhancements;
 using ManLab.Server.Services.Audit;
 using ManLab.Server.Services.Network;
+using ManLab.Server.Services.Monitoring;
 using ManLab.Server.Services.Persistence;
 using ManLab.Server.Services.Retention;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Quartz;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -95,8 +97,20 @@ builder.Services.AddSingleton<LocalAgentInstallationService>();
 builder.Services.AddScoped<ManLab.Server.Services.CredentialEncryptionService>();
 
 builder.Services.AddHttpClient();
+builder.Services.AddQuartz(options =>
+{
+    options.UseMicrosoftDependencyInjectionJobFactory();
+});
+builder.Services.AddQuartzHostedService(options =>
+{
+    options.WaitForJobsToComplete = true;
+});
 builder.Services.AddOptions<SpeedTestOptions>()
     .Bind(builder.Configuration.GetSection(SpeedTestOptions.SectionName));
+builder.Services.AddOptions<SyslogOptions>()
+    .Bind(builder.Configuration.GetSection(SyslogOptions.SectionName));
+builder.Services.AddOptions<PacketCaptureOptions>()
+    .Bind(builder.Configuration.GetSection(PacketCaptureOptions.SectionName));
 builder.Services.AddOptions<DiscordOptions>()
     .Bind(builder.Configuration.GetSection(DiscordOptions.SectionName))
     .Validate(o => string.IsNullOrWhiteSpace(o.WebhookUrl) || Uri.IsWellFormedUriString(o.WebhookUrl, UriKind.Absolute),
@@ -128,6 +142,15 @@ builder.Services.AddSingleton<ManLab.Server.Services.Network.INetworkScannerServ
 builder.Services.AddSingleton<ManLab.Server.Services.Network.INetworkTopologyService, ManLab.Server.Services.Network.NetworkTopologyService>();
 builder.Services.AddSingleton<ISpeedTestService, SpeedTestService>();
 builder.Services.AddSingleton<ISnmpService, SnmpService>();
+
+// Syslog receiver + packet capture
+builder.Services.AddSingleton<SyslogReceiverService>();
+builder.Services.AddSingleton<ISyslogMessageStore>(sp => sp.GetRequiredService<SyslogReceiverService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SyslogReceiverService>());
+
+builder.Services.AddSingleton<PacketCaptureService>();
+builder.Services.AddSingleton<IPacketCaptureService>(sp => sp.GetRequiredService<PacketCaptureService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PacketCaptureService>());
 
 // mDNS/UPnP device discovery
 builder.Services.AddSingleton<ManLab.Server.Services.Network.IDeviceDiscoveryService, ManLab.Server.Services.Network.DeviceDiscoveryService>();
@@ -165,6 +188,8 @@ builder.Services.AddHostedService<CommandDispatchService>();
 // Background services
 builder.Services.AddHostedService<HealthMonitorService>();
 builder.Services.AddHostedService<ServiceMonitorSchedulerService>();
+builder.Services.AddSingleton<MonitorJobScheduler>();
+builder.Services.AddHostedService<MonitorJobBootstrapper>();
 
 // Retention cleanup (snapshot tables)
 builder.Services.AddOptions<RetentionOptions>()
@@ -250,6 +275,30 @@ await using (var scope = app.Services.CreateAsyncScope())
                 // Cap the delay so we don't stall startup for too long.
                 delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 1.5, 10));
             }
+        }
+
+        try
+        {
+            await dbContext.Database.OpenConnectionAsync();
+            await using var command = dbContext.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "SELECT 1 FROM pg_extension WHERE extname = 'timescaledb' LIMIT 1";
+            var result = await command.ExecuteScalarAsync();
+            if (result is null)
+            {
+                logger.LogWarning("TimescaleDB extension is not installed. Time-series tables will not use hypertables.");
+            }
+            else
+            {
+                logger.LogInformation("TimescaleDB extension detected.");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to verify TimescaleDB extension");
+        }
+        finally
+        {
+            await dbContext.Database.CloseConnectionAsync();
         }
     }
     catch (Exception ex)

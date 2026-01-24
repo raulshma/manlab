@@ -28,6 +28,8 @@ import {
   Check,
   X,
   Signal,
+  FileText,
+  Activity,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -54,6 +56,8 @@ import { NetworkToolHistoryPanel } from "@/components/network/NetworkToolHistory
 import { NetworkErrorBoundary } from "@/components/network/NetworkErrorBoundary";
 import { NetworkToolHistoryProvider } from "@/contexts/NetworkToolHistoryContext";
 import { InternetHealthTool } from "@/components/network/InternetHealthTool";
+import { SyslogTool } from "@/components/network/SyslogTool";
+import { PacketCaptureTool } from "@/components/network/PacketCaptureTool";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import {
@@ -77,6 +81,8 @@ import { cn } from "@/lib/utils";
 const TOOLS = [
   { id: "ping", label: "Ping", icon: Radio },
   { id: "internet-health", label: "Internet Health", icon: Signal },
+  { id: "syslog", label: "Syslog", icon: FileText },
+  { id: "packet-capture", label: "Packet Capture", icon: Activity },
   { id: "subnet", label: "Subnet", icon: Search },
   { id: "topology", label: "Topology", icon: Share2 },
   { id: "traceroute", label: "Traceroute", icon: Route },
@@ -457,6 +463,18 @@ export function NetworkScannerPage() {
             <TabsContent value="internet-health" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="Internet Health Error">
                 <InternetHealthTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="syslog" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Syslog Receiver Error">
+                <SyslogTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="packet-capture" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Packet Capture Error">
+                <PacketCaptureTool />
               </NetworkErrorBoundary>
             </TabsContent>
 

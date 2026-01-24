@@ -1,0 +1,385 @@
+using ManLab.Server.Hubs;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Options;
+using PacketDotNet;
+using SharpPcap;
+using SharpPcap.LibPcap;
+
+namespace ManLab.Server.Services.Network;
+
+public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
+{
+    private readonly IHubContext<NetworkHub> _hubContext;
+    private readonly ILogger<PacketCaptureService> _logger;
+    private readonly PacketCaptureOptions _options;
+
+    private readonly object _gate = new();
+    private readonly List<PacketCaptureRecord> _packets = [];
+    private long _nextId;
+    private long _droppedCount;
+    private string? _error;
+    private string? _deviceName;
+    private string? _filter;
+    private bool _isCapturing;
+    private ICaptureDevice? _device;
+    private PacketArrivalEventHandler? _handler;
+
+    public PacketCaptureService(
+        IOptions<PacketCaptureOptions> options,
+        IHubContext<NetworkHub> hubContext,
+        ILogger<PacketCaptureService> logger)
+    {
+        _options = options.Value;
+        _hubContext = hubContext;
+        _logger = logger;
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await StopCaptureAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public PacketCaptureStatus GetStatus()
+    {
+        lock (_gate)
+        {
+            return new PacketCaptureStatus
+            {
+                Enabled = _options.Enabled,
+                IsCapturing = _isCapturing,
+                DeviceName = _deviceName,
+                Filter = _filter,
+                Error = _error,
+                BufferedCount = _packets.Count,
+                DroppedCount = _droppedCount
+            };
+        }
+    }
+
+    public IReadOnlyList<PacketCaptureDeviceInfo> GetDevices()
+    {
+        try
+        {
+            var devices = CaptureDeviceList.Instance;
+            return devices
+                .Select(device => new PacketCaptureDeviceInfo
+                {
+                    Name = device.Name ?? string.Empty,
+                    Description = device.Description,
+                    IsLoopback = device is LibPcapLiveDevice liveDevice && liveDevice.Loopback
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to enumerate packet capture devices");
+            lock (_gate)
+            {
+                _error = ex.Message;
+            }
+            return [];
+        }
+    }
+
+    public IReadOnlyList<PacketCaptureRecord> GetRecent(int count)
+    {
+        count = Math.Clamp(count, 1, 2000);
+        lock (_gate)
+        {
+            if (_packets.Count == 0)
+            {
+                return [];
+            }
+
+            var skip = Math.Max(0, _packets.Count - count);
+            return _packets.Skip(skip).ToList();
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_gate)
+        {
+            _packets.Clear();
+            _droppedCount = 0;
+        }
+    }
+
+    public async Task<PacketCaptureStatus> StartCaptureAsync(PacketCaptureStartRequest request, CancellationToken ct)
+    {
+        if (!_options.Enabled)
+        {
+            return GetStatus();
+        }
+
+        await StopCaptureAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            var device = ResolveDevice(request.DeviceName);
+            if (device is null)
+            {
+                lock (_gate)
+                {
+                    _error = "No capture device found";
+                    _isCapturing = false;
+                    _deviceName = null;
+                }
+                return GetStatus();
+            }
+
+            device.Open(new DeviceConfiguration
+            {
+                Snaplen = _options.SnapLength,
+                Mode = _options.Promiscuous ? DeviceModes.Promiscuous : DeviceModes.None,
+                ReadTimeout = 1000
+            });
+            if (!string.IsNullOrWhiteSpace(request.Filter))
+            {
+                device.Filter = request.Filter;
+            }
+
+            _handler = (sender, capture) => HandlePacket(capture);
+            device.OnPacketArrival += _handler;
+            device.StartCapture();
+
+            lock (_gate)
+            {
+                _device = device;
+                _deviceName = device.Name;
+                _filter = request.Filter;
+                _isCapturing = true;
+                _error = null;
+            }
+
+            _logger.LogInformation("Packet capture started on {Device}", device.Name);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start packet capture");
+            lock (_gate)
+            {
+                _error = ex.Message;
+                _isCapturing = false;
+            }
+        }
+
+        return GetStatus();
+    }
+
+    public Task<PacketCaptureStatus> StopCaptureAsync(CancellationToken ct)
+    {
+        ICaptureDevice? device;
+        PacketArrivalEventHandler? handler;
+
+        lock (_gate)
+        {
+            device = _device;
+            handler = _handler;
+            _device = null;
+            _handler = null;
+            _isCapturing = false;
+            _deviceName = null;
+            _filter = null;
+        }
+
+        if (device is not null)
+        {
+            try
+            {
+                if (handler is not null)
+                {
+                    device.OnPacketArrival -= handler;
+                }
+
+                if (device.Started)
+                {
+                    device.StopCapture();
+                }
+                device.Close();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to stop packet capture cleanly");
+                lock (_gate)
+                {
+                    _error = ex.Message;
+                }
+            }
+        }
+
+        return Task.FromResult(GetStatus());
+    }
+
+    private ICaptureDevice? ResolveDevice(string? deviceName)
+    {
+        try
+        {
+            var devices = CaptureDeviceList.Instance;
+            if (devices.Count == 0)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(deviceName))
+            {
+                var match = devices.FirstOrDefault(d => string.Equals(d.Name, deviceName, StringComparison.OrdinalIgnoreCase))
+                    ?? devices.FirstOrDefault(d => string.Equals(d.Description, deviceName, StringComparison.OrdinalIgnoreCase));
+
+                if (match is not null)
+                {
+                    return match;
+                }
+            }
+
+            return devices[0];
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to resolve capture device");
+            lock (_gate)
+            {
+                _error = ex.Message;
+            }
+            return null;
+        }
+    }
+
+    private void HandlePacket(PacketCapture capture)
+    {
+        var record = BuildRecord(capture.GetPacket());
+        if (record is null)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            _packets.Add(record);
+            var max = Math.Max(200, _options.MaxBufferedPackets);
+            if (_packets.Count > max)
+            {
+                var overflow = _packets.Count - max;
+                _packets.RemoveRange(0, overflow);
+                _droppedCount += overflow;
+            }
+        }
+
+        _ = _hubContext.Clients
+            .Group(NetworkHub.PacketCaptureGroup)
+            .SendAsync("PacketCaptured", record);
+    }
+
+    private PacketCaptureRecord? BuildRecord(RawCapture capture)
+    {
+        try
+        {
+            var packet = Packet.ParsePacket(capture.LinkLayerType, capture.Data);
+            var ethernet = packet.Extract<EthernetPacket>();
+            var ip = packet.Extract<IPPacket>();
+            var tcp = packet.Extract<TcpPacket>();
+            var udp = packet.Extract<UdpPacket>();
+            var icmp = packet.Extract<IcmpV4Packet>();
+
+            var protocol = ip?.Protocol.ToString();
+            if (string.IsNullOrWhiteSpace(protocol) && tcp is not null)
+            {
+                protocol = "TCP";
+            }
+            else if (string.IsNullOrWhiteSpace(protocol) && udp is not null)
+            {
+                protocol = "UDP";
+            }
+            else if (string.IsNullOrWhiteSpace(protocol) && icmp is not null)
+            {
+                protocol = "ICMP";
+            }
+
+            var src = ip?.SourceAddress?.ToString();
+            var dst = ip?.DestinationAddress?.ToString();
+
+            var info = BuildInfo(protocol, tcp, udp, icmp);
+
+            return new PacketCaptureRecord
+            {
+                Id = Interlocked.Increment(ref _nextId),
+                CapturedAtUtc = capture.Timeval.Date.ToUniversalTime(),
+                Source = src,
+                Destination = dst,
+                Protocol = protocol,
+                Length = capture.Data.Length,
+                SourcePort = tcp?.SourcePort ?? udp?.SourcePort,
+                DestinationPort = tcp?.DestinationPort ?? udp?.DestinationPort,
+                SourceMac = ethernet?.SourceHardwareAddress.ToString(),
+                DestinationMac = ethernet?.DestinationHardwareAddress.ToString(),
+                Info = info
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to parse packet capture data");
+            return null;
+        }
+    }
+
+    private static string? BuildInfo(string? protocol, TcpPacket? tcp, UdpPacket? udp, IcmpV4Packet? icmp)
+    {
+        if (tcp is not null)
+        {
+            var flags = new List<string>(9);
+            if (tcp.Synchronize)
+            {
+                flags.Add("SYN");
+            }
+            if (tcp.Acknowledgment)
+            {
+                flags.Add("ACK");
+            }
+            if (tcp.Push)
+            {
+                flags.Add("PSH");
+            }
+            if (tcp.Reset)
+            {
+                flags.Add("RST");
+            }
+            if (tcp.Finished)
+            {
+                flags.Add("FIN");
+            }
+            if (tcp.Urgent)
+            {
+                flags.Add("URG");
+            }
+            if (tcp.ExplicitCongestionNotificationEcho)
+            {
+                flags.Add("ECE");
+            }
+            if (tcp.CongestionWindowReduced)
+            {
+                flags.Add("CWR");
+            }
+            if (tcp.NonceSum)
+            {
+                flags.Add("NS");
+            }
+
+            var flagsText = flags.Count > 0 ? string.Join(',', flags) : tcp.Flags.ToString();
+            return $"TCP {tcp.SourcePort} → {tcp.DestinationPort} Flags={flagsText}";
+        }
+
+        if (udp is not null)
+        {
+            return $"UDP {udp.SourcePort} → {udp.DestinationPort}";
+        }
+
+        if (icmp is not null)
+        {
+            return $"ICMP Type={icmp.TypeCode}";
+        }
+
+        return protocol;
+    }
+}

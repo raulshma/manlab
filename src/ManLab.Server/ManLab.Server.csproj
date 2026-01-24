@@ -22,6 +22,10 @@
     <PackageReference Include="Tmds.MDns" Version="0.8.0" />
     <PackageReference Include="MaxMind.Db" Version="4.1.0" />
     <PackageReference Include="DnsClient" Version="1.7.0" />
+    <PackageReference Include="Quartz" Version="3.9.0" />
+    <PackageReference Include="Quartz.Extensions.Hosting" Version="3.9.0" />
+    <PackageReference Include="PacketDotNet" Version="1.4.7" />
+    <PackageReference Include="SharpPcap" Version="6.3.0" />
   </ItemGroup>
 
   <ItemGroup>

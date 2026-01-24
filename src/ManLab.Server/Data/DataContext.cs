@@ -48,6 +48,11 @@ public class DataContext : DbContext
     public DbSet<GpuSnapshot> GpuSnapshots => Set<GpuSnapshot>();
     public DbSet<UpsSnapshot> UpsSnapshots => Set<UpsSnapshot>();
 
+    public DbSet<HttpMonitorConfig> HttpMonitorConfigs => Set<HttpMonitorConfig>();
+    public DbSet<HttpMonitorCheck> HttpMonitorChecks => Set<HttpMonitorCheck>();
+    public DbSet<TrafficMonitorConfig> TrafficMonitorConfigs => Set<TrafficMonitorConfig>();
+    public DbSet<TrafficSample> TrafficSamples => Set<TrafficSample>();
+
     public DbSet<AlertRule> AlertRules => Set<AlertRule>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 
@@ -233,6 +238,44 @@ public class DataContext : DbContext
                 .WithMany(n => n.UpsSnapshots)
                 .HasForeignKey(e => e.NodeId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Monitoring: HTTP monitor configs
+        modelBuilder.Entity<HttpMonitorConfig>(entity =>
+        {
+            entity.HasIndex(e => e.Enabled);
+            entity.HasIndex(e => e.UpdatedAt);
+            entity.HasIndex(e => e.Url);
+        });
+
+        // Monitoring: HTTP monitor checks
+        modelBuilder.Entity<HttpMonitorCheck>(entity =>
+        {
+            entity.HasIndex(e => e.MonitorId);
+            entity.HasIndex(e => e.TimestampUtc);
+            entity.HasIndex(e => new { e.MonitorId, e.TimestampUtc });
+            entity.HasIndex(e => new { e.MonitorId, e.Success, e.TimestampUtc });
+
+            entity.HasOne(e => e.Monitor)
+                .WithMany()
+                .HasForeignKey(e => e.MonitorId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Monitoring: Traffic monitor config
+        modelBuilder.Entity<TrafficMonitorConfig>(entity =>
+        {
+            entity.HasIndex(e => e.Enabled);
+            entity.HasIndex(e => e.UpdatedAt);
+            entity.HasIndex(e => e.InterfaceName);
+        });
+
+        // Monitoring: Traffic samples
+        modelBuilder.Entity<TrafficSample>(entity =>
+        {
+            entity.HasIndex(e => e.TimestampUtc);
+            entity.HasIndex(e => e.InterfaceName);
+            entity.HasIndex(e => new { e.InterfaceName, e.TimestampUtc });
         });
 
         // Enhancements: Alerting

@@ -10,6 +10,9 @@ namespace ManLab.Server.Hubs;
 /// </summary>
 public class NetworkHub : Hub
 {
+    public const string SyslogGroup = "syslog";
+    public const string PacketCaptureGroup = "packet-capture";
+
     private readonly ILogger<NetworkHub> _logger;
     private readonly INetworkScannerService _scanner;
     private readonly IDeviceDiscoveryService _discovery;
@@ -82,6 +85,42 @@ public class NetworkHub : Hub
     {
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetScanGroup(scanId));
         _logger.LogDebug("Client {ConnectionId} unsubscribed from scan {ScanId}", Context.ConnectionId, scanId);
+    }
+
+    /// <summary>
+    /// Subscribes to syslog streaming events.
+    /// </summary>
+    public async Task SubscribeSyslog()
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, SyslogGroup);
+        _logger.LogDebug("Client {ConnectionId} subscribed to syslog stream", Context.ConnectionId);
+    }
+
+    /// <summary>
+    /// Unsubscribes from syslog streaming events.
+    /// </summary>
+    public async Task UnsubscribeSyslog()
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, SyslogGroup);
+        _logger.LogDebug("Client {ConnectionId} unsubscribed from syslog stream", Context.ConnectionId);
+    }
+
+    /// <summary>
+    /// Subscribes to packet capture streaming events.
+    /// </summary>
+    public async Task SubscribePacketCapture()
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, PacketCaptureGroup);
+        _logger.LogDebug("Client {ConnectionId} subscribed to packet capture stream", Context.ConnectionId);
+    }
+
+    /// <summary>
+    /// Unsubscribes from packet capture streaming events.
+    /// </summary>
+    public async Task UnsubscribePacketCapture()
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, PacketCaptureGroup);
+        _logger.LogDebug("Client {ConnectionId} unsubscribed from packet capture stream", Context.ConnectionId);
     }
 
     /// <summary>

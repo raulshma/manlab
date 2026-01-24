@@ -13,6 +13,8 @@ import { createContext, type ReactNode } from "react";
 export type NetworkToolTab =
   | "ping"
   | "internet-health"
+  | "syslog"
+  | "packet-capture"
   | "subnet"
   | "topology"
   | "traceroute"
@@ -28,7 +30,8 @@ export type NetworkToolTab =
   | "wol"
   | "speedtest"
   | "subnetcalc"
-  | "mac-vendor";
+  | "mac-vendor"
+  | "history";
 
 /** Pending action to execute when switching tabs */
 export interface PendingToolAction {

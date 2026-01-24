@@ -46,6 +46,8 @@ import type {
   SpeedTestProgressEvent,
   SpeedTestCompletedEvent,
   SpeedTestFailedEvent,
+  SyslogMessage,
+  PacketCaptureRecord,
 } from "../api/networkApi";
 
 // ============================================================================
@@ -435,6 +437,10 @@ export interface UseNetworkHubReturn {
   runSpeedTest: (request?: SpeedTestRequest) => Promise<SpeedTestCompletedEvent["result"]>;
   subscribeScan: (scanId: string) => Promise<void>;
   unsubscribeScan: (scanId: string) => Promise<void>;
+  subscribeSyslog: () => Promise<void>;
+  unsubscribeSyslog: () => Promise<void>;
+  subscribePacketCapture: () => Promise<void>;
+  unsubscribePacketCapture: () => Promise<void>;
 
   // Event subscriptions
   subscribeToSubnetScan: (handlers: SubnetScanHandlers) => () => void;
@@ -443,6 +449,8 @@ export interface UseNetworkHubReturn {
   subscribeToDiscovery: (handlers: DiscoveryHandlers) => () => void;
   subscribeToWifiScan: (handlers: WifiScanHandlers) => () => void;
   subscribeToSpeedTest: (handlers: SpeedTestHandlers) => () => void;
+  subscribeToSyslog: (handler: (message: SyslogMessage) => void) => () => void;
+  subscribeToPacketCapture: (handler: (record: PacketCaptureRecord) => void) => () => void;
 }
 
 // ============================================================================
@@ -632,6 +640,34 @@ export function useNetworkHub(
       throw new Error("Not connected to Network Hub");
     }
     await connectionRef.current.invoke("UnsubscribeScan", scanId);
+  }, []);
+
+  const subscribeSyslog = useCallback(async (): Promise<void> => {
+    if (!connectionRef.current) {
+      throw new Error("Not connected to Network Hub");
+    }
+    await connectionRef.current.invoke("SubscribeSyslog");
+  }, []);
+
+  const unsubscribeSyslog = useCallback(async (): Promise<void> => {
+    if (!connectionRef.current) {
+      throw new Error("Not connected to Network Hub");
+    }
+    await connectionRef.current.invoke("UnsubscribeSyslog");
+  }, []);
+
+  const subscribePacketCapture = useCallback(async (): Promise<void> => {
+    if (!connectionRef.current) {
+      throw new Error("Not connected to Network Hub");
+    }
+    await connectionRef.current.invoke("SubscribePacketCapture");
+  }, []);
+
+  const unsubscribePacketCapture = useCallback(async (): Promise<void> => {
+    if (!connectionRef.current) {
+      throw new Error("Not connected to Network Hub");
+    }
+    await connectionRef.current.invoke("UnsubscribePacketCapture");
   }, []);
 
   // ============================================================================
@@ -859,6 +895,32 @@ export function useNetworkHub(
     []
   );
 
+  const subscribeToSyslog = useCallback(
+    (handler: (message: SyslogMessage) => void) => {
+      if (!connectionRef.current) return () => {};
+      const conn = connectionRef.current;
+      conn.on("SyslogMessage", handler);
+
+      return () => {
+        conn.off("SyslogMessage", handler);
+      };
+    },
+    []
+  );
+
+  const subscribeToPacketCapture = useCallback(
+    (handler: (record: PacketCaptureRecord) => void) => {
+      if (!connectionRef.current) return () => {};
+      const conn = connectionRef.current;
+      conn.on("PacketCaptured", handler);
+
+      return () => {
+        conn.off("PacketCaptured", handler);
+      };
+    },
+    []
+  );
+
   return {
     // Connection state
     connection,
@@ -877,6 +939,10 @@ export function useNetworkHub(
     runSpeedTest,
     subscribeScan,
     unsubscribeScan,
+    subscribeSyslog,
+    unsubscribeSyslog,
+    subscribePacketCapture,
+    unsubscribePacketCapture,
 
     // Event subscriptions
     subscribeToSubnetScan,
@@ -885,5 +951,7 @@ export function useNetworkHub(
     subscribeToDiscovery,
     subscribeToWifiScan,
     subscribeToSpeedTest,
+    subscribeToSyslog,
+    subscribeToPacketCapture,
   };
 }

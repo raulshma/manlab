@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Home, Server, Settings, Activity, FileText, Folder, BarChart3, Network } from "lucide-react"
+import { Home, Server, Settings, Activity, FileText, Folder, BarChart3, Network, Radar } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 
 import {
@@ -70,6 +70,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SidebarMenuButton render={<NavLink to="/network" />} isActive={location.pathname.startsWith("/network")}>
                   <Network />
                   <span>Network Tools</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton render={<NavLink to="/monitoring" />} isActive={location.pathname.startsWith("/monitoring")}>
+                  <Radar />
+                  <span>Monitoring</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>

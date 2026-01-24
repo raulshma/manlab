@@ -53,6 +53,11 @@ import type {
   // SSH file download types
   SshDownloadStatusResponse,
   SshFileListResponse,
+  HttpMonitorConfig,
+  HttpMonitorCheck,
+  TrafficMonitorConfig,
+  TrafficSample,
+  MonitorJobSummary,
 } from "./types";
 
 const API_BASE = "/api";
@@ -1418,6 +1423,136 @@ export async function fetchAuditEvents(params?: FetchAuditEventsParams): Promise
   }
 
   return response.json();
+}
+
+// ==========================================
+// Monitoring (Quartz jobs + HTTP health + traffic)
+// ==========================================
+
+export async function fetchMonitorJobs(): Promise<MonitorJobSummary[]> {
+  const response = await fetch(`${API_BASE}/monitoring/jobs`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch monitor jobs: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchHttpMonitors(): Promise<HttpMonitorConfig[]> {
+  const response = await fetch(`${API_BASE}/monitoring/http`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch HTTP monitors: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function createHttpMonitor(body: {
+  name: string;
+  url: string;
+  method?: string | null;
+  expectedStatus?: number | null;
+  bodyContains?: string | null;
+  timeoutMs?: number | null;
+  cron: string;
+  enabled?: boolean | null;
+}): Promise<HttpMonitorConfig> {
+  const response = await fetch(`${API_BASE}/monitoring/http`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function updateHttpMonitor(
+  id: string,
+  body: {
+    name: string;
+    url: string;
+    method?: string | null;
+    expectedStatus?: number | null;
+    bodyContains?: string | null;
+    timeoutMs?: number | null;
+    cron: string;
+    enabled?: boolean | null;
+  }
+): Promise<HttpMonitorConfig> {
+  const response = await fetch(`${API_BASE}/monitoring/http/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function deleteHttpMonitor(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/monitoring/http/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`Failed to delete HTTP monitor: ${response.statusText}`);
+  }
+}
+
+export async function runHttpMonitor(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/monitoring/http/${id}/run`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Failed to run HTTP monitor: ${response.statusText}`);
+  }
+}
+
+export async function fetchHttpMonitorHistory(id: string, count: number = 200): Promise<HttpMonitorCheck[]> {
+  const response = await fetch(`${API_BASE}/monitoring/http/${id}/history?count=${count}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch HTTP monitor history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchTrafficMonitorConfig(): Promise<TrafficMonitorConfig> {
+  const response = await fetch(`${API_BASE}/monitoring/traffic/config`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch traffic monitor config: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function updateTrafficMonitorConfig(body: {
+  cron: string;
+  enabled?: boolean | null;
+  interfaceName?: string | null;
+}): Promise<TrafficMonitorConfig> {
+  const response = await fetch(`${API_BASE}/monitoring/traffic/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function fetchTrafficSamples(count: number = 360, interfaceName?: string): Promise<TrafficSample[]> {
+  const params = new URLSearchParams({ count: String(count) });
+  if (interfaceName) {
+    params.set("interfaceName", interfaceName);
+  }
+  const response = await fetch(`${API_BASE}/monitoring/traffic/history?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch traffic samples: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function runTrafficMonitor(): Promise<void> {
+  const response = await fetch(`${API_BASE}/monitoring/traffic/run`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Failed to run traffic monitor: ${response.statusText}`);
+  }
 }
 
 /**

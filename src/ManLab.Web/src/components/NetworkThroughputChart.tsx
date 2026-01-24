@@ -77,14 +77,14 @@ function ExpandedNetworkChart({ nodeId }: { nodeId: string }) {
     });
 
     if (isLoading) {
-        return <div className="h-[400px] flex items-center justify-center flex-col gap-2 text-muted-foreground">
+        return <div className="h-100 flex items-center justify-center flex-col gap-2 text-muted-foreground">
             <Loader2 className="h-8 w-8 animate-spin" />
             Loading history...
         </div>;
     }
 
     if (isError) {
-        return <div className="h-[400px] flex items-center justify-center text-destructive">Failed to load history data.</div>;
+        return <div className="h-100 flex items-center justify-center text-destructive">Failed to load history data.</div>;
     }
 
     const data = history || [];
@@ -102,7 +102,7 @@ function ExpandedNetworkChart({ nodeId }: { nodeId: string }) {
                 </Button>
              </div>
 
-             <div className="h-[400px] w-full border rounded-lg bg-card/50 p-4">
+             <div className="h-100 w-full border rounded-lg bg-card/50 p-4">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                         <defs>

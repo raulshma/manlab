@@ -53,4 +53,6 @@ namespace ManLab.Server.Hubs;
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(System.Net.NetworkInformation.IPStatus))]
+[JsonSerializable(typeof(SyslogMessage))]
+[JsonSerializable(typeof(PacketCaptureRecord))]
 public partial class NetworkHubJsonContext : JsonSerializerContext;
