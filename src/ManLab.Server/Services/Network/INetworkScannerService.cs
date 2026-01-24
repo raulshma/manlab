@@ -77,6 +77,22 @@ public interface INetworkScannerService
     Task<DnsLookupResult> DnsLookupAsync(string query, bool includeReverse = true, CancellationToken ct = default);
 
     /// <summary>
+    /// Checks DNS propagation across multiple resolvers.
+    /// </summary>
+    /// <param name="query">Hostname to query.</param>
+    /// <param name="servers">DNS resolvers to query.</param>
+    /// <param name="recordTypes">Record types to request.</param>
+    /// <param name="timeoutMs">Per-query timeout in milliseconds.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>DNS propagation result.</returns>
+    Task<DnsPropagationResult> DnsPropagationCheckAsync(
+        string query,
+        IReadOnlyList<string> servers,
+        IReadOnlyList<DnsRecordType> recordTypes,
+        int timeoutMs = 3000,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Performs a WHOIS lookup for a domain or IP.
     /// </summary>
     /// <param name="query">Domain name or IP address.</param>

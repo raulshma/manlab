@@ -13,9 +13,12 @@ import { createContext, type ReactNode } from "react";
 export type NetworkToolTab =
   | "ping"
   | "subnet"
+  | "topology"
   | "traceroute"
   | "ports"
   | "dns"
+  | "snmp"
+  | "arp"
   | "public-ip"
   | "ssl"
   | "discovery"

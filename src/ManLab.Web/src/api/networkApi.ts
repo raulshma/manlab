@@ -80,6 +80,69 @@ export interface SubnetScanResult {
 }
 
 /**
+ * Network topology build request.
+ */
+export interface NetworkTopologyRequest {
+  cidr: string;
+  concurrencyLimit?: number;
+  timeout?: number;
+  includeDiscovery?: boolean;
+  discoveryDurationSeconds?: number;
+}
+
+/**
+ * Topology graph node.
+ */
+export interface NetworkTopologyNode {
+  id: string;
+  kind: "root" | "subnet" | "host" | "mdns" | "upnp" | string;
+  label: string;
+  ipAddress?: string | null;
+  hostname?: string | null;
+  macAddress?: string | null;
+  vendor?: string | null;
+  deviceType?: string | null;
+  subnet?: string | null;
+  source?: string | null;
+  serviceType?: string | null;
+  port?: number | null;
+}
+
+/**
+ * Topology graph link.
+ */
+export interface NetworkTopologyLink {
+  source: string;
+  target: string;
+  kind: string;
+}
+
+/**
+ * Topology build summary.
+ */
+export interface NetworkTopologySummary {
+  subnetCount: number;
+  hostCount: number;
+  discoveryOnlyHosts: number;
+  mdnsServices: number;
+  upnpDevices: number;
+  totalNodes: number;
+  totalLinks: number;
+}
+
+/**
+ * Topology build result.
+ */
+export interface NetworkTopologyResult {
+  cidr: string;
+  nodes: NetworkTopologyNode[];
+  links: NetworkTopologyLink[];
+  startedAt: string;
+  completedAt: string;
+  summary: NetworkTopologySummary;
+}
+
+/**
  * Traceroute request parameters.
  */
 export interface TracerouteRequest {
@@ -97,6 +160,14 @@ export interface TracerouteHop {
   hostname: string | null;
   roundtripTime: number;
   status: string;
+  countryCode?: string | null;
+  country?: string | null;
+  state?: string | null;
+  city?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  asn?: number | null;
+  isp?: string | null;
 }
 
 /**
@@ -107,6 +178,8 @@ export interface TracerouteResult {
   resolvedAddress: string | null;
   hops: TracerouteHop[];
   reachedDestination: boolean;
+  geoLookupAvailable?: boolean;
+  geoLookupCount?: number;
 }
 
 /**
@@ -171,7 +244,9 @@ export type DnsRecordType =
   | "TXT"
   | "NS"
   | "SOA"
-  | "PTR";
+  | "PTR"
+  | "SRV"
+  | "CAA";
 
 /**
  * DNS record.
@@ -199,6 +274,40 @@ export interface DnsLookupResult {
   query: string;
   records: DnsRecord[];
   reverseRecords: DnsRecord[];
+}
+
+/**
+ * DNS propagation check request.
+ */
+export interface DnsPropagationRequest {
+  query: string;
+  servers?: string[];
+  recordTypes?: DnsRecordType[];
+  includeDefaultServers?: boolean;
+  timeoutMs?: number;
+}
+
+/**
+ * DNS propagation server result.
+ */
+export interface DnsPropagationServerResult {
+  server: string;
+  resolvedAddress?: string | null;
+  records: DnsRecord[];
+  error?: string | null;
+  durationMs: number;
+}
+
+/**
+ * DNS propagation check result.
+ */
+export interface DnsPropagationResult {
+  query: string;
+  recordTypes: DnsRecordType[];
+  servers: DnsPropagationServerResult[];
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
 }
 
 /**
@@ -262,6 +371,43 @@ export interface MacVendorLookupResult {
   macAddress: string;
   vendor: string | null;
   vendorCount: number;
+}
+
+/**
+ * ARP table entry.
+ */
+export interface ArpTableEntry {
+  ipAddress: string;
+  macAddress: string;
+  vendor?: string | null;
+  interfaceName?: string | null;
+  isStatic?: boolean | null;
+}
+
+/**
+ * ARP table result.
+ */
+export interface ArpTableResult {
+  entries: ArpTableEntry[];
+  retrievedAt: string;
+}
+
+/**
+ * Add static ARP entry request.
+ */
+export interface ArpAddStaticRequest {
+  ipAddress: string;
+  macAddress: string;
+  interfaceName?: string | null;
+}
+
+/**
+ * ARP operation result.
+ */
+export interface ArpOperationResult {
+  success: boolean;
+  error?: string | null;
+  output?: string | null;
 }
 
 /**
@@ -409,6 +555,131 @@ export interface SslInspectionResult {
   chain: SslCertificateInfo[];
   daysRemaining: number;
   isValidNow: boolean;
+}
+
+/**
+ * SNMP protocol versions.
+ */
+export type SnmpVersion = "V1" | "V2c" | "V3";
+
+/**
+ * SNMPv3 authentication protocols.
+ */
+export type SnmpAuthProtocol = "None" | "Md5" | "Sha1";
+
+/**
+ * SNMPv3 privacy protocols.
+ */
+export type SnmpPrivacyProtocol = "None" | "Des" | "Aes128";
+
+/**
+ * SNMPv3 credentials.
+ */
+export interface SnmpV3Credentials {
+  username: string;
+  authProtocol?: SnmpAuthProtocol;
+  privacyProtocol?: SnmpPrivacyProtocol;
+  authPassword?: string | null;
+  privacyPassword?: string | null;
+  contextName?: string | null;
+}
+
+/**
+ * SNMP GET request.
+ */
+export interface SnmpGetRequest {
+  host: string;
+  port?: number;
+  version?: SnmpVersion;
+  community?: string | null;
+  v3?: SnmpV3Credentials | null;
+  oids: string[];
+  timeoutMs?: number;
+  retries?: number;
+}
+
+/**
+ * SNMP walk request.
+ */
+export interface SnmpWalkRequest {
+  host: string;
+  port?: number;
+  version?: SnmpVersion;
+  community?: string | null;
+  v3?: SnmpV3Credentials | null;
+  baseOid: string;
+  timeoutMs?: number;
+  retries?: number;
+  maxResults?: number;
+}
+
+/**
+ * SNMP table request.
+ */
+export interface SnmpTableRequest {
+  host: string;
+  port?: number;
+  version?: SnmpVersion;
+  community?: string | null;
+  v3?: SnmpV3Credentials | null;
+  baseOid?: string | null;
+  columns: string[];
+  timeoutMs?: number;
+  retries?: number;
+  maxResultsPerColumn?: number;
+}
+
+/**
+ * SNMP value.
+ */
+export interface SnmpValue {
+  oid: string;
+  value: string | null;
+  dataType?: string | null;
+}
+
+/**
+ * SNMP GET result.
+ */
+export interface SnmpGetResult {
+  host: string;
+  port: number;
+  version: SnmpVersion;
+  values: SnmpValue[];
+  durationMs: number;
+}
+
+/**
+ * SNMP walk result.
+ */
+export interface SnmpWalkResult {
+  host: string;
+  port: number;
+  version: SnmpVersion;
+  baseOid: string;
+  values: SnmpValue[];
+  durationMs: number;
+}
+
+/**
+ * SNMP table row.
+ */
+export interface SnmpTableRow {
+  index: string;
+  values: Record<string, string | null>;
+}
+
+/**
+ * SNMP table result.
+ */
+export interface SnmpTableResult {
+  host: string;
+  port: number;
+  version: SnmpVersion;
+  baseOid?: string | null;
+  columns: string[];
+  rows: SnmpTableRow[];
+  durationMs: number;
 }
 
 /**
@@ -644,6 +915,23 @@ export async function discoverSubnet(
 }
 
 /**
+ * Build a network topology map for a subnet.
+ */
+export async function buildNetworkTopology(
+  request: NetworkTopologyRequest,
+  options?: RequestOptions
+): Promise<NetworkTopologyResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<NetworkTopologyResult>(
+      "/network/topology",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
  * Trace route to a host.
  */
 export async function traceroute(
@@ -697,6 +985,23 @@ export async function dnsLookup(
   return withNetworkRetry(async () => {
     const { data } = await api.post<DnsLookupResult>(
       "/network/dns",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Perform DNS propagation check.
+ */
+export async function dnsPropagationCheck(
+  request: DnsPropagationRequest,
+  options?: RequestOptions
+): Promise<DnsPropagationResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<DnsPropagationResult>(
+      "/network/dns/propagation",
       request,
       options
     );
@@ -771,6 +1076,70 @@ export async function lookupMacVendor(
 }
 
 /**
+ * Get ARP table entries.
+ */
+export async function getArpTable(
+  options?: RequestOptions
+): Promise<ArpTableResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<ArpTableResult>(
+      "/network/arp/table",
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Add or replace a static ARP entry.
+ */
+export async function addStaticArpEntry(
+  request: ArpAddStaticRequest,
+  options?: RequestOptions
+): Promise<ArpOperationResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<ArpOperationResult>(
+      "/network/arp/add-static",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Delete a single ARP entry by IP.
+ */
+export async function deleteArpEntry(
+  ipAddress: string,
+  options?: RequestOptions
+): Promise<ArpOperationResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.delete<ArpOperationResult>(
+      `/network/arp/entry/${encodeURIComponent(ipAddress)}`,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Flush the ARP cache.
+ */
+export async function flushArpCache(
+  options?: RequestOptions
+): Promise<ArpOperationResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<ArpOperationResult>(
+      "/network/arp/flush",
+      {},
+      options
+    );
+    return data;
+  });
+}
+
+/**
  * Run server-side speed test.
  */
 export async function runSpeedTest(
@@ -797,6 +1166,57 @@ export async function inspectCertificate(
   return withNetworkRetry(async () => {
     const { data } = await api.post<SslInspectionResult>(
       "/network/ssl/inspect",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Perform SNMP GET.
+ */
+export async function snmpGet(
+  request: SnmpGetRequest,
+  options?: RequestOptions
+): Promise<SnmpGetResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<SnmpGetResult>(
+      "/network/snmp/get",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Perform SNMP walk.
+ */
+export async function snmpWalk(
+  request: SnmpWalkRequest,
+  options?: RequestOptions
+): Promise<SnmpWalkResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<SnmpWalkResult>(
+      "/network/snmp/walk",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Perform SNMP table query.
+ */
+export async function snmpTable(
+  request: SnmpTableRequest,
+  options?: RequestOptions
+): Promise<SnmpTableResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<SnmpTableResult>(
+      "/network/snmp/table",
       request,
       options
     );
@@ -1235,15 +1655,19 @@ export type NetworkToolType =
   | "traceroute"
   | "port-scan"
   | "subnet-scan"
+  | "topology"
   | "discovery"
   | "wifi-scan"
   | "dns-lookup"
+  | "dns-propagation"
   | "whois"
   | "public-ip"
   | "wol"
   | "ssl-inspect"
   | "mac-vendor"
-  | "speedtest";
+  | "speedtest"
+  | "snmp-query"
+  | "arp-table";
 
 /**
  * Network tool history entry from the server.

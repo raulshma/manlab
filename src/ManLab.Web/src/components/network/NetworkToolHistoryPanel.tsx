@@ -113,6 +113,7 @@ const TOOL_TYPES: NetworkToolType[] = [
   "traceroute",
   "port-scan",
   "subnet-scan",
+  "topology",
   "discovery",
   "wifi-scan",
   "dns-lookup",
@@ -122,6 +123,7 @@ const TOOL_TYPES: NetworkToolType[] = [
   "ssl-inspect",
   "mac-vendor",
   "speedtest",
+  "arp-table",
 ];
 
 const SAVED_VIEWS_KEY = "manlab:network:history:saved-views";
@@ -146,6 +148,8 @@ function getToolIcon(toolType: NetworkToolType) {
       return <Scan className="h-4 w-4" />;
     case "subnet-scan":
       return <Network className="h-4 w-4" />;
+    case "topology":
+      return <Network className="h-4 w-4" />;
     case "discovery":
       return <Search className="h-4 w-4" />;
     case "wifi-scan":
@@ -164,6 +168,8 @@ function getToolIcon(toolType: NetworkToolType) {
       return <Fingerprint className="h-4 w-4" />;
     case "speedtest":
       return <Gauge className="h-4 w-4" />;
+    case "arp-table":
+      return <Network className="h-4 w-4" />;
     default:
       return <History className="h-4 w-4" />;
   }
@@ -182,6 +188,8 @@ function getToolLabel(toolType: NetworkToolType): string {
       return "Port Scan";
     case "subnet-scan":
       return "Subnet Scan";
+    case "topology":
+      return "Topology Map";
     case "discovery":
       return "Device Discovery";
     case "wifi-scan":
@@ -200,6 +208,8 @@ function getToolLabel(toolType: NetworkToolType): string {
       return "MAC Vendor";
     case "speedtest":
       return "Speed Test";
+    case "arp-table":
+      return "ARP Table";
     default:
       return toolType;
   }

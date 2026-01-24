@@ -13,15 +13,19 @@ export type NetworkToolType =
   | "traceroute"
   | "port-scan"
   | "subnet-scan"
+  | "topology"
   | "discovery"
   | "wifi-scan"
   | "dns-lookup"
+  | "dns-propagation"
   | "whois"
   | "public-ip"
   | "wol"
   | "ssl-inspect"
   | "mac-vendor"
-  | "speedtest";
+  | "speedtest"
+  | "snmp-query"
+  | "arp-table";
 
 export type HistoryStatusFilter = "all" | "success" | "failed";
 export type HistorySortBy = "timestamp" | "duration" | "tool" | "target" | "status";

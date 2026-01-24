@@ -125,7 +125,9 @@ else if (OperatingSystem.IsLinux())
     builder.Services.AddSingleton<ManLab.Server.Services.Network.IArpService, ManLab.Server.Services.Network.LinuxArpService>();
 }
 builder.Services.AddSingleton<ManLab.Server.Services.Network.INetworkScannerService, ManLab.Server.Services.Network.NetworkScannerService>();
+builder.Services.AddSingleton<ManLab.Server.Services.Network.INetworkTopologyService, ManLab.Server.Services.Network.NetworkTopologyService>();
 builder.Services.AddSingleton<ISpeedTestService, SpeedTestService>();
+builder.Services.AddSingleton<ISnmpService, SnmpService>();
 
 // mDNS/UPnP device discovery
 builder.Services.AddSingleton<ManLab.Server.Services.Network.IDeviceDiscoveryService, ManLab.Server.Services.Network.DeviceDiscoveryService>();

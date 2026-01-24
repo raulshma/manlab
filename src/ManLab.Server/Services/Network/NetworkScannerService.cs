@@ -22,6 +22,7 @@ public sealed class NetworkScannerService : INetworkScannerService
     private readonly ILogger<NetworkScannerService> _logger;
     private readonly IArpService? _arpService;
     private readonly IOuiDatabase? _ouiDatabase;
+    private readonly IIpGeolocationService? _geolocationService;
     private readonly LookupClient _dnsClient;
     private readonly HttpClient _httpClient;
 
@@ -56,11 +57,13 @@ public sealed class NetworkScannerService : INetworkScannerService
         ILogger<NetworkScannerService> logger,
         IHttpClientFactory httpClientFactory,
         IArpService? arpService = null,
-        IOuiDatabase? ouiDatabase = null)
+        IOuiDatabase? ouiDatabase = null,
+        IIpGeolocationService? geolocationService = null)
     {
         _logger = logger;
         _arpService = arpService;
         _ouiDatabase = ouiDatabase;
+        _geolocationService = geolocationService;
         _httpClient = httpClientFactory.CreateClient();
         _httpClient.Timeout = TimeSpan.FromSeconds(5);
         _dnsClient = new LookupClient(new LookupClientOptions
@@ -249,6 +252,8 @@ public sealed class NetworkScannerService : INetworkScannerService
         var hops = new List<TracerouteHop>();
         var buffer = new byte[32];
         string? resolvedAddress = null;
+        var geoCache = new Dictionary<string, GeoLocationResult?>(StringComparer.OrdinalIgnoreCase);
+        var geoLookupAvailable = _geolocationService is not null;
 
         // Resolve hostname first
         try
@@ -267,6 +272,33 @@ public sealed class NetworkScannerService : INetworkScannerService
         _logger.LogInformation("Starting traceroute to {Hostname}", hostname);
 
         using var ping = new Ping();
+
+        async Task<GeoLocationResult?> GetGeoAsync(IPAddress? address)
+        {
+            if (_geolocationService is null || address is null || IsUnspecifiedAddress(address))
+            {
+                return null;
+            }
+
+            var ipString = address.ToString();
+            if (geoCache.TryGetValue(ipString, out var cached))
+            {
+                return cached;
+            }
+
+            try
+            {
+                var result = await _geolocationService.LookupAsync(ipString, ct);
+                geoCache[ipString] = result;
+                return result;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "Failed geolocation lookup for {Ip}", ipString);
+                geoCache[ipString] = null;
+                return null;
+            }
+        }
 
         for (int ttl = 1; ttl <= maxHops; ttl++)
         {
@@ -301,13 +333,23 @@ public sealed class NetworkScannerService : INetworkScannerService
                     if (rtt == 0) rtt = 1; // Ensure at least 1ms if successful
                 }
 
+                var geo = await GetGeoAsync(reply.Address);
+
                 var hop = new TracerouteHop
                 {
                     HopNumber = ttl,
                     Address = reply.Address?.ToString(),
                     Hostname = hopHostname,
                     RoundtripTime = rtt,
-                    Status = reply.Status
+                    Status = reply.Status,
+                    CountryCode = geo?.CountryCode,
+                    Country = geo?.Country,
+                    State = geo?.State,
+                    City = geo?.City,
+                    Latitude = geo?.Latitude,
+                    Longitude = geo?.Longitude,
+                    Asn = geo?.Asn,
+                    Isp = geo?.Isp
                 };
                 hops.Add(hop);
 
@@ -350,13 +392,17 @@ public sealed class NetworkScannerService : INetworkScannerService
 
         stopwatch.Stop();
 
+        var geoLookupCount = hops.Count(h => h.Latitude.HasValue || h.Country is not null || h.Asn.HasValue || h.Isp is not null);
+
         return new TracerouteResult
         {
             Hostname = hostname,
             ResolvedAddress = resolvedAddress,
             Hops = hops,
             MaxHops = maxHops,
-            DurationMs = stopwatch.ElapsedMilliseconds
+            DurationMs = stopwatch.ElapsedMilliseconds,
+            GeoLookupAvailable = geoLookupAvailable,
+            GeoLookupCount = geoLookupCount
         };
     }
 
@@ -570,6 +616,113 @@ public sealed class NetworkScannerService : INetworkScannerService
             Query = query,
             Records = records.OrderBy(r => r.Type).ThenBy(r => r.Name).ToList(),
             ReverseRecords = reverseRecords.OrderBy(r => r.Name).ToList()
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<DnsPropagationResult> DnsPropagationCheckAsync(
+        string query,
+        IReadOnlyList<string> servers,
+        IReadOnlyList<DnsRecordType> recordTypes,
+        int timeoutMs = 3000,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            throw new ArgumentException("Query cannot be null or empty", nameof(query));
+        }
+
+        if (servers is null || servers.Count == 0)
+        {
+            throw new ArgumentException("At least one DNS server is required", nameof(servers));
+        }
+
+        if (recordTypes is null || recordTypes.Count == 0)
+        {
+            throw new ArgumentException("At least one record type is required", nameof(recordTypes));
+        }
+
+        var startedAt = DateTime.UtcNow;
+        var distinctServers = servers
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var distinctTypes = recordTypes.Distinct().ToArray();
+
+        async Task<DnsPropagationServerResult> QueryServerAsync(string server)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var resolvedAddress = await ResolveNameServerAsync(server, ct).ConfigureAwait(false);
+                var options = new LookupClientOptions(new NameServer(resolvedAddress))
+                {
+                    UseCache = false,
+                    Timeout = TimeSpan.FromMilliseconds(timeoutMs),
+                    Retries = 1,
+                    UseTcpFallback = true
+                };
+
+                var client = new LookupClient(options);
+                var records = new List<DnsRecord>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var type in distinctTypes)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var queryType = MapQueryType(type);
+                    try
+                    {
+                        var response = await client.QueryAsync(query, queryType, cancellationToken: ct).ConfigureAwait(false);
+                        foreach (var record in MapDnsRecords(queryType, response))
+                        {
+                            if (seen.Add($"{record.Type}:{record.Name}:{record.Value}:{record.Priority}"))
+                            {
+                                records.Add(record);
+                            }
+                        }
+                    }
+                    catch (DnsResponseException ex)
+                    {
+                        _logger.LogDebug(ex, "DNS propagation lookup {Type} failed for {Query} on {Server}", queryType, query, server);
+                    }
+                }
+
+                sw.Stop();
+                return new DnsPropagationServerResult
+                {
+                    Server = server,
+                    ResolvedAddress = resolvedAddress.ToString(),
+                    Records = records.OrderBy(r => r.Type).ThenBy(r => r.Name).ToList(),
+                    DurationMs = sw.ElapsedMilliseconds
+                };
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                sw.Stop();
+                _logger.LogDebug(ex, "DNS propagation lookup failed for {Server}", server);
+                return new DnsPropagationServerResult
+                {
+                    Server = server,
+                    Error = ex.Message,
+                    DurationMs = sw.ElapsedMilliseconds
+                };
+            }
+        }
+
+        var tasks = distinctServers.Select(QueryServerAsync).ToArray();
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+
+        var completedAt = DateTime.UtcNow;
+        return new DnsPropagationResult
+        {
+            Query = query,
+            RecordTypes = distinctTypes.ToList(),
+            Servers = results.ToList(),
+            StartedAt = startedAt,
+            CompletedAt = completedAt
         };
     }
 
@@ -930,9 +1083,60 @@ public sealed class NetworkScannerService : INetworkScannerService
                     Value = $"{soa.MName.Value} {soa.RName.Value} {soa.Serial} {soa.Refresh} {soa.Retry} {soa.Expire} {soa.Minimum}",
                     Ttl = (int?)soa.TimeToLive
                 });
+            case QueryType.SRV:
+                return response.Answers.SrvRecords().Select(srv => new DnsRecord
+                {
+                    Name = srv.DomainName.Value,
+                    Type = DnsRecordType.SRV,
+                    Value = $"{srv.Target.Value}:{srv.Port}",
+                    Priority = srv.Priority,
+                    Ttl = (int?)srv.TimeToLive
+                });
+            case QueryType.CAA:
+                return response.Answers.CaaRecords().Select(caa => new DnsRecord
+                {
+                    Name = caa.DomainName.Value,
+                    Type = DnsRecordType.CAA,
+                    Value = $"{caa.Flags} {caa.Tag} {caa.Value}",
+                    Ttl = (int?)caa.TimeToLive
+                });
             default:
                 return Array.Empty<DnsRecord>();
         }
+    }
+
+    private static QueryType MapQueryType(DnsRecordType type)
+    {
+        return type switch
+        {
+            DnsRecordType.A => QueryType.A,
+            DnsRecordType.AAAA => QueryType.AAAA,
+            DnsRecordType.CNAME => QueryType.CNAME,
+            DnsRecordType.MX => QueryType.MX,
+            DnsRecordType.TXT => QueryType.TXT,
+            DnsRecordType.NS => QueryType.NS,
+            DnsRecordType.SOA => QueryType.SOA,
+            DnsRecordType.PTR => QueryType.PTR,
+            DnsRecordType.SRV => QueryType.SRV,
+            DnsRecordType.CAA => QueryType.CAA,
+            _ => QueryType.A
+        };
+    }
+
+    private static async Task<IPAddress> ResolveNameServerAsync(string server, CancellationToken ct)
+    {
+        if (IPAddress.TryParse(server, out var ip))
+        {
+            return ip;
+        }
+
+        var resolved = await Dns.GetHostAddressesAsync(server, ct).ConfigureAwait(false);
+        if (resolved.Length == 0)
+        {
+            throw new InvalidOperationException($"Unable to resolve DNS server: {server}");
+        }
+
+        return resolved[0];
     }
 
     private static async Task<string> QueryWhoisServerAsync(string server, string query, CancellationToken ct)

@@ -12,13 +12,27 @@ namespace ManLab.Server.Controllers;
 [Route("api/[controller]")]
 public class NetworkController : ControllerBase
 {
+    private static readonly string[] DefaultDnsPropagationServers =
+    [
+        "8.8.8.8",
+        "8.8.4.4",
+        "1.1.1.1",
+        "1.0.0.1",
+        "208.67.222.222",
+        "208.67.220.220",
+        "9.9.9.9"
+    ];
+
     private readonly INetworkScannerService _scanner;
     private readonly IDeviceDiscoveryService _discovery;
     private readonly IWifiScannerService _wifiScanner;
     private readonly IIpGeolocationService _geolocation;
     private readonly IOuiDatabase _ouiDatabase;
     private readonly ISpeedTestService _speedTest;
+    private readonly ISnmpService _snmp;
+    private readonly INetworkTopologyService _topology;
     private readonly INetworkToolHistoryService _history;
+    private readonly IArpService? _arpService;
     private readonly ILogger<NetworkController> _logger;
     private readonly IAuditLog _audit;
 
@@ -29,7 +43,10 @@ public class NetworkController : ControllerBase
         IIpGeolocationService geolocation,
         IOuiDatabase ouiDatabase,
         ISpeedTestService speedTest,
+        ISnmpService snmp,
+        INetworkTopologyService topology,
         INetworkToolHistoryService history,
+        IArpService? arpService,
         ILogger<NetworkController> logger,
         IAuditLog audit)
     {
@@ -39,7 +56,10 @@ public class NetworkController : ControllerBase
         _geolocation = geolocation;
         _ouiDatabase = ouiDatabase;
         _speedTest = speedTest;
+        _snmp = snmp;
+        _topology = topology;
         _history = history;
+        _arpService = arpService;
         _logger = logger;
         _audit = audit;
     }
@@ -335,6 +355,108 @@ public class NetworkController : ControllerBase
     }
 
     /// <summary>
+    /// Builds a topology map for a subnet, optionally merging discovery data.
+    /// </summary>
+    [HttpPost("topology")]
+    public async Task<ActionResult<NetworkTopologyResult>> BuildTopology(
+        [FromBody] NetworkTopologyRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Cidr))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_CIDR",
+                Message = "CIDR notation is required (e.g., 192.168.1.0/24)"
+            });
+        }
+
+        if (!TryValidateCidr(request.Cidr, out var errorMessage))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_CIDR",
+                Message = errorMessage!
+            });
+        }
+
+        if (!IsPrivateNetwork(request.Cidr))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "SCAN_RESTRICTED",
+                Message = "Only private network ranges are allowed (10.x.x.x, 172.16-31.x.x, 192.168.x.x)"
+            });
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _topology.BuildAsync(request, ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.topology",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"Topology map built for {request.Cidr}: {result.Summary.HostCount} hosts"));
+
+            _ = _history.RecordAsync(
+                toolType: "topology",
+                target: request.Cidr,
+                input: new
+                {
+                    cidr = request.Cidr,
+                    request.ConcurrencyLimit,
+                    request.Timeout,
+                    request.IncludeDiscovery,
+                    request.DiscoveryDurationSeconds
+                },
+                result: new
+                {
+                    result.Summary.SubnetCount,
+                    result.Summary.HostCount,
+                    result.Summary.DiscoveryOnlyHosts,
+                    result.Summary.MdnsServices,
+                    result.Summary.UpnpDevices,
+                    result.Summary.TotalNodes,
+                    result.Summary.TotalLinks
+                },
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "Topology build failed for {Cidr}", request.Cidr);
+
+            _ = _history.RecordAsync(
+                toolType: "topology",
+                target: request.Cidr,
+                input: request,
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "TOPOLOGY_FAILED",
+                Message = "Topology mapping failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
     /// Traces the route to a remote host.
     /// </summary>
     /// <param name="request">The traceroute request.</param>
@@ -550,6 +672,441 @@ public class NetworkController : ControllerBase
     }
 
     /// <summary>
+    /// Checks DNS propagation across multiple resolvers.
+    /// </summary>
+    [HttpPost("dns/propagation")]
+    public async Task<ActionResult<DnsPropagationResult>> DnsPropagationCheck(
+        [FromBody] DnsPropagationRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Query))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_QUERY",
+                Message = "Query is required"
+            });
+        }
+
+        var timeoutMs = Math.Clamp(request.TimeoutMs ?? 3000, 500, 10000);
+        var includeDefaultServers = request.IncludeDefaultServers ?? true;
+
+        var servers = new List<string>();
+        if (includeDefaultServers)
+        {
+            servers.AddRange(DefaultDnsPropagationServers);
+        }
+
+        if (request.Servers is not null)
+        {
+            servers.AddRange(request.Servers.Where(s => !string.IsNullOrWhiteSpace(s)));
+        }
+
+        if (servers.Count == 0)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_SERVERS",
+                Message = "At least one DNS server is required"
+            });
+        }
+
+        if (servers.Count > 20)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "TOO_MANY_SERVERS",
+                Message = "Maximum 20 DNS servers allowed"
+            });
+        }
+
+        var recordTypes = request.RecordTypes?.Length > 0
+            ? request.RecordTypes
+            : new[]
+            {
+                DnsRecordType.A,
+                DnsRecordType.AAAA,
+                DnsRecordType.CNAME,
+                DnsRecordType.MX,
+                DnsRecordType.TXT,
+                DnsRecordType.NS,
+                DnsRecordType.SOA
+            };
+
+        if (recordTypes.Length > 12)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "TOO_MANY_RECORD_TYPES",
+                Message = "Maximum 12 record types allowed"
+            });
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _scanner.DnsPropagationCheckAsync(
+                request.Query,
+                servers,
+                recordTypes,
+                timeoutMs,
+                ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.dns.propagation",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"DNS propagation check for {request.Query}: {result.Servers.Count} resolvers"));
+
+            _ = _history.RecordAsync(
+                toolType: "dns-propagation",
+                target: request.Query,
+                input: new
+                {
+                    query = request.Query,
+                    recordTypes,
+                    servers,
+                    includeDefaultServers,
+                    timeoutMs
+                },
+                result: new { result.Servers, result.RecordTypes },
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "DNS propagation check failed for {Query}", request.Query);
+
+            _ = _history.RecordAsync(
+                toolType: "dns-propagation",
+                target: request.Query,
+                input: new
+                {
+                    query = request.Query,
+                    recordTypes,
+                    servers,
+                    includeDefaultServers,
+                    timeoutMs
+                },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "DNS_PROPAGATION_FAILED",
+                Message = "DNS propagation check failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Performs SNMP GET request for one or more OIDs.
+    /// </summary>
+    [HttpPost("snmp/get")]
+    public async Task<ActionResult<SnmpGetResult>> SnmpGet([FromBody] SnmpGetRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Host))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_HOST",
+                Message = "Host is required"
+            });
+        }
+
+        if (request.Oids is null || request.Oids.Length == 0)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_OID",
+                Message = "At least one OID is required"
+            });
+        }
+
+        if (request.Oids.Length > 100)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "TOO_MANY_OIDS",
+                Message = "Maximum 100 OIDs allowed per request"
+            });
+        }
+
+        var port = request.Port.HasValue ? Math.Clamp(request.Port.Value, 1, 65535) : 161;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var values = await _snmp.GetAsync(request with { Port = port }, ct);
+            sw.Stop();
+
+            var result = new SnmpGetResult
+            {
+                Host = request.Host,
+                Port = port,
+                Version = request.Version,
+                Values = values,
+                DurationMs = sw.ElapsedMilliseconds
+            };
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.snmp.get",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"SNMP GET {request.Host}:{port} ({request.Oids.Length} OIDs)"));
+
+            _ = _history.RecordAsync(
+                toolType: "snmp-query",
+                target: request.Host,
+                input: new { action = "get", request.Host, port, request.Version, request.Oids },
+                result: new { count = values.Count },
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            sw.Stop();
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_REQUEST",
+                Message = ex.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "SNMP GET failed for {Host}", request.Host);
+
+            _ = _history.RecordAsync(
+                toolType: "snmp-query",
+                target: request.Host,
+                input: new { action = "get", request.Host, port, request.Version, request.Oids },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "SNMP_GET_FAILED",
+                Message = "SNMP GET failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Performs SNMP walk starting from a base OID.
+    /// </summary>
+    [HttpPost("snmp/walk")]
+    public async Task<ActionResult<SnmpWalkResult>> SnmpWalk([FromBody] SnmpWalkRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Host))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_HOST",
+                Message = "Host is required"
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.BaseOid))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_OID",
+                Message = "Base OID is required"
+            });
+        }
+
+        var port = request.Port.HasValue ? Math.Clamp(request.Port.Value, 1, 65535) : 161;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var values = await _snmp.WalkAsync(request with { Port = port }, ct);
+            sw.Stop();
+
+            var result = new SnmpWalkResult
+            {
+                Host = request.Host,
+                Port = port,
+                Version = request.Version,
+                BaseOid = request.BaseOid,
+                Values = values,
+                DurationMs = sw.ElapsedMilliseconds
+            };
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.snmp.walk",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"SNMP WALK {request.Host}:{port} {request.BaseOid} ({values.Count} results)"));
+
+            _ = _history.RecordAsync(
+                toolType: "snmp-query",
+                target: request.Host,
+                input: new { action = "walk", request.Host, port, request.Version, request.BaseOid },
+                result: new { count = values.Count },
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            sw.Stop();
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_REQUEST",
+                Message = ex.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "SNMP walk failed for {Host}", request.Host);
+
+            _ = _history.RecordAsync(
+                toolType: "snmp-query",
+                target: request.Host,
+                input: new { action = "walk", request.Host, port, request.Version, request.BaseOid },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "SNMP_WALK_FAILED",
+                Message = "SNMP walk failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Queries SNMP table columns and returns a row/column mapping.
+    /// </summary>
+    [HttpPost("snmp/table")]
+    public async Task<ActionResult<SnmpTableResult>> SnmpTable([FromBody] SnmpTableRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Host))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_HOST",
+                Message = "Host is required"
+            });
+        }
+
+        if (request.Columns is null || request.Columns.Length == 0)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_OID",
+                Message = "At least one column OID is required"
+            });
+        }
+
+        if (request.Columns.Length > 50)
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "TOO_MANY_OIDS",
+                Message = "Maximum 50 columns allowed per request"
+            });
+        }
+
+        var port = request.Port.HasValue ? Math.Clamp(request.Port.Value, 1, 65535) : 161;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var table = await _snmp.TableAsync(request with { Port = port }, ct);
+            sw.Stop();
+
+            var result = table with { DurationMs = sw.ElapsedMilliseconds };
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.snmp.table",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"SNMP TABLE {request.Host}:{port} ({request.Columns.Length} columns, {result.Rows.Count} rows)"));
+
+            _ = _history.RecordAsync(
+                toolType: "snmp-query",
+                target: request.Host,
+                input: new { action = "table", request.Host, port, request.Version, request.Columns },
+                result: new { rows = result.Rows.Count, columns = request.Columns.Length },
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            sw.Stop();
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_REQUEST",
+                Message = ex.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "SNMP table query failed for {Host}", request.Host);
+
+            _ = _history.RecordAsync(
+                toolType: "snmp-query",
+                target: request.Host,
+                input: new { action = "table", request.Host, port, request.Version, request.Columns },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "SNMP_TABLE_FAILED",
+                Message = "SNMP table query failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
     /// Performs WHOIS lookup for a domain or IP.
     /// </summary>
     [HttpPost("whois")]
@@ -738,6 +1295,349 @@ public class NetworkController : ControllerBase
             connectionId: HttpContext.Connection.Id);
 
         return Ok(result);
+    }
+
+    /// <summary>
+    /// Gets the ARP table entries.
+    /// </summary>
+    [HttpGet("arp/table")]
+    public async Task<ActionResult<ArpTableResult>> GetArpTable(CancellationToken ct)
+    {
+        if (_arpService is null)
+        {
+            return StatusCode(501, new NetworkScanError
+            {
+                Code = "ARP_NOT_SUPPORTED",
+                Message = "ARP table operations are not supported on this platform"
+            });
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var entries = await _arpService.GetArpEntriesAsync(ct);
+            var enriched = entries
+                .Select(entry => entry with { Vendor = _ouiDatabase.LookupVendor(entry.MacAddress) })
+                .OrderBy(entry => IPAddress.TryParse(entry.IpAddress, out var ip)
+                    ? ip.GetAddressBytes()
+                    : new byte[] { 255, 255, 255, 255 }, new IpAddressComparer())
+                .ToList();
+
+            var result = new ArpTableResult
+            {
+                Entries = enriched,
+                RetrievedAt = DateTime.UtcNow
+            };
+
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.arp.table",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: $"ARP table fetched: {result.Entries.Count} entries"));
+
+            _ = _history.RecordAsync(
+                toolType: "arp-table",
+                target: "local",
+                input: new { action = "table" },
+                result: new { count = result.Entries.Count },
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "Failed to retrieve ARP table");
+
+            _ = _history.RecordAsync(
+                toolType: "arp-table",
+                target: "local",
+                input: new { action = "table" },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "ARP_TABLE_FAILED",
+                Message = "Failed to retrieve ARP table",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Adds or replaces a static ARP entry.
+    /// </summary>
+    [HttpPost("arp/add-static")]
+    public async Task<ActionResult<ArpOperationResult>> AddStaticArpEntry([FromBody] ArpAddStaticRequest request, CancellationToken ct)
+    {
+        if (_arpService is null)
+        {
+            return StatusCode(501, new NetworkScanError
+            {
+                Code = "ARP_NOT_SUPPORTED",
+                Message = "ARP table operations are not supported on this platform"
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.IpAddress) || !IPAddress.TryParse(request.IpAddress, out var ip))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_IP",
+                Message = "Valid IP address is required"
+            });
+        }
+
+        if (!TryNormalizeMacAddress(request.MacAddress, out var normalized))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_MAC",
+                Message = "Invalid MAC address format"
+            });
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _arpService.AddStaticEntryAsync(ip, normalized, request.InterfaceName?.Trim(), ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.arp.add",
+                httpContext: HttpContext,
+                success: result.Success,
+                statusCode: 200,
+                category: "network",
+                message: result.Success
+                    ? $"Static ARP entry added for {ip}"
+                    : $"Failed to add static ARP entry for {ip}: {result.Error}"));
+
+            _ = _history.RecordAsync(
+                toolType: "arp-table",
+                target: request.IpAddress,
+                input: new { action = "add-static", request.IpAddress, macAddress = normalized, request.InterfaceName },
+                result: result,
+                success: result.Success,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: result.Error,
+                connectionId: HttpContext.Connection.Id);
+
+            if (!result.Success)
+            {
+                return StatusCode(500, new NetworkScanError
+                {
+                    Code = "ARP_ADD_FAILED",
+                    Message = "Failed to add static ARP entry",
+                    Details = result.Error
+                });
+            }
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "Failed to add static ARP entry for {IP}", request.IpAddress);
+
+            _ = _history.RecordAsync(
+                toolType: "arp-table",
+                target: request.IpAddress,
+                input: new { action = "add-static", request.IpAddress, macAddress = normalized, request.InterfaceName },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "ARP_ADD_FAILED",
+                Message = "Failed to add static ARP entry",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Removes an ARP entry for the given IP.
+    /// </summary>
+    [HttpDelete("arp/entry/{ip}")]
+    public async Task<ActionResult<ArpOperationResult>> DeleteArpEntry(string ip, CancellationToken ct)
+    {
+        if (_arpService is null)
+        {
+            return StatusCode(501, new NetworkScanError
+            {
+                Code = "ARP_NOT_SUPPORTED",
+                Message = "ARP table operations are not supported on this platform"
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(ip) || !IPAddress.TryParse(ip, out var ipAddress))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_IP",
+                Message = "Valid IP address is required"
+            });
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _arpService.RemoveEntryAsync(ipAddress, ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.arp.delete",
+                httpContext: HttpContext,
+                success: result.Success,
+                statusCode: 200,
+                category: "network",
+                message: result.Success
+                    ? $"ARP entry removed for {ip}"
+                    : $"Failed to remove ARP entry for {ip}: {result.Error}"));
+
+            _ = _history.RecordAsync(
+                toolType: "arp-table",
+                target: ip,
+                input: new { action = "delete", ip },
+                result: result,
+                success: result.Success,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: result.Error,
+                connectionId: HttpContext.Connection.Id);
+
+            if (!result.Success)
+            {
+                return StatusCode(500, new NetworkScanError
+                {
+                    Code = "ARP_DELETE_FAILED",
+                    Message = "Failed to remove ARP entry",
+                    Details = result.Error
+                });
+            }
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "Failed to remove ARP entry for {IP}", ip);
+
+            _ = _history.RecordAsync(
+                toolType: "arp-table",
+                target: ip,
+                input: new { action = "delete", ip },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "ARP_DELETE_FAILED",
+                Message = "Failed to remove ARP entry",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Flushes the ARP cache.
+    /// </summary>
+    [HttpPost("arp/flush")]
+    public async Task<ActionResult<ArpOperationResult>> FlushArpCache(CancellationToken ct)
+    {
+        if (_arpService is null)
+        {
+            return StatusCode(501, new NetworkScanError
+            {
+                Code = "ARP_NOT_SUPPORTED",
+                Message = "ARP table operations are not supported on this platform"
+            });
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _arpService.FlushAsync(ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.arp.flush",
+                httpContext: HttpContext,
+                success: result.Success,
+                statusCode: 200,
+                category: "network",
+                message: result.Success
+                    ? "ARP cache flushed"
+                    : $"Failed to flush ARP cache: {result.Error}"));
+
+            _ = _history.RecordAsync(
+                toolType: "arp-table",
+                target: "local",
+                input: new { action = "flush" },
+                result: result,
+                success: result.Success,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: result.Error,
+                connectionId: HttpContext.Connection.Id);
+
+            if (!result.Success)
+            {
+                return StatusCode(500, new NetworkScanError
+                {
+                    Code = "ARP_FLUSH_FAILED",
+                    Message = "Failed to flush ARP cache",
+                    Details = result.Error
+                });
+            }
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "Failed to flush ARP cache");
+
+            _ = _history.RecordAsync(
+                toolType: "arp-table",
+                target: "local",
+                input: new { action = "flush" },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "ARP_FLUSH_FAILED",
+                Message = "Failed to flush ARP cache",
+                Details = ex.Message
+            });
+        }
     }
 
     /// <summary>
@@ -1682,6 +2582,37 @@ public record DnsLookupRequest
 }
 
 /// <summary>
+/// Request for DNS propagation check.
+/// </summary>
+public record DnsPropagationRequest
+{
+    /// <summary>
+    /// Hostname to query.
+    /// </summary>
+    public string Query { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Optional list of DNS resolvers to query.
+    /// </summary>
+    public string[]? Servers { get; init; }
+
+    /// <summary>
+    /// Record types to request (defaults to common types).
+    /// </summary>
+    public DnsRecordType[]? RecordTypes { get; init; }
+
+    /// <summary>
+    /// Whether to include the default resolver list (default: true).
+    /// </summary>
+    public bool? IncludeDefaultServers { get; init; }
+
+    /// <summary>
+    /// Per-query timeout in milliseconds.
+    /// </summary>
+    public int? TimeoutMs { get; init; }
+}
+
+/// <summary>
 /// Request for WHOIS lookup.
 /// </summary>
 public record WhoisRequest
@@ -1722,6 +2653,27 @@ public record MacVendorLookupRequest
     /// MAC address to lookup.
     /// </summary>
     public string MacAddress { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Request for adding a static ARP entry.
+/// </summary>
+public record ArpAddStaticRequest
+{
+    /// <summary>
+    /// IP address to map.
+    /// </summary>
+    public string IpAddress { get; init; } = string.Empty;
+
+    /// <summary>
+    /// MAC address to associate with the IP.
+    /// </summary>
+    public string MacAddress { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Optional interface name or device (platform-specific).
+    /// </summary>
+    public string? InterfaceName { get; init; }
 }
 
 /// <summary>

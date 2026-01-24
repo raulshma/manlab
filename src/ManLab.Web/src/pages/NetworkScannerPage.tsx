@@ -24,6 +24,7 @@ import {
   Fingerprint,
   LocateFixed,
   MoreHorizontal,
+  Share2,
   Check,
   X,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
 import { PingTool } from "@/components/network/PingTool";
 import { SubnetScanTool } from "@/components/network/SubnetScanTool";
+import { NetworkTopologyTool } from "@/components/network/NetworkTopologyTool";
 import { TracerouteTool } from "@/components/network/TracerouteTool";
 import { PortScanTool } from "@/components/network/PortScanTool";
 import { DeviceDiscoveryTool } from "@/components/network/DeviceDiscoveryTool";
@@ -45,6 +47,8 @@ import { SpeedTestTool } from "@/components/network/SpeedTestTool";
 import { SubnetCalculatorTool } from "@/components/network/SubnetCalculatorTool";
 import { MacVendorLookupTool } from "@/components/network/MacVendorLookupTool";
 import { PublicIpTool } from "@/components/network/PublicIpTool";
+import { SnmpTool } from "@/components/network/SnmpTool";
+import { ArpTableTool } from "@/components/network/ArpTableTool";
 import { NetworkToolHistoryPanel } from "@/components/network/NetworkToolHistoryPanel";
 import { NetworkErrorBoundary } from "@/components/network/NetworkErrorBoundary";
 import { NetworkToolHistoryProvider } from "@/contexts/NetworkToolHistoryContext";
@@ -71,6 +75,7 @@ import { cn } from "@/lib/utils";
 const TOOLS = [
   { id: "ping", label: "Ping", icon: Radio },
   { id: "subnet", label: "Subnet", icon: Search },
+  { id: "topology", label: "Topology", icon: Share2 },
   { id: "traceroute", label: "Traceroute", icon: Route },
   { id: "ports", label: "Ports", icon: Server },
   { id: "wol", label: "WoL", icon: Power },
@@ -78,6 +83,8 @@ const TOOLS = [
   { id: "subnetcalc", label: "Subnet Calc", icon: Calculator },
   { id: "mac-vendor", label: "MAC Vendor", icon: Fingerprint },
   { id: "dns", label: "DNS", icon: Globe },
+  { id: "snmp", label: "SNMP", icon: Database },
+  { id: "arp", label: "ARP", icon: Network },
   { id: "public-ip", label: "Public IP", icon: LocateFixed },
   { id: "ssl", label: "SSL", icon: ShieldCheck },
   { id: "discovery", label: "Discovery", icon: Radar },
@@ -450,6 +457,12 @@ export function NetworkScannerPage() {
               </NetworkErrorBoundary>
             </TabsContent>
 
+            <TabsContent value="topology" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Topology Mapper Error">
+                <NetworkTopologyTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
             <TabsContent value="traceroute" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="Traceroute Tool Error">
                 <TracerouteTool />
@@ -495,6 +508,18 @@ export function NetworkScannerPage() {
             <TabsContent value="public-ip" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="Public IP Tool Error">
                 <PublicIpTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="snmp" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="SNMP Tool Error">
+                <SnmpTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="arp" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="ARP Tool Error">
+                <ArpTableTool />
               </NetworkErrorBoundary>
             </TabsContent>
 

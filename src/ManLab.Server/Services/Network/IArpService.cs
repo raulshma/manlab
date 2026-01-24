@@ -21,4 +21,36 @@ public interface IArpService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Dictionary mapping IP addresses to MAC addresses.</returns>
     Task<IReadOnlyDictionary<string, string>> GetArpTableAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Gets the current ARP table with detailed entries.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>List of ARP table entries.</returns>
+    Task<IReadOnlyList<ArpTableEntry>> GetArpEntriesAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Adds or replaces a static ARP entry.
+    /// </summary>
+    /// <param name="ip">IP address to map.</param>
+    /// <param name="macAddress">MAC address for the entry.</param>
+    /// <param name="interfaceName">Optional interface/device name.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Operation result.</returns>
+    Task<ArpOperationResult> AddStaticEntryAsync(IPAddress ip, string macAddress, string? interfaceName = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Removes an ARP entry.
+    /// </summary>
+    /// <param name="ip">IP address to remove.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Operation result.</returns>
+    Task<ArpOperationResult> RemoveEntryAsync(IPAddress ip, CancellationToken ct = default);
+
+    /// <summary>
+    /// Flushes the ARP cache.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Operation result.</returns>
+    Task<ArpOperationResult> FlushAsync(CancellationToken ct = default);
 }

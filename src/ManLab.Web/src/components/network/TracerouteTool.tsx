@@ -150,6 +150,13 @@ function getMaxRtt(hops: TracerouteHop[]): number {
   return Math.max(...successfulHops.map((h) => h.roundtripTime), 1);
 }
 
+function formatGeoLabel(hop: TracerouteHop): string | null {
+  const parts = [hop.city, hop.state, hop.country].filter(
+    (part): part is string => Boolean(part)
+  );
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
 /**
  * Copy text to clipboard
  */
@@ -171,8 +178,8 @@ function exportToText(result: TracerouteResult): void {
     `Destination Reached: ${result.reachedDestination ? "Yes" : "No"}`,
     `Total Hops: ${result.hops.length}`,
     "",
-    "Hop | IP Address | Hostname | RTT (ms) | Status",
-    "-".repeat(70),
+    "Hop | IP Address | Hostname | RTT (ms) | Status | ASN | Location",
+    "-".repeat(100),
   ];
 
   result.hops.forEach((hop) => {
@@ -182,8 +189,10 @@ function exportToText(result: TracerouteResult): void {
       hop.status === "Success" || hop.status === "TtlExpired"
         ? (hop.roundtripTime === 0 ? "<1" : `${hop.roundtripTime}`)
         : "*";
+    const asn = hop.asn ? `AS${hop.asn}` : "-";
+    const location = formatGeoLabel(hop) ?? "-";
     lines.push(
-      `${hop.hopNumber.toString().padStart(3)} | ${ip.padEnd(15)} | ${hostname.padEnd(30)} | ${rtt.padStart(6)} | ${hop.status}`
+      `${hop.hopNumber.toString().padStart(3)} | ${ip.padEnd(15)} | ${hostname.padEnd(30)} | ${rtt.padStart(6)} | ${hop.status.padEnd(9)} | ${asn.padEnd(10)} | ${location}`
     );
   });
 
@@ -200,7 +209,20 @@ function exportToText(result: TracerouteResult): void {
  * Export traceroute results to CSV
  */
 function exportToCSV(result: TracerouteResult): void {
-  const headers = ["Hop", "IP Address", "Hostname", "RTT (ms)", "Status"];
+  const headers = [
+    "Hop",
+    "IP Address",
+    "Hostname",
+    "RTT (ms)",
+    "Status",
+    "ASN",
+    "ISP",
+    "City",
+    "State",
+    "Country",
+    "Latitude",
+    "Longitude",
+  ];
   const rows = result.hops.map((hop) => [
     hop.hopNumber.toString(),
     hop.address || "*",
@@ -209,6 +231,13 @@ function exportToCSV(result: TracerouteResult): void {
       ? (hop.roundtripTime === 0 ? "<1" : hop.roundtripTime.toString())
       : "",
     hop.status,
+    hop.asn ? `AS${hop.asn}` : "",
+    hop.isp || "",
+    hop.city || "",
+    hop.state || "",
+    hop.country || "",
+    hop.latitude?.toString() ?? "",
+    hop.longitude?.toString() ?? "",
   ]);
 
   const csvContent = [
@@ -330,6 +359,9 @@ function HopTimelineItem({
   const isTimeout = hop.status === "TimedOut";
   const isSuccess = hop.status === "Success" || hop.status === "TtlExpired";
   const rttPercentage = isSuccess ? (hop.roundtripTime / maxRtt) * 100 : 0;
+  const geoLabel = formatGeoLabel(hop);
+  const asnLabel = hop.asn ? `AS${hop.asn}` : null;
+  const hasGeoMeta = Boolean(geoLabel || asnLabel || hop.isp);
 
   return (
     <motion.div
@@ -394,6 +426,25 @@ function HopTimelineItem({
              <span className="text-xs text-muted-foreground truncate sm:hidden">
                 {hop.hostname}
              </span>
+          )}
+
+          {hasGeoMeta && !isTimeout && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {geoLabel && (
+                <span className="inline-flex items-center gap-1">
+                  <MapPin className="h-3 w-3" />
+                  <span className="truncate max-w-48">{geoLabel}</span>
+                </span>
+              )}
+              {asnLabel && (
+                <Badge variant="secondary" className="text-[10px] h-4">
+                  {asnLabel}
+                </Badge>
+              )}
+              {hop.isp && (
+                <span className="truncate max-w-56">{hop.isp}</span>
+              )}
+            </div>
           )}
         </div>
 
@@ -783,7 +834,10 @@ export function TracerouteTool() {
                     </div>
                     <Slider
                       value={[maxHops]}
-                      onValueChange={(val: number[]) => setMaxHops(val[0])}
+                      onValueChange={(val: number | readonly number[]) => {
+                        const value = Array.isArray(val) ? val[0] : val;
+                        setMaxHops(value);
+                      }}
                       min={1}
                       max={64}
                       step={1}
@@ -797,7 +851,10 @@ export function TracerouteTool() {
                     </div>
                     <Slider
                       value={[timeout]}
-                      onValueChange={(val: number[]) => setTimeoutMs(val[0])}
+                      onValueChange={(val: number | readonly number[]) => {
+                        const value = Array.isArray(val) ? val[0] : val;
+                        setTimeoutMs(value);
+                      }}
                       min={100}
                       max={5000}
                       step={100}

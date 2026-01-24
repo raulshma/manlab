@@ -156,6 +156,46 @@ public record TracerouteHop
     /// The ICMP status.
     /// </summary>
     public IPStatus Status { get; init; }
+
+    /// <summary>
+    /// ISO 3166-1 alpha-2 country code (if geolocation found).
+    /// </summary>
+    public string? CountryCode { get; init; }
+
+    /// <summary>
+    /// Country name (if geolocation found).
+    /// </summary>
+    public string? Country { get; init; }
+
+    /// <summary>
+    /// State or region name (if geolocation found).
+    /// </summary>
+    public string? State { get; init; }
+
+    /// <summary>
+    /// City name (if geolocation found).
+    /// </summary>
+    public string? City { get; init; }
+
+    /// <summary>
+    /// Latitude coordinate (if geolocation found).
+    /// </summary>
+    public double? Latitude { get; init; }
+
+    /// <summary>
+    /// Longitude coordinate (if geolocation found).
+    /// </summary>
+    public double? Longitude { get; init; }
+
+    /// <summary>
+    /// Autonomous system number (if available).
+    /// </summary>
+    public long? Asn { get; init; }
+
+    /// <summary>
+    /// ISP or organization name (if available).
+    /// </summary>
+    public string? Isp { get; init; }
     
     /// <summary>
     /// Whether this hop timed out.
@@ -202,6 +242,16 @@ public record TracerouteResult
     /// Duration of the traceroute in milliseconds.
     /// </summary>
     public long DurationMs { get; init; }
+
+    /// <summary>
+    /// Whether geolocation lookups were available during this trace.
+    /// </summary>
+    public bool GeoLookupAvailable { get; init; }
+
+    /// <summary>
+    /// Number of hops with geolocation data.
+    /// </summary>
+    public int GeoLookupCount { get; init; }
 }
 
 /// <summary>
@@ -272,6 +322,74 @@ public record DeviceInfo
 }
 
 /// <summary>
+/// A single ARP table entry.
+/// </summary>
+public record ArpTableEntry
+{
+    /// <summary>
+    /// IP address for the entry.
+    /// </summary>
+    public required string IpAddress { get; init; }
+
+    /// <summary>
+    /// MAC address for the entry.
+    /// </summary>
+    public required string MacAddress { get; init; }
+
+    /// <summary>
+    /// Vendor name (best-effort from OUI database).
+    /// </summary>
+    public string? Vendor { get; init; }
+
+    /// <summary>
+    /// Interface or device name (if available).
+    /// </summary>
+    public string? InterfaceName { get; init; }
+
+    /// <summary>
+    /// Whether the ARP entry is static (permanent).
+    /// </summary>
+    public bool? IsStatic { get; init; }
+}
+
+/// <summary>
+/// Result for ARP table query.
+/// </summary>
+public record ArpTableResult
+{
+    /// <summary>
+    /// ARP table entries.
+    /// </summary>
+    public List<ArpTableEntry> Entries { get; init; } = [];
+
+    /// <summary>
+    /// When the ARP table was retrieved (UTC).
+    /// </summary>
+    public DateTime RetrievedAt { get; init; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Result of an ARP table operation (add/remove/flush).
+/// </summary>
+public record ArpOperationResult
+{
+    /// <summary>
+    /// Whether the operation succeeded.
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// Optional error message if operation failed.
+    /// </summary>
+    public string? Error { get; init; }
+
+    /// <summary>
+    /// Optional output from the command.
+    /// </summary>
+    public string? Output { get; init; }
+}
+
+/// <summary>
 /// Error information for network scan operations.
 /// </summary>
 public record NetworkScanError
@@ -304,7 +422,9 @@ public enum DnsRecordType
     TXT,
     NS,
     SOA,
-    PTR
+    PTR,
+    SRV,
+    CAA
 }
 
 /// <summary>
@@ -357,6 +477,73 @@ public record DnsLookupResult
     /// Reverse lookup records for resolved IPs (PTR).
     /// </summary>
     public List<DnsRecord> ReverseRecords { get; init; } = [];
+}
+
+/// <summary>
+/// Result for a single resolver in a DNS propagation check.
+/// </summary>
+public record DnsPropagationServerResult
+{
+    /// <summary>
+    /// Resolver hostname or IP address.
+    /// </summary>
+    public required string Server { get; init; }
+
+    /// <summary>
+    /// Resolved IP address used for the query (if available).
+    /// </summary>
+    public string? ResolvedAddress { get; init; }
+
+    /// <summary>
+    /// Records returned by this resolver.
+    /// </summary>
+    public List<DnsRecord> Records { get; init; } = [];
+
+    /// <summary>
+    /// Error message if the resolver query failed.
+    /// </summary>
+    public string? Error { get; init; }
+
+    /// <summary>
+    /// Duration of resolver query in milliseconds.
+    /// </summary>
+    public long DurationMs { get; init; }
+}
+
+/// <summary>
+/// Result of a DNS propagation check.
+/// </summary>
+public record DnsPropagationResult
+{
+    /// <summary>
+    /// Original query (hostname).
+    /// </summary>
+    public required string Query { get; init; }
+
+    /// <summary>
+    /// Record types requested.
+    /// </summary>
+    public List<DnsRecordType> RecordTypes { get; init; } = [];
+
+    /// <summary>
+    /// Resolver results.
+    /// </summary>
+    public List<DnsPropagationServerResult> Servers { get; init; } = [];
+
+    /// <summary>
+    /// When the check started (UTC).
+    /// </summary>
+    public DateTime StartedAt { get; init; }
+
+    /// <summary>
+    /// When the check completed (UTC).
+    /// </summary>
+    public DateTime CompletedAt { get; init; }
+
+    /// <summary>
+    /// Duration of the propagation check in milliseconds.
+    /// </summary>
+    public long DurationMs => (long)(CompletedAt - StartedAt).TotalMilliseconds;
 }
 
 /// <summary>
@@ -754,4 +941,153 @@ public record PublicIpResult
     /// When the lookup occurred (UTC).
     /// </summary>
     public DateTime RetrievedAt { get; init; }
+}
+
+/// <summary>
+/// Supported SNMP protocol versions.
+/// </summary>
+public enum SnmpVersion
+{
+    V1,
+    V2c,
+    V3
+}
+
+/// <summary>
+/// Supported SNMPv3 authentication protocols.
+/// </summary>
+public enum SnmpAuthProtocol
+{
+    None,
+    Md5,
+    Sha1
+}
+
+/// <summary>
+/// Supported SNMPv3 privacy protocols.
+/// </summary>
+public enum SnmpPrivacyProtocol
+{
+    None,
+    Des,
+    Aes128
+}
+
+/// <summary>
+/// SNMPv3 credential settings.
+/// </summary>
+public record SnmpV3Credentials
+{
+    public required string Username { get; init; }
+    public SnmpAuthProtocol AuthProtocol { get; init; } = SnmpAuthProtocol.None;
+    public SnmpPrivacyProtocol PrivacyProtocol { get; init; } = SnmpPrivacyProtocol.None;
+    public string? AuthPassword { get; init; }
+    public string? PrivacyPassword { get; init; }
+    public string? ContextName { get; init; }
+}
+
+/// <summary>
+/// Request for SNMP GET.
+/// </summary>
+public record SnmpGetRequest
+{
+    public required string Host { get; init; }
+    public int? Port { get; init; }
+    public SnmpVersion Version { get; init; } = SnmpVersion.V2c;
+    public string? Community { get; init; }
+    public SnmpV3Credentials? V3 { get; init; }
+    public string[] Oids { get; init; } = [];
+    public int? TimeoutMs { get; init; }
+    public int? Retries { get; init; }
+}
+
+/// <summary>
+/// Request for SNMP walk.
+/// </summary>
+public record SnmpWalkRequest
+{
+    public required string Host { get; init; }
+    public int? Port { get; init; }
+    public SnmpVersion Version { get; init; } = SnmpVersion.V2c;
+    public string? Community { get; init; }
+    public SnmpV3Credentials? V3 { get; init; }
+    public required string BaseOid { get; init; }
+    public int? TimeoutMs { get; init; }
+    public int? Retries { get; init; }
+    public int? MaxResults { get; init; }
+}
+
+/// <summary>
+/// Request for SNMP table query.
+/// </summary>
+public record SnmpTableRequest
+{
+    public required string Host { get; init; }
+    public int? Port { get; init; }
+    public SnmpVersion Version { get; init; } = SnmpVersion.V2c;
+    public string? Community { get; init; }
+    public SnmpV3Credentials? V3 { get; init; }
+    public string? BaseOid { get; init; }
+    public string[] Columns { get; init; } = [];
+    public int? TimeoutMs { get; init; }
+    public int? Retries { get; init; }
+    public int? MaxResultsPerColumn { get; init; }
+}
+
+/// <summary>
+/// SNMP value result.
+/// </summary>
+public record SnmpValue
+{
+    public required string Oid { get; init; }
+    public string? Value { get; init; }
+    public string? DataType { get; init; }
+}
+
+/// <summary>
+/// SNMP GET result.
+/// </summary>
+public record SnmpGetResult
+{
+    public required string Host { get; init; }
+    public int Port { get; init; }
+    public SnmpVersion Version { get; init; }
+    public IReadOnlyList<SnmpValue> Values { get; init; } = [];
+    public long DurationMs { get; init; }
+}
+
+/// <summary>
+/// SNMP walk result.
+/// </summary>
+public record SnmpWalkResult
+{
+    public required string Host { get; init; }
+    public int Port { get; init; }
+    public SnmpVersion Version { get; init; }
+    public required string BaseOid { get; init; }
+    public IReadOnlyList<SnmpValue> Values { get; init; } = [];
+    public long DurationMs { get; init; }
+}
+
+/// <summary>
+/// Row in an SNMP table query.
+/// </summary>
+public record SnmpTableRow
+{
+    public required string Index { get; init; }
+    public Dictionary<string, string?> Values { get; init; } = [];
+}
+
+/// <summary>
+/// SNMP table query result.
+/// </summary>
+public record SnmpTableResult
+{
+    public required string Host { get; init; }
+    public int Port { get; init; }
+    public SnmpVersion Version { get; init; }
+    public string? BaseOid { get; init; }
+    public IReadOnlyList<string> Columns { get; init; } = [];
+    public List<SnmpTableRow> Rows { get; init; } = [];
+    public long DurationMs { get; init; }
 }
