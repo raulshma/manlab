@@ -4,7 +4,7 @@
  * Provides tab-based navigation between different scanning tools.
  */
 
-import { useEffect, useState, useCallback, useRef, useLayoutEffect, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Network,
   Radio,
@@ -24,7 +24,6 @@ import {
   Calculator,
   Fingerprint,
   LocateFixed,
-  MoreHorizontal,
   Share2,
   X,
   Signal,
@@ -60,13 +59,6 @@ import { SyslogTool } from "@/components/network/SyslogTool";
 import { PacketCaptureTool } from "@/components/network/PacketCaptureTool";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   isRealtimeEnabled,
   isNotificationsEnabled,
@@ -196,67 +188,6 @@ export function NetworkScannerPage() {
     );
   }, [toolQuery]);
 
-  // Responsive Tabs Logic
-  const [visibleCount, setVisibleCount] = useState<number>(TOOLS.length);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const ghostRef = useRef<HTMLDivElement>(null);
-  const ghostMoreRef = useRef<HTMLDivElement>(null);
-  const calculateVisibleTabsRef = useRef<() => void>(() => undefined);
-
-  const scheduleRecalculate = useCallback(() => {
-    window.requestAnimationFrame(() => calculateVisibleTabsRef.current());
-  }, []);
-
-    const calculateVisibleTabs = useCallback(() => {
-      if (!containerRef.current || !ghostRef.current) return;
-
-      const containerWidth = containerRef.current.clientWidth - 8; // Account for TabsList horizontal padding
-      const ghostItems = Array.from(ghostRef.current.children).filter(
-        (child) => child !== ghostMoreRef.current
-      ) as HTMLElement[];
-      const moreButtonWidth = ghostMoreRef.current?.offsetWidth ?? 120;
-
-      if (containerWidth <= 0) {
-        scheduleRecalculate();
-        return;
-      }
-
-      const ghostWidths = ghostItems.map((item) => item.offsetWidth);
-      if (ghostWidths.some((width) => width === 0)) {
-        scheduleRecalculate();
-        return;
-      }
-      
-      let currentWidth = 0;
-      let count = 0;
-
-      for (let i = 0; i < ghostItems.length; i++) {
-        const itemWidth = ghostItems[i].offsetWidth + 8; // +8 for gap preference
-        
-        // If this is the last item and it fits, we don't need the "More" button
-        if (i === ghostItems.length - 1) {
-             if (currentWidth + itemWidth <= containerWidth) {
-                 count++;
-             }
-             break;
-        }
-
-        if (currentWidth + itemWidth + moreButtonWidth <= containerWidth) {
-          currentWidth += itemWidth;
-          count++;
-        } else {
-          break;
-        }
-      }
-      
-      // Ensure at least one tab is visible if possible, though unlikely to fail
-      setVisibleCount(Math.max(1, count));
-    }, [scheduleRecalculate]);
-
-    useEffect(() => {
-      calculateVisibleTabsRef.current = calculateVisibleTabs;
-    }, [calculateVisibleTabs]);
-
     const handleToolQueryChange = useCallback((value: string) => {
       setToolQuery(value);
       const query = value.trim().toLowerCase();
@@ -270,42 +201,7 @@ export function NetworkScannerPage() {
         setActiveTab(nextFiltered[0].id as NetworkToolTab);
       }
 
-      window.requestAnimationFrame(calculateVisibleTabs);
-    }, [activeTab, calculateVisibleTabs]);
-
-  useLayoutEffect(() => {
-    if (!settingsReady) return;
-
-    const frame = window.requestAnimationFrame(calculateVisibleTabs);
-
-    const observer = new ResizeObserver(calculateVisibleTabs);
-    if (containerRef.current) {
-      observer.observe(containerRef.current);
-    }
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [calculateVisibleTabs, settingsReady, filteredTools.length]);
-
-  useEffect(() => {
-    const handleRecalculate = () => calculateVisibleTabs();
-    window.addEventListener("load", handleRecalculate);
-
-    const fontsReady = (document as Document & { fonts?: FontFaceSet }).fonts?.ready;
-    if (fontsReady) {
-      fontsReady.then(handleRecalculate).catch(() => undefined);
-    }
-
-    return () => {
-      window.removeEventListener("load", handleRecalculate);
-    };
-  }, [calculateVisibleTabs]);
-
-  const visibleTools = filteredTools.slice(0, visibleCount);
-  const overflowTools = filteredTools.slice(visibleCount);
-  const isOverflowActive = overflowTools.some(t => t.id === activeTab);
+    }, [activeTab]);
 
   // Force reconnect by toggling realtime off and on
   const handleRetryConnection = useCallback(() => {
@@ -422,44 +318,22 @@ export function NetworkScannerPage() {
               </div>
             </div>
             
-            {/* Ghost List for Measurement (Invisible & Off-screen) */}
-            <div 
-                ref={ghostRef} 
-                className="flex fixed bottom-0 left-0 -z-50 opacity-0 pointer-events-none w-max"
-                aria-hidden="true"
-                style={{ transform: 'translateY(200%)' }} // Extra safety to force it out of view
-            >
-                 {filteredTools.map((tool) => {
-                    const Icon = tool.icon;
-                    return (
-                        <div key={tool.id} className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-transparent">
-                            <Icon className="h-4 w-4" />
-                            <span className="inline">{tool.label}</span>
-                        </div>
-                    );
-                 })}
-                 <div
-                   ref={ghostMoreRef}
-                   className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-transparent"
-                 >
-                   <MoreHorizontal className="h-4 w-4" />
-                   <span className="inline">More</span>
-                 </div>
-            </div>
-
-            {/* Real Tab List */}
-            <div ref={containerRef} className="w-full overflow-hidden">
-              <TabsList className="flex w-full justify-start h-auto p-1 bg-muted/50 rounded-lg gap-2">
-                {visibleTools.map((tool) => {
+            {/* Tool Tab Bar */}
+            <div className="w-full overflow-x-auto pb-1 scrollbar-hide">
+              <TabsList className="flex w-max min-w-full justify-start h-auto p-1 bg-muted/50 rounded-lg gap-2">
+                {filteredTools.map((tool) => {
                   const Icon = tool.icon;
                   return (
                     <TabsTrigger
                       key={tool.id}
                       value={tool.id}
-                      className="gap-2 px-4 flex-none data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200"
+                      className={cn(
+                        "gap-2 px-4 flex-none data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200",
+                        "hover:bg-muted/60"
+                      )}
                     >
                       <Icon className="h-4 w-4" />
-                      <span className="inline">{tool.label}</span>
+                      <span className="inline whitespace-nowrap">{tool.label}</span>
                     </TabsTrigger>
                   );
                 })}
@@ -468,41 +342,6 @@ export function NetworkScannerPage() {
                   <div className="px-3 py-2 text-sm text-muted-foreground">
                     No tools match “{toolQuery.trim()}”.
                   </div>
-                )}
-
-                {overflowTools.length > 0 && (
-                  <Select
-                    value={isOverflowActive ? activeTab : ""}
-                    onValueChange={(value) => setActiveTab(value as NetworkToolTab)}
-                  >
-                    <SelectTrigger
-                      className={cn(
-                        "h-9 px-4 gap-2 rounded-md font-medium text-sm transition-colors border-transparent hover:bg-muted data-[state=open]:bg-accent w-auto min-w-25",
-                        isOverflowActive && "bg-background text-foreground shadow-sm ring-1 ring-border border-border"
-                      )}
-                    >
-                      <SelectValue placeholder="" className={isOverflowActive ? "" : "hidden"} />
-                      {!isOverflowActive && (
-                        <div className="flex items-center gap-2">
-                          <MoreHorizontal className="h-4 w-4" />
-                          <span>More</span>
-                        </div>
-                      )}
-                    </SelectTrigger>
-                    <SelectContent align="end" className="w-50">
-                      {overflowTools.map((tool) => {
-                        const Icon = tool.icon;
-                        return (
-                          <SelectItem key={tool.id} value={tool.id}>
-                            <div className="flex items-center gap-2">
-                              <Icon className="h-4 w-4 text-muted-foreground" />
-                              <span>{tool.label}</span>
-                            </div>
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
                 )}
               </TabsList>
             </div>
