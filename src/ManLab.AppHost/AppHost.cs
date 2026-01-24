@@ -24,7 +24,7 @@ var postgresPassword = builder.AddParameter(
 // (see ManLab.Server: builder.AddNpgsqlDbContext<DataContext>("manlab")).
 
 var postgres = builder.AddPostgres("postgres")
-    .WithImage("timescale/timescaledb:latest-pg16")
+    .WithImage("timescale/timescaledb:latest-pg17-oss")
     .WithDataVolume("manlab-db-data")
     .WithPassword(postgresPassword);
 var manlabDb = postgres.AddDatabase("manlab");
