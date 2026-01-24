@@ -355,6 +355,157 @@ function HistoryRow({ entry, onDelete, onView }: HistoryRowProps) {
   );
 }
 
+interface HistoryDetailsContentProps {
+  entry: ParsedHistoryEntry;
+  onUpdateMetadata: (id: string, tags: string[], notes: string) => Promise<void>;
+}
+
+function HistoryDetailsContent({ entry, onUpdateMetadata }: HistoryDetailsContentProps) {
+  const [tags, setTags] = useState<string[]>(() => entry.tags ?? []);
+  const [notes, setNotes] = useState<string>(() => entry.notes ?? "");
+  const [tagInput, setTagInput] = useState("");
+
+  const handleAddTag = () => {
+    const trimmed = tagInput.trim();
+    if (!trimmed) return;
+    setTags((prev) => {
+      if (prev.some((t) => t.toLowerCase() === trimmed.toLowerCase())) return prev;
+      return [...prev, trimmed];
+    });
+    setTagInput("");
+  };
+
+  const handleRemoveTag = (tag: string) => {
+    setTags((prev) => prev.filter((t) => t !== tag));
+  };
+
+  const handleSave = async () => {
+    await onUpdateMetadata(entry.id, tags, notes);
+  };
+
+  return (
+    <div className="flex flex-col gap-6 px-6 pb-6 overflow-y-auto">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card className="bg-muted/30">
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground">Target</div>
+            <div className="text-sm font-mono break-all">{entry.target || "—"}</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-muted/30">
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground">Status</div>
+            <div className="mt-2">{getStatusBadge(entry.success)}</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-muted/30">
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground">Duration</div>
+            <div className="text-lg font-semibold">{formatDuration(entry.durationMs)}</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-muted/30">
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground">Executed</div>
+            <div className="text-sm">{formatTimestampLong(entry.timestamp)}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Tag className="h-4 w-4" />
+          Tags
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {tags.map((tag) => (
+            <Badge key={tag} variant="secondary" className="gap-2">
+              {tag}
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => handleRemoveTag(tag)}
+              >
+                ×
+              </button>
+            </Badge>
+          ))}
+          {tags.length === 0 && (
+            <span className="text-xs text-muted-foreground">No tags yet</span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Input
+            value={tagInput}
+            onChange={(event) => setTagInput(event.target.value)}
+            placeholder="Add a tag and press Enter"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === ",") {
+                event.preventDefault();
+                handleAddTag();
+              }
+            }}
+          />
+          <Button variant="outline" onClick={handleAddTag}>Add</Button>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <FileText className="h-4 w-4" />
+          Notes
+        </div>
+        <Textarea
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder="Add annotations or operator notes"
+          rows={4}
+        />
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <History className="h-4 w-4" />
+          Request & response payloads
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          {entry.input && (
+            <div>
+              <h4 className="text-xs font-medium mb-2 text-muted-foreground">Input</h4>
+              <ScrollArea className="h-40 rounded border bg-muted/40 p-2">
+                <pre className="text-xs font-mono">
+                  {JSON.stringify(entry.input, null, 2)}
+                </pre>
+              </ScrollArea>
+            </div>
+          )}
+          {entry.result && (
+            <div>
+              <h4 className="text-xs font-medium mb-2 text-muted-foreground">Result</h4>
+              <ScrollArea className="h-40 rounded border bg-muted/40 p-2">
+                <pre className="text-xs font-mono">
+                  {JSON.stringify(entry.result, null, 2)}
+                </pre>
+              </ScrollArea>
+            </div>
+          )}
+        </div>
+        {entry.error && (
+          <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            {entry.error}
+          </div>
+        )}
+      </div>
+
+      <Button onClick={handleSave} className="self-start">
+        Save metadata
+      </Button>
+    </div>
+  );
+}
+
 export function NetworkToolHistoryPanel() {
   const {
     history,
@@ -373,9 +524,6 @@ export function NetworkToolHistoryPanel() {
   const [searchInput, setSearchInput] = useState(query.search);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [saveViewName, setSaveViewName] = useState("");
-  const [tagInput, setTagInput] = useState("");
-  const [editTags, setEditTags] = useState<string[]>([]);
-  const [editNotes, setEditNotes] = useState<string>("");
 
   const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
     if (typeof window === "undefined") return [];
@@ -393,7 +541,11 @@ export function NetworkToolHistoryPanel() {
   }, [savedViews]);
 
   useEffect(() => {
-    setSearchInput(query.search);
+    if (query.search !== searchInput) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSearchInput(query.search);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.search]);
 
   useEffect(() => {
@@ -402,13 +554,6 @@ export function NetworkToolHistoryPanel() {
     }, 300);
     return () => window.clearTimeout(handle);
   }, [searchInput, setQuery]);
-
-  useEffect(() => {
-    if (!selectedEntry) return;
-    setEditTags(selectedEntry.tags ?? []);
-    setEditNotes(selectedEntry.notes ?? "");
-    setTagInput("");
-  }, [selectedEntry]);
 
   const stats = useMemo(() => {
     const total = history.length;
@@ -490,24 +635,7 @@ export function NetworkToolHistoryPanel() {
     window.URL.revokeObjectURL(url);
   }, [query]);
 
-  const handleAddTag = useCallback(() => {
-    const trimmed = tagInput.trim();
-    if (!trimmed) return;
-    setEditTags((prev) => {
-      if (prev.some((t) => t.toLowerCase() === trimmed.toLowerCase())) return prev;
-      return [...prev, trimmed];
-    });
-    setTagInput("");
-  }, [tagInput]);
 
-  const handleSaveMetadata = useCallback(async () => {
-    if (!selectedEntry) return;
-    await updateMetadata(selectedEntry.id, editTags, editNotes);
-  }, [editNotes, editTags, selectedEntry, updateMetadata]);
-
-  const handleRemoveTag = useCallback((tag: string) => {
-    setEditTags((prev) => prev.filter((t) => t !== tag));
-  }, []);
 
   return (
     <div className="space-y-4">
@@ -892,125 +1020,11 @@ export function NetworkToolHistoryPanel() {
             </SheetDescription>
           </SheetHeader>
           {selectedEntry && (
-            <div className="flex flex-col gap-6 px-6 pb-6 overflow-y-auto">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Card className="bg-muted/30">
-                  <CardContent className="p-4">
-                    <div className="text-xs text-muted-foreground">Target</div>
-                    <div className="text-sm font-mono break-all">{selectedEntry.target || "—"}</div>
-                  </CardContent>
-                </Card>
-                <Card className="bg-muted/30">
-                  <CardContent className="p-4">
-                    <div className="text-xs text-muted-foreground">Status</div>
-                    <div className="mt-2">{getStatusBadge(selectedEntry.success)}</div>
-                  </CardContent>
-                </Card>
-                <Card className="bg-muted/30">
-                  <CardContent className="p-4">
-                    <div className="text-xs text-muted-foreground">Duration</div>
-                    <div className="text-lg font-semibold">{formatDuration(selectedEntry.durationMs)}</div>
-                  </CardContent>
-                </Card>
-                <Card className="bg-muted/30">
-                  <CardContent className="p-4">
-                    <div className="text-xs text-muted-foreground">Executed</div>
-                    <div className="text-sm">{formatTimestampLong(selectedEntry.timestamp)}</div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Tag className="h-4 w-4" />
-                  Tags
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {editTags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="gap-2">
-                      {tag}
-                      <button
-                        type="button"
-                        className="text-xs text-muted-foreground hover:text-foreground"
-                        onClick={() => handleRemoveTag(tag)}
-                      >
-                        ×
-                      </button>
-                    </Badge>
-                  ))}
-                  {editTags.length === 0 && (
-                    <span className="text-xs text-muted-foreground">No tags yet</span>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <Input
-                    value={tagInput}
-                    onChange={(event) => setTagInput(event.target.value)}
-                    placeholder="Add a tag and press Enter"
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === ",") {
-                        event.preventDefault();
-                        handleAddTag();
-                      }
-                    }}
-                  />
-                  <Button variant="outline" onClick={handleAddTag}>Add</Button>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <FileText className="h-4 w-4" />
-                  Notes
-                </div>
-                <Textarea
-                  value={editNotes}
-                  onChange={(event) => setEditNotes(event.target.value)}
-                  placeholder="Add annotations or operator notes"
-                  rows={4}
-                />
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <History className="h-4 w-4" />
-                  Request & response payloads
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {selectedEntry.input && (
-                    <div>
-                      <h4 className="text-xs font-medium mb-2 text-muted-foreground">Input</h4>
-                      <ScrollArea className="h-40 rounded border bg-muted/40 p-2">
-                        <pre className="text-xs font-mono">
-                          {JSON.stringify(selectedEntry.input, null, 2)}
-                        </pre>
-                      </ScrollArea>
-                    </div>
-                  )}
-                  {selectedEntry.result && (
-                    <div>
-                      <h4 className="text-xs font-medium mb-2 text-muted-foreground">Result</h4>
-                      <ScrollArea className="h-40 rounded border bg-muted/40 p-2">
-                        <pre className="text-xs font-mono">
-                          {JSON.stringify(selectedEntry.result, null, 2)}
-                        </pre>
-                      </ScrollArea>
-                    </div>
-                  )}
-                </div>
-                {selectedEntry.error && (
-                  <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                    {selectedEntry.error}
-                  </div>
-                )}
-              </div>
-
-              <Button onClick={handleSaveMetadata} className="self-start">
-                Save metadata
-              </Button>
-            </div>
+            <HistoryDetailsContent
+              key={selectedEntry.id}
+              entry={selectedEntry}
+              onUpdateMetadata={updateMetadata}
+            />
           )}
         </SheetContent>
       </Sheet>

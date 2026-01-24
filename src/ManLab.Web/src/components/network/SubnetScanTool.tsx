@@ -436,7 +436,7 @@ export function SubnetScanTool() {
     });
 
     return unsubscribe;
-  }, [isConnected, subscribeToSubnetScan]);
+  }, [isConnected, subscribeToSubnetScan, mergeHosts]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
