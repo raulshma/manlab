@@ -71,8 +71,11 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
         _httpClientFactory = httpClientFactory;
         
         // Get database path from configuration or use default
-        _dataPath = configuration["DataPath"] ?? 
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ManLab");
+        _dataPath = configuration["Geolocation:DataPath"]
+            ?? configuration["GeoLocation:DataPath"]
+            ?? configuration["DataPath"]
+            ?? GetDefaultDataPath();
+        _logger.LogInformation("Geolocation database path set to {Path}", _dataPath);
         
         // Load active source ID
         _activeSourceId = LoadActiveSourceId() ?? DefaultSourceId;
@@ -80,6 +83,27 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
         
         // Initialize reader if database exists
         InitializeReader();
+    }
+
+    private static string GetDefaultDataPath()
+    {
+        var runningInContainer = string.Equals(
+            Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
+        if (runningInContainer)
+        {
+            return Path.Combine(AppContext.BaseDirectory, "Distribution", "geolocation");
+        }
+
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (string.IsNullOrWhiteSpace(appData))
+        {
+            return Path.Combine(AppContext.BaseDirectory, "Data", "ManLab");
+        }
+
+        return Path.Combine(appData, "ManLab");
     }
 
     private string GetDatabasePath(string sourceId) => 
