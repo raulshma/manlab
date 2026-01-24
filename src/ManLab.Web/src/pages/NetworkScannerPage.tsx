@@ -18,6 +18,10 @@ import {
   Globe,
   ShieldCheck,
   RefreshCw,
+  Power,
+  Gauge,
+  Calculator,
+  Fingerprint,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -32,6 +36,10 @@ import { WifiScannerTool } from "@/components/network/WifiScannerTool";
 import { DnsTool } from "@/components/network/DnsTool";
 import { SslInspectorTool } from "@/components/network/SslInspectorTool";
 import { GeolocationDbManager } from "@/components/network/GeolocationDbManager";
+import { WakeOnLanTool } from "@/components/network/WakeOnLanTool";
+import { SpeedTestTool } from "@/components/network/SpeedTestTool";
+import { SubnetCalculatorTool } from "@/components/network/SubnetCalculatorTool";
+import { MacVendorLookupTool } from "@/components/network/MacVendorLookupTool";
 import { NetworkToolHistoryPanel } from "@/components/network/NetworkToolHistoryPanel";
 import { NetworkErrorBoundary } from "@/components/network/NetworkErrorBoundary";
 import { NetworkToolHistoryProvider } from "@/contexts/NetworkToolHistoryContext";
@@ -201,6 +209,22 @@ export function NetworkScannerPage() {
                 <Server className="h-4 w-4" />
                 <span className="inline">Ports</span>
               </TabsTrigger>
+              <TabsTrigger value="wol" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Power className="h-4 w-4" />
+                <span className="inline">WoL</span>
+              </TabsTrigger>
+              <TabsTrigger value="speedtest" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Gauge className="h-4 w-4" />
+                <span className="inline">Speed Test</span>
+              </TabsTrigger>
+              <TabsTrigger value="subnetcalc" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Calculator className="h-4 w-4" />
+                <span className="inline">Subnet Calc</span>
+              </TabsTrigger>
+              <TabsTrigger value="mac-vendor" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
+                <Fingerprint className="h-4 w-4" />
+                <span className="inline">MAC Vendor</span>
+              </TabsTrigger>
               <TabsTrigger value="dns" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
                 <Globe className="h-4 w-4" />
                 <span className="inline">DNS</span>
@@ -250,6 +274,30 @@ export function NetworkScannerPage() {
             <TabsContent value="ports" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="Port Scanner Error">
                 <PortScanTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="wol" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Wake-on-LAN Error">
+                <WakeOnLanTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="speedtest" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Speed Test Error">
+                <SpeedTestTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="subnetcalc" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Subnet Calculator Error">
+                <SubnetCalculatorTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="mac-vendor" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="MAC Vendor Lookup Error">
+                <MacVendorLookupTool />
               </NetworkErrorBoundary>
             </TabsContent>
 

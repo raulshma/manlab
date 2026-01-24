@@ -19,12 +19,8 @@ import {
   Server,
   Loader2,
   Download,
-  Trash2,
-  CheckCircle2,
   Clock,
-  Shield,
   ShieldAlert,
-  ShieldCheck,
   Globe,
   Database,
   HardDrive,
@@ -37,25 +33,21 @@ import {
   LayoutGrid,
   List,
   AlertTriangle,
+  ShieldCheck,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
@@ -70,7 +62,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/lib/network-notify";
 import {
   scanPorts as scanPortsApi,
@@ -79,10 +71,9 @@ import {
 } from "@/api/networkApi";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
 import { PortCard } from "@/components/network/PortCard";
-import { CategoryIcon } from "@/components/network/CategoryIcon";
+
 import {
   getPortInfo,
-  getRiskColor,
   type RiskLevel,
   type ServiceCategory,
   ALL_COMMON_PORTS,
@@ -377,6 +368,11 @@ export function PortScanTool() {
     }
   }, [networkTools, networkTools?.pendingAction]);
 
+  // Handle mode change
+  const handleModeChange = (value: PortMode) => {
+    setPortMode(value);
+  };
+
   // Get ports based on mode
   const getPortsToScan = useCallback((): number[] => {
     switch (portMode) {
@@ -614,25 +610,7 @@ export function PortScanTool() {
     });
   }, [isScanning, liveOpenPorts, result, categoryFilter]);
 
-  // Group ports by category
-  const portsByCategory = useMemo(() => {
-    const groups: Record<ServiceCategory, OpenPort[]> = {
-      web: [],
-      database: [],
-      remote: [],
-      mail: [],
-      file: [],
-      other: [],
-    };
 
-    const ports = isScanning && liveOpenPorts.length > 0 ? liveOpenPorts : result?.openPorts || [];
-    ports.forEach((port) => {
-      const info = getPortInfo(port);
-      groups[info.category].push(port);
-    });
-
-    return groups;
-  }, [isScanning, liveOpenPorts, result]);
 
   // Calculate statistics
   const stats = useMemo(() => {
@@ -652,591 +630,448 @@ export function PortScanTool() {
   }, [result, liveOpenPorts]);
 
   return (
-    <div className="space-y-6">
-      {/* Input Section */}
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Server className="h-5 w-5" />
-            Port Scanner
-          </CardTitle>
-          <CardDescription>
-            Scan for open ports and identify running services on a host
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Host Input Row */}
-          <div className="grid gap-6 md:grid-cols-[1fr_auto]">
-            <div className="space-y-2">
-              <Label htmlFor="port-scan-host">Target Host</Label>
+    <div className="space-y-8 max-w-7xl mx-auto p-1">
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
+        <div>
+           <h2 className="text-3xl font-bold tracking-tight bg-linear-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+             Port Scanner
+           </h2>
+           <p className="text-muted-foreground mt-1 text-lg">
+             Identify open ports and running services on any target.
+           </p>
+        </div>
+      </div>
+
+      {/* Main Input Card */}
+      <Card className="border-0 shadow-lg bg-card/60 backdrop-blur-xl ring-1 ring-border/50 overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-primary/50 via-primary to-primary/50 opacity-20" />
+        <CardContent className="p-8 space-y-8">
+           {/* Search Bar */}
+           <div className="relative group">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <Globe className="h-5 w-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+              </div>
               <Input
                 id="port-scan-host"
                 ref={inputRef}
-                placeholder="e.g., example.com or 192.168.1.1"
+                placeholder="Enter target hostname or IP (e.g., example.com, 192.168.1.1)"
                 value={host}
                 onChange={(e) => handleHostChange(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className={validationError ? "border-destructive" : ""}
+                className={`pl-12 h-14 text-lg bg-background/50 border-input/50 focus:border-primary/50 focus:ring-primary/20 transition-all ${
+                  validationError ? "border-destructive/50 focus:border-destructive" : ""
+                }`}
                 disabled={isLoading}
-                aria-invalid={!!validationError}
-                aria-describedby={validationError ? "port-scan-host-error" : undefined}
               />
-              {validationError && (
-                <p id="port-scan-host-error" className="text-sm text-destructive" role="alert">
-                  {validationError}
-                </p>
-              )}
-            </div>
-
-            {/* Submit Button */}
-            <div className="flex items-end">
-              <Button
-                onClick={handleScan}
-                disabled={isLoading || !host}
-                className="w-full md:w-auto min-h-11"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Scanning...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="mr-2 h-4 w-4" />
-                    Scan Ports
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-
-          {/* Port Selection */}
-          <div className="space-y-4">
-            <Label>Port Selection</Label>
-            <RadioGroup
-              value={portMode}
-              onValueChange={(value) => setPortMode(value as PortMode)}
-              className="grid gap-4 md:grid-cols-3"
-            >
-              <div>
-                <RadioGroupItem value="common" id="common" className="peer sr-only" />
-                <Label
-                  htmlFor="common"
-                  className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer"
-                >
-                  <Server className="mb-2 h-6 w-6" />
-                  <span className="text-sm font-medium">Common Ports</span>
-                  <span className="text-xs text-muted-foreground">
-                    {ALL_COMMON_PORTS.length} well-known ports
-                  </span>
-                </Label>
+              <div className="absolute inset-y-0 right-2 flex items-center">
+                 <Button
+                    onClick={handleScan}
+                    disabled={isLoading || !host}
+                    size="lg"
+                    className="h-10 px-6 font-semibold shadow-sm transition-all hover:scale-[1.02]"
+                 >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Scanning
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="mr-2 h-4 w-4 fill-current" />
+                         Scan Target
+                      </>
+                    )}
+                 </Button>
               </div>
+           </div>
+           
+           {validationError && (
+             <motion.p
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-sm text-destructive font-medium flex items-center gap-2"
+             >
+                <AlertTriangle className="h-4 w-4" /> {validationError}
+             </motion.p>
+           )}
 
-              <div>
-                <RadioGroupItem value="custom" id="custom" className="peer sr-only" />
-                <Label
-                  htmlFor="custom"
-                  className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer"
-                >
-                  <LayoutGrid className="mb-2 h-6 w-6" />
-                  <span className="text-sm font-medium">Custom Range</span>
-                  <span className="text-xs text-muted-foreground">
-                    Specify start-end range
-                  </span>
-                </Label>
-              </div>
-
-              <div>
-                <RadioGroupItem value="specific" id="specific" className="peer sr-only" />
-                <Label
-                  htmlFor="specific"
-                  className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer"
-                >
-                  <List className="mb-2 h-6 w-6" />
-                  <span className="text-sm font-medium">Specific Ports</span>
-                  <span className="text-xs text-muted-foreground">
-                    Comma-separated list
-                  </span>
-                </Label>
-              </div>
-            </RadioGroup>
-
-            {/* Custom Range Inputs */}
-            {portMode === "custom" && (
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="range-start">Start Port</Label>
-                  <Input
-                    id="range-start"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={customRangeStart}
-                    onChange={(e) => setCustomRangeStart(e.target.value)}
-                    disabled={isLoading}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="range-end">End Port</Label>
-                  <Input
-                    id="range-end"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={customRangeEnd}
-                    onChange={(e) => setCustomRangeEnd(e.target.value)}
-                    disabled={isLoading}
-                  />
-                </div>
-                {portValidationError ? (
-                  <p className="text-xs text-destructive col-span-2">
-                    {portValidationError}
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground col-span-2">
-                    Maximum range: 1000 ports. Currently scanning:{" "}
-                    {Math.min(
-                      1000,
-                      Math.max(
-                        0,
-                        (parseInt(customRangeEnd) || 0) - (parseInt(customRangeStart) || 0) + 1
+           {/* Scan Configuration */}
+           <div className="grid lg:grid-cols-[1fr_300px] gap-8">
+              {/* Left Column: Port Mode */}
+              <div className="space-y-4">
+                 <Label className="text-base font-semibold">Port Selection Mode</Label>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {[
+                      { value: "common", icon: Server, label: "Common Ports", sub: `${ALL_COMMON_PORTS.length} standard ports` },
+                      { value: "custom", icon: LayoutGrid, label: "Custom Range", sub: "Define start & end" },
+                      { value: "specific", icon: List, label: "Specific List", sub: "Individual ports" },
+                    ].map((mode) => {
+                      const Icon = mode.icon;
+                      const isActive = portMode === mode.value;
+                      return (
+                        <button
+                          key={mode.value}
+                          type="button"
+                          onClick={() => handleModeChange(mode.value as PortMode)}
+                          className={`flex flex-col items-center justify-center text-center p-4 rounded-xl border transition-all cursor-pointer h-full hover:bg-accent/50 ${
+                            isActive 
+                              ? "border-primary/50 bg-primary/5 shadow-[0_0_0_1px_rgba(var(--primary),0.2)]" 
+                              : "border-border/50 bg-card/50"
+                          }`}
+                        >
+                           <Icon className={`h-6 w-6 mb-2 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                           <span className={`font-semibold ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{mode.label}</span>
+                           <span className="text-xs text-muted-foreground/70 mt-1">{mode.sub}</span>
+                        </button>
                       )
-                    )}{" "}
-                    ports
-                  </p>
-                )}
+                    })}
+                  </div>
+
+                  <div className="mt-2">
+                    {portMode === "custom" && (
+                         <div className="overflow-hidden pt-2">
+                             <div className="flex items-end gap-3 p-4 rounded-xl bg-accent/20 border border-border/50">
+                                <div className="space-y-1.5 flex-1">
+                                  <Label htmlFor="range-start" className="text-xs">Start Port</Label>
+                                  <Input 
+                                    id="range-start" 
+                                    type="number" 
+                                    className="bg-background"
+                                    value={customRangeStart}
+                                    onChange={(e) => setCustomRangeStart(e.target.value)}
+                                  />
+                                </div>
+                                <span className="pb-3 text-muted-foreground">-</span>
+                                <div className="space-y-1.5 flex-1">
+                                  <Label htmlFor="range-end" className="text-xs">End Port</Label>
+                                  <Input 
+                                    id="range-end" 
+                                    type="number" 
+                                    className="bg-background"
+                                    value={customRangeEnd}
+                                    onChange={(e) => setCustomRangeEnd(e.target.value)}
+                                  />
+                                </div>
+                                <div className="pb-3 text-xs text-muted-foreground">
+                                   {(parseInt(customRangeEnd) || 0) - (parseInt(customRangeStart) || 0) + 1} ports
+                                </div>
+                             </div>
+                         </div>
+                    )}
+                    {portMode === "specific" && (
+                        <div className="overflow-hidden pt-2">
+                             <div className="space-y-2 p-4 rounded-xl bg-accent/20 border border-border/50">
+                               <Label htmlFor="specific-ports" className="text-xs">Port List (comma separated)</Label>
+                                <Input
+                                    id="specific-ports"
+                                    placeholder="80, 443, 8080, 3000-3005"
+                                    className="bg-background"
+                                    value={specificPorts}
+                                    onChange={(e) => setSpecificPorts(e.target.value)}
+                                  />
+                                  <p className="text-xs text-muted-foreground">Range syntax (e.g. 1-100) is also supported.</p>
+                             </div>
+                        </div>
+                    )}
+                  </div>
               </div>
-            )}
 
-            {/* Specific Ports Input */}
-            {portMode === "specific" && (
-              <div className="space-y-2">
-                <Label htmlFor="specific-ports">Ports (comma-separated)</Label>
-                <Input
-                  id="specific-ports"
-                  placeholder="e.g., 22, 80, 443, 3000-3010"
-                  value={specificPorts}
-                  onChange={(e) => setSpecificPorts(e.target.value)}
-                  disabled={isLoading}
-                />
-                {portValidationError ? (
-                  <p className="text-xs text-destructive">
-                    {portValidationError}
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    You can use ranges like "1-100" or specific ports like "22, 80, 443".
-                    Currently: {parsePortsString(specificPorts).length} ports
-                  </p>
-                )}
+              {/* Right Column: Advanced */}
+              <div className="space-y-6 bg-accent/10 p-5 rounded-xl border border-border/50">
+                  <div className="space-y-3">
+                     <div className="flex justify-between items-center">
+                        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Concurrency</Label>
+                        <span className="text-xs font-mono bg-background px-2 py-0.5 rounded border">{concurrency}</span>
+                     </div>
+                    <Slider
+                      value={[concurrency]}
+                      onValueChange={(value) => {
+                        const next = Array.isArray(value) ? value[0] : value;
+                        setConcurrency(next);
+                      }}
+                        min={10} max={200} step={10}
+                        className="**:[[role=slider]]:h-4 **:[[role=slider]]:w-4"
+                      />
+                  </div>
+
+                  <div className="space-y-3">
+                     <div className="flex justify-between items-center">
+                        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Timeout</Label>
+                        <span className="text-xs font-mono bg-background px-2 py-0.5 rounded border">{timeout}ms</span>
+                     </div>
+                    <Slider
+                      value={[timeout]}
+                      onValueChange={(value) => {
+                        const next = Array.isArray(value) ? value[0] : value;
+                        setTimeoutMs(next);
+                      }}
+                        min={500} max={10000} step={500} // Increased max timeout for flexibility
+                        className="**:[[role=slider]]:h-4 **:[[role=slider]]:w-4"
+                      />
+                  </div>
               </div>
-            )}
-          </div>
+           </div>
 
-          {/* Quick Scan Presets */}
-          <div className="space-y-3">
-            <Label>Quick Scan Presets</Label>
-            <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
-              {QUICK_SCAN_PRESETS.map((preset) => {
-                const Icon = preset.icon;
-                return (
-                  <Button
-                    key={preset.name}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleQuickScan(preset)}
-                    disabled={isLoading}
-                    className="flex-col h-auto py-3 gap-1 min-h-14"
-                  >
-                    <Icon className="h-5 w-5" />
-                    <span className="text-xs">{preset.name}</span>
-                  </Button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Concurrency & Timeout Sliders */}
-          <div className="grid gap-6 md:grid-cols-2">
+            {/* Quick Presets */}
             <div className="space-y-2">
-              <Label>Concurrency: {concurrency}</Label>
-              <Slider
-                value={[concurrency]}
-                onValueChange={(value) => {
-                  const newValue = Array.isArray(value) ? value[0] : value;
-                  setConcurrency(newValue);
-                }}
-                min={10}
-                max={200}
-                step={10}
-                disabled={isLoading}
-              />
-              <p className="text-xs text-muted-foreground">
-                Parallel connections (10-200)
-              </p>
+               <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Quick Presets</Label>
+               <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                  {QUICK_SCAN_PRESETS.map((preset) => {
+                     const Icon = preset.icon;
+                     return (
+                       <Button
+                         key={preset.name}
+                         variant="outline"
+                         size="sm"
+                         onClick={() => handleQuickScan(preset)}
+                         className="shrink-0 gap-2 h-9 border-dashed hover:border-solid hover:bg-accent/50 hover:text-primary transition-all"
+                       >
+                         <Icon className="h-3.5 w-3.5" />
+                         {preset.name}
+                       </Button>
+                     )
+                  })}
+               </div>
             </div>
-
-            <div className="space-y-2">
-              <Label>Timeout: {timeout}ms</Label>
-              <Slider
-                value={[timeout]}
-                onValueChange={(value) => {
-                  const newValue = Array.isArray(value) ? value[0] : value;
-                  setTimeoutMs(newValue);
-                }}
-                min={500}
-                max={10000}
-                step={500}
-                disabled={isLoading}
-              />
-              <p className="text-xs text-muted-foreground">
-                Connection timeout (500ms - 10s)
-              </p>
-            </div>
-          </div>
         </CardContent>
       </Card>
 
-      {rateLimitMessage && (
-        <Card className="border-orange-500/40 bg-orange-500/5">
-          <CardContent className="pt-4 flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400">
-            <AlertTriangle className="h-4 w-4" />
-            {rateLimitMessage}
-          </CardContent>
-        </Card>
-      )}
 
-      {/* Live Progress Indicator */}
-      {isScanning && (
-        <Card className="border-primary/50">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">
-                  Scanning ports on {host}...
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {liveOpenPorts.length} open ports found
-                </p>
-              </div>
-              <Progress value={scanProgress} className="w-32" />
+      {/* Notifications / Errors */}
+      <AnimatePresence>
+        {rateLimitMessage && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+             <Card className="border-orange-500/30 bg-orange-500/10 mb-6">
+                <CardContent className="py-3 px-4 flex items-center gap-3">
+                   <AlertTriangle className="h-5 w-5 text-orange-500" />
+                   <span className="font-medium text-orange-700 dark:text-orange-300">{rateLimitMessage}</span>
+                </CardContent>
+             </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      
+      {/* Search status & Progress */}
+      <AnimatePresence>
+        {isScanning && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+             <Card className="border-primary/20 bg-primary/5 overflow-hidden">
+                <div className="absolute top-0 left-0 h-1 bg-primary/20 w-full">
+                   <motion.div 
+                     className="h-full bg-primary" 
+                     initial={{ width: "0%" }}
+                     animate={{ width: `${scanProgress}%` }}
+                     transition={{ ease: "linear" }}
+                   />
+                </div>
+                <CardContent className="p-6 flex flex-col md:flex-row items-center gap-6">
+                   <div className="relative">
+                      <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse" />
+                      <Loader2 className="h-8 w-8 text-primary animate-spin relative z-10" />
+                   </div>
+                   <div className="flex-1 text-center md:text-left space-y-1">
+                      <h3 className="font-semibold text-lg">Scanning Target...</h3>
+                      <p className="text-muted-foreground">{host}</p>
+                   </div>
+                   <div className="flex gap-8 text-center">
+                       <div>
+                          <div className="text-2xl font-bold font-mono text-primary">{liveOpenPorts.length}</div>
+                          <div className="text-xs text-muted-foreground uppercase tracking-wider">Found</div>
+                       </div>
+                       <div>
+                          <div className="text-2xl font-bold font-mono text-muted-foreground">{scanProgress.toFixed(0)}%</div>
+                           <div className="text-xs text-muted-foreground uppercase tracking-wider">Done</div>
+                       </div>
+                   </div>
+                </CardContent>
+             </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
+      {/* Main Results Section */}
+      <AnimatePresence mode="wait">
+        {(result || liveOpenPorts.length > 0) && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            className="space-y-6"
+          >
+             {/* Metrics Row */}
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Status Card */}
+                 <Card className={`overflow-hidden border-l-4 ${stats.hasHighRisk ? "border-l-orange-500" : "border-l-emerald-500"}`}>
+                    <CardContent className="p-5 flex items-center justify-between">
+                       <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1">Security Status</p>
+                          <div className="font-bold text-lg">{stats.hasHighRisk ? "Action Required" : "System Secure"}</div>
+                       </div>
+                       <div className={`p-3 rounded-full ${stats.hasHighRisk ? "bg-orange-500/10 text-orange-500" : "bg-emerald-500/10 text-emerald-500"}`}>
+                          {stats.hasHighRisk ? <ShieldAlert className="h-6 w-6" /> : <ShieldCheck className="h-6 w-6" />}
+                       </div>
+                    </CardContent>
+                 </Card>
+
+                 {/* Open Ports Count */}
+                 <Card>
+                    <CardContent className="p-5 flex items-center justify-between">
+                       <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1">Open Ports</p>
+                          <div className="font-bold text-2xl font-mono">{stats.total} <span className="text-sm font-sans font-normal text-muted-foreground">/ {result?.scannedPorts || liveOpenPorts.length}</span></div>
+                       </div>
+                       <div className="p-3 rounded-full bg-blue-500/10 text-blue-500">
+                          <Server className="h-6 w-6" />
+                       </div>
+                    </CardContent>
+                 </Card>
+
+                 {/* Latency / Duration */}
+                 <Card>
+                    <CardContent className="p-5 flex items-center justify-between">
+                       <div>
+                          <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1">Scan Duration</p>
+                          <div className="font-bold text-lg font-mono">
+                            {result ? `${(result.scanDurationMs / 1000).toFixed(2)}s` : isScanning ? "..." : "-"}
+                          </div>
+                       </div>
+                       <div className="p-3 rounded-full bg-purple-500/10 text-purple-500">
+                          <Clock className="h-6 w-6" />
+                       </div>
+                    </CardContent>
+                 </Card>
+
+                  {/* Risks */}
+                 <Card>
+                    <CardContent className="p-5">
+                       <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-2">Risk Breakdown</p>
+                       <div className="flex gap-2">
+                           {stats.byRisk.critical > 0 && <Badge variant="outline" className="bg-red-500/10 text-red-500 border-0">{stats.byRisk.critical} Crit</Badge>}
+                           {stats.byRisk.high > 0 && <Badge variant="outline" className="bg-orange-500/10 text-orange-500 border-0">{stats.byRisk.high} High</Badge>}
+                           {stats.byRisk.medium > 0 && <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-0">{stats.byRisk.medium} Med</Badge>}
+                           {stats.byRisk.low > 0 && <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500 border-0">{stats.byRisk.low} Low</Badge>}
+                           {stats.total === 0 && <span className="text-sm text-muted-foreground">No risks detected</span>}
+                       </div>
+                    </CardContent>
+                 </Card>
+             </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+                {/* Left Column: Ports List */}
+                <div className="space-y-4">
+                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                      <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "grid" | "list")} className="w-auto">
+                        <TabsList className="h-9 mb-0 bg-muted/50 p-1">
+                            <TabsTrigger value="grid" className="px-3 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                               <LayoutGrid className="mr-2 h-3.5 w-3.5" /> Grid
+                            </TabsTrigger>
+                            <TabsTrigger value="list" className="px-3 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                               <List className="mr-2 h-3.5 w-3.5" /> List
+                            </TabsTrigger>
+                        </TabsList>
+                      </Tabs>
+                      
+                       <div className="flex items-center gap-2">
+                          <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v as ServiceCategory | "all")}>
+                             <SelectTrigger className="h-9 w-45 text-xs">
+                                <Filter className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
+                                <SelectValue />
+                             </SelectTrigger>
+                             <SelectContent>
+                                <SelectItem value="all">All Categories</SelectItem>
+                                <SelectItem value="web">Web Services</SelectItem>
+                                <SelectItem value="database">Databases</SelectItem>
+                                <SelectItem value="remote">Remote Access</SelectItem>
+                                <SelectItem value="mail">Mail</SelectItem>
+                                <SelectItem value="file">File Transfer</SelectItem>
+                             </SelectContent>
+                          </Select>
+                          
+                          {result && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-9 w-9 p-0")}>
+                                <Download className="h-4 w-4" />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={handleExportCsv}>Export CSV</DropdownMenuItem>
+                                <DropdownMenuItem onClick={handleExportJson}>Export JSON</DropdownMenuItem>
+                                <DropdownMenuItem onClick={handleClear} className="text-destructive focus:text-destructive">Clear Results</DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                       </div>
+                   </div>
+
+                   {displayPorts.length === 0 ? (
+                      <Card className="border-dashed bg-muted/30">
+                        <CardContent className="py-12 flex flex-col items-center text-center text-muted-foreground">
+                           <Server className="h-10 w-10 mb-3 opacity-20" />
+                           <p>No ports found matching your filters.</p>
+                        </CardContent>
+                      </Card>
+                   ) : (
+                     <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 gap-4" : "space-y-2"}>
+                        <AnimatePresence mode="popLayout">
+                          {displayPorts.map((port, idx) => (
+                              <PortCard 
+                                key={port.port} 
+                                port={port} 
+                                host={result?.host || host} 
+                                index={idx}
+                              />
+                          ))}
+                        </AnimatePresence>
+                     </div>
+                   )}
+                </div>
+
+                {/* Right Column: Chart & Summary */}
+                <div className="space-y-6">
+                   <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Service Distribution</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                          <Suspense fallback={<Skeleton className="h-50 w-full" />}>
+                            <PortDistributionChart ports={result?.openPorts ?? liveOpenPorts} />
+                          </Suspense>
+                      </CardContent>
+                   </Card>
+                   
+                   {result?.resolvedAddress && result.resolvedAddress !== result.host && (
+                      <Card>
+                         <CardContent className="p-4 flex items-center justify-between">
+                            <div className="space-y-1">
+                               <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Resolved IP</p>
+                               <p className="font-mono text-sm">{result.resolvedAddress}</p>
+                            </div>
+                            <Button variant="ghost" size="icon" onClick={() => copyToClipboard(result.resolvedAddress!)}>
+                               <Copy className="h-4 w-4" />
+                            </Button>
+                         </CardContent>
+                      </Card>
+                   )}
+                </div>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Result Summary */}
-      {(result || liveOpenPorts.length > 0) && (
-        <Card
-          className={`border-l-4 ${stats.hasHighRisk ? "border-l-orange-500" : "border-l-green-500"}`}
-        >
-          <CardContent className="pt-6">
-            <div className="grid gap-4 md:grid-cols-5">
-              {/* Status */}
-              <div className="flex items-center gap-3">
-                {stats.hasHighRisk ? (
-                  <ShieldAlert className="h-8 w-8 text-orange-500" />
-                ) : (
-                  <ShieldCheck className="h-8 w-8 text-green-500" />
-                )}
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <Badge
-                    variant={stats.hasHighRisk ? "destructive" : "default"}
-                    className={stats.hasHighRisk ? "" : "bg-green-500"}
-                  >
-                    {stats.hasHighRisk ? "Attention Needed" : "Secure"}
-                  </Badge>
-                </div>
-              </div>
-
-              {/* Open Ports */}
-              <div className="flex items-center gap-3">
-                <Server className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Open Ports</p>
-                  <p className="text-2xl font-bold">{stats.total}</p>
-                </div>
-              </div>
-
-              {/* Scanned */}
-              {result && (
-                <div className="flex items-center gap-3">
-                  <Zap className="h-8 w-8 text-primary" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Scanned</p>
-                    <p className="text-2xl font-bold">{result.scannedPorts}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Duration */}
-              {result && (
-                <div className="flex items-center gap-3">
-                  <Clock className="h-8 w-8 text-primary" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Duration</p>
-                    <p className="text-2xl font-bold">
-                      {(result.scanDurationMs / 1000).toFixed(1)}s
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Risk Summary */}
-              <div className="flex items-center gap-3">
-                <Shield className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Risk Breakdown</p>
-                  <div className="flex gap-2 text-xs">
-                    {stats.byRisk.critical > 0 && (
-                      <Badge variant="outline" className="text-red-500">
-                        {stats.byRisk.critical} Critical
-                      </Badge>
-                    )}
-                    {stats.byRisk.high > 0 && (
-                      <Badge variant="outline" className="text-orange-500">
-                        {stats.byRisk.high} High
-                      </Badge>
-                    )}
-                    {stats.byRisk.medium > 0 && (
-                      <Badge variant="outline" className="text-yellow-500">
-                        {stats.byRisk.medium} Med
-                      </Badge>
-                    )}
-                    {stats.byRisk.low > 0 && (
-                      <Badge variant="outline" className="text-green-500">
-                        {stats.byRisk.low} Low
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Resolved Address */}
-            {result?.resolvedAddress && result.resolvedAddress !== result.host && (
-              <div className="mt-4 pt-4 border-t flex items-center gap-2 text-sm">
-                <span className="text-muted-foreground">Resolved IP:</span>
-                <code className="px-2 py-1 bg-muted rounded font-mono">
-                  {result.resolvedAddress}
-                </code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => copyToClipboard(result.resolvedAddress!)}
-                  aria-label="Copy resolved IP"
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {(result || liveOpenPorts.length > 0) && (
-        <Suspense fallback={<Skeleton className="h-64 w-full" />}>
-          <PortDistributionChart ports={result?.openPorts ?? liveOpenPorts} />
-        </Suspense>
-      )}
-
-      {isScanning && liveOpenPorts.length === 0 && !result && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Scanning ports...</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 md:grid-cols-2">
-              {Array.from({ length: 6 }).map((_, index) => (
-                <Skeleton key={index} className="h-16" />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Open Ports Display */}
-      {displayPorts.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between flex-wrap gap-4">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Server className="h-4 w-4" />
-                Open Ports ({displayPorts.length})
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                {/* Category Filter */}
-                <Select
-                  value={categoryFilter}
-                  onValueChange={(value) =>
-                    setCategoryFilter(value as ServiceCategory | "all")
-                  }
-                >
-                  <SelectTrigger className="w-37.5">
-                    <Filter className="h-4 w-4 mr-2" />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    <SelectItem value="web">Web</SelectItem>
-                    <SelectItem value="database">Database</SelectItem>
-                    <SelectItem value="remote">Remote Access</SelectItem>
-                    <SelectItem value="mail">Mail</SelectItem>
-                    <SelectItem value="file">File</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {/* View Mode Toggle */}
-                <div className="flex border rounded-md">
-                  <Button
-                    variant={viewMode === "grid" ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => setViewMode("grid")}
-                    className="rounded-r-none"
-                    aria-label="Grid view"
-                  >
-                    <LayoutGrid className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant={viewMode === "list" ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => setViewMode("list")}
-                    className="rounded-l-none"
-                    aria-label="List view"
-                  >
-                    <List className="h-4 w-4" />
-                  </Button>
-                </div>
-
-                {/* Export */}
-                {result && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger>
-                      <Button variant="outline" size="sm" aria-label="Export results">
-                        <Download className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={handleExportCsv}>
-                        Export as CSV
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={handleExportJson}>
-                        Export as JSON
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-
-                {/* Clear */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="sm" onClick={handleClear} aria-label="Clear results">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Clear Results</TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {viewMode === "grid" ? (
-              <div className="grid gap-3 md:grid-cols-2">
-                {displayPorts.map((port) => (
-                  <PortCard
-                    key={port.port}
-                    port={port}
-                    host={result?.host || host}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {displayPorts.map((port) => (
-                  <PortCard
-                    key={port.port}
-                    port={port}
-                    host={result?.host || host}
-                  />
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Grouped by Category View */}
-      {displayPorts.length > 0 && categoryFilter === "all" && viewMode === "grid" && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {(Object.entries(portsByCategory) as [ServiceCategory, OpenPort[]][]).map(
-            ([category, ports]) =>
-              ports.length > 0 && (
-                <Card key={category}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm flex items-center gap-2 capitalize">
-                      <CategoryIcon category={category} className="h-4 w-4" />
-                      {category}
-                      <Badge variant="secondary">{ports.length}</Badge>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-wrap gap-2">
-                      {ports.map((port) => {
-                        const info = getPortInfo(port);
-                        return (
-                          <Tooltip key={port.port}>
-                            <TooltipTrigger>
-                              <Badge
-                                variant="outline"
-                                className={getRiskColor(info.risk)}
-                              >
-                                {port.port} ({info.serviceName})
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {info.serviceDescription || info.serviceName}
-                            </TooltipContent>
-                          </Tooltip>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-          )}
-        </div>
-      )}
-
-      {/* Empty State */}
+      
+      {/* Empty Initial State */}
       {!isScanning && !result && liveOpenPorts.length === 0 && (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <Server className="h-12 w-12 mb-4 text-muted-foreground opacity-50" />
-            <h3 className="text-lg font-medium mb-2">No scan results</h3>
-            <p className="text-sm text-muted-foreground max-w-sm">
-              Enter a hostname or IP address above, select which ports to scan,
-              and click "Scan Ports" to identify open services.
+         <div className="min-h-75 flex flex-col items-center justify-center text-center p-8 border-2 border-dashed rounded-xl border-muted/50 bg-muted/5">
+            <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
+               <Server className="h-8 w-8 text-muted-foreground/50" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Ready to Scan</h3>
+            <p className="text-muted-foreground max-w-md">
+               Enter a target above to begin discovering open ports and services.
+               Select a quick preset or define a custom range for specific targeting.
             </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* No Open Ports Found */}
-      {result && result.openPorts.length === 0 && (
-        <Card className="border-green-500/50 bg-green-500/5">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <CheckCircle2 className="h-12 w-12 mb-4 text-green-500" />
-            <h3 className="text-lg font-medium mb-2">No open ports found</h3>
-            <p className="text-sm text-muted-foreground max-w-sm">
-              {result.scannedPorts} ports were scanned on {result.host}, and no
-              open ports were detected. The host may be behind a firewall or the
-              services may not be running.
-            </p>
-          </CardContent>
-        </Card>
+         </div>
       )}
     </div>
   );

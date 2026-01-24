@@ -5,6 +5,7 @@ using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Commands;
 using ManLab.Server.Services.Enhancements;
 using ManLab.Server.Services.Audit;
+using ManLab.Server.Services.Network;
 using ManLab.Server.Services.Persistence;
 using ManLab.Server.Services.Retention;
 using ManLab.Shared.Dtos;
@@ -94,6 +95,8 @@ builder.Services.AddSingleton<LocalAgentInstallationService>();
 builder.Services.AddScoped<ManLab.Server.Services.CredentialEncryptionService>();
 
 builder.Services.AddHttpClient();
+builder.Services.AddOptions<SpeedTestOptions>()
+    .Bind(builder.Configuration.GetSection(SpeedTestOptions.SectionName));
 builder.Services.AddOptions<DiscordOptions>()
     .Bind(builder.Configuration.GetSection(DiscordOptions.SectionName))
     .Validate(o => string.IsNullOrWhiteSpace(o.WebhookUrl) || Uri.IsWellFormedUriString(o.WebhookUrl, UriKind.Absolute),
@@ -122,6 +125,7 @@ else if (OperatingSystem.IsLinux())
     builder.Services.AddSingleton<ManLab.Server.Services.Network.IArpService, ManLab.Server.Services.Network.LinuxArpService>();
 }
 builder.Services.AddSingleton<ManLab.Server.Services.Network.INetworkScannerService, ManLab.Server.Services.Network.NetworkScannerService>();
+builder.Services.AddSingleton<ISpeedTestService, SpeedTestService>();
 
 // mDNS/UPnP device discovery
 builder.Services.AddSingleton<ManLab.Server.Services.Network.IDeviceDiscoveryService, ManLab.Server.Services.Network.DeviceDiscoveryService>();

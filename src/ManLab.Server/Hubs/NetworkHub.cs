@@ -14,29 +14,35 @@ public class NetworkHub : Hub
     private readonly INetworkScannerService _scanner;
     private readonly IDeviceDiscoveryService _discovery;
     private readonly IWifiScannerService _wifiScanner;
+    private readonly IOuiDatabase _ouiDatabase;
     private readonly IAuditLog _audit;
     private readonly NetworkRateLimitService _rateLimit;
     private readonly IHubContext<NetworkHub> _hubContext;
     private readonly INetworkToolHistoryService _history;
+    private readonly ISpeedTestService _speedTest;
 
     public NetworkHub(
         ILogger<NetworkHub> logger,
         INetworkScannerService scanner,
         IDeviceDiscoveryService discovery,
         IWifiScannerService wifiScanner,
+        IOuiDatabase ouiDatabase,
         IAuditLog audit,
         NetworkRateLimitService rateLimit,
         IHubContext<NetworkHub> hubContext,
-        INetworkToolHistoryService history)
+        INetworkToolHistoryService history,
+        ISpeedTestService speedTest)
     {
         _logger = logger;
         _scanner = scanner;
         _discovery = discovery;
         _wifiScanner = wifiScanner;
+        _ouiDatabase = ouiDatabase;
         _audit = audit;
         _rateLimit = rateLimit;
         _hubContext = hubContext;
         _history = history;
+        _speedTest = speedTest;
     }
 
     /// <summary>
@@ -460,6 +466,96 @@ public class NetworkHub : Hub
     }
 
     /// <summary>
+    /// Runs an internet speed test with real-time progress updates.
+    /// </summary>
+    public async Task<SpeedTestResult> RunSpeedTest(SpeedTestRequest? request = null)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var actualRequest = request ?? new SpeedTestRequest();
+        var startedAt = DateTime.UtcNow;
+
+        await Clients.Caller.SendAsync("SpeedTestStarted", new SpeedTestStartedEvent
+        {
+            StartedAt = startedAt,
+            Request = actualRequest
+        });
+
+        try
+        {
+            Action<SpeedTestProgressUpdate> onProgress = update =>
+            {
+                _ = Clients.Caller.SendAsync("SpeedTestProgress", new SpeedTestProgressEvent
+                {
+                    Update = update
+                });
+            };
+
+            var result = await _speedTest.RunAsync(actualRequest, Context.ConnectionAborted, onProgress);
+            sw.Stop();
+
+            await Clients.Caller.SendAsync("SpeedTestCompleted", new SpeedTestCompletedEvent
+            {
+                Result = result
+            });
+
+            _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
+                kind: "activity",
+                eventName: "network.speedtest",
+                context: Context,
+                hub: nameof(NetworkHub),
+                hubMethod: nameof(RunSpeedTest),
+                success: result.Success,
+                nodeId: null,
+                category: "network",
+                message: result.Success
+                    ? $"Speed test completed: ↓ {result.DownloadMbps:0.##} Mbps, ↑ {result.UploadMbps:0.##} Mbps"
+                    : "Speed test failed"));
+
+            _ = _history.RecordAsync(
+                toolType: "speedtest",
+                target: "internet",
+                input: actualRequest,
+                result: new
+                {
+                    result.DownloadMbps,
+                    result.UploadMbps,
+                    result.LatencyAvgMs,
+                    result.LatencyMinMs,
+                    result.LatencyMaxMs,
+                    result.JitterMs
+                },
+                success: result.Success,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: result.Error,
+                connectionId: Context.ConnectionId);
+
+            return result;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "Speed test failed");
+
+            await Clients.Caller.SendAsync("SpeedTestFailed", new SpeedTestFailedEvent
+            {
+                Error = ex.Message
+            });
+
+            _ = _history.RecordAsync(
+                toolType: "speedtest",
+                target: "internet",
+                input: actualRequest,
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: Context.ConnectionId);
+
+            throw new HubException($"Speed test failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Sends a Wake-on-LAN magic packet.
     /// </summary>
     public async Task<WolSendResult> SendWolMagicPacket(string macAddress, string? broadcastAddress = null, int port = 9)
@@ -495,6 +591,56 @@ public class NetworkHub : Hub
             connectionId: Context.ConnectionId);
 
         return result;
+    }
+
+    /// <summary>
+    /// Looks up the vendor for a MAC address.
+    /// </summary>
+    public Task<MacVendorLookupResult> LookupMacVendor(string macAddress)
+    {
+        if (string.IsNullOrWhiteSpace(macAddress))
+        {
+            throw new HubException("MAC address is required");
+        }
+
+        if (!TryNormalizeMacAddress(macAddress, out var normalized))
+        {
+            throw new HubException("Invalid MAC address format");
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var vendor = _ouiDatabase.LookupVendor(normalized);
+        var result = new MacVendorLookupResult
+        {
+            MacAddress = normalized,
+            Vendor = vendor,
+            VendorCount = _ouiDatabase.VendorCount
+        };
+        sw.Stop();
+
+        _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
+            kind: "activity",
+            eventName: "network.mac.vendor",
+            context: Context,
+            hub: nameof(NetworkHub),
+            hubMethod: nameof(LookupMacVendor),
+            success: vendor is not null,
+            nodeId: null,
+            category: "network",
+            message: vendor is null
+                ? $"MAC vendor lookup for {normalized}: not found"
+                : $"MAC vendor lookup for {normalized}: {vendor}"));
+
+        _ = _history.RecordAsync(
+            toolType: "mac-vendor",
+            target: normalized,
+            input: new { macAddress },
+            result: result,
+            success: vendor is not null,
+            durationMs: (int)sw.ElapsedMilliseconds,
+            connectionId: Context.ConnectionId);
+
+        return Task.FromResult(result);
     }
 
     #region Private Methods
@@ -642,6 +788,40 @@ public class NetworkHub : Hub
         }
 
         return false;
+    }
+
+    private static bool TryNormalizeMacAddress(string input, out string normalized)
+    {
+        normalized = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        var cleaned = input
+            .Replace(":", "", StringComparison.Ordinal)
+            .Replace("-", "", StringComparison.Ordinal)
+            .Replace(".", "", StringComparison.Ordinal)
+            .Trim();
+
+        if (cleaned.Length != 12)
+        {
+            return false;
+        }
+
+        var bytes = new byte[6];
+        for (int i = 0; i < 6; i++)
+        {
+            var hex = cleaned.Substring(i * 2, 2);
+            if (!byte.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out bytes[i]))
+            {
+                return false;
+            }
+        }
+
+        normalized = string.Join(":", bytes.Select(b => b.ToString("X2")));
+        return true;
     }
 
     private static int[] GetCommonPorts()
@@ -886,6 +1066,39 @@ public record ScanFailedEvent
 {
     public required string ScanId { get; init; }
     public required string Cidr { get; init; }
+    public required string Error { get; init; }
+}
+
+/// <summary>
+/// Speed test started event.
+/// </summary>
+public record SpeedTestStartedEvent
+{
+    public DateTime StartedAt { get; init; }
+    public required SpeedTestRequest Request { get; init; }
+}
+
+/// <summary>
+/// Speed test progress update event.
+/// </summary>
+public record SpeedTestProgressEvent
+{
+    public required SpeedTestProgressUpdate Update { get; init; }
+}
+
+/// <summary>
+/// Speed test completed event.
+/// </summary>
+public record SpeedTestCompletedEvent
+{
+    public required SpeedTestResult Result { get; init; }
+}
+
+/// <summary>
+/// Speed test failed event.
+/// </summary>
+public record SpeedTestFailedEvent
+{
     public required string Error { get; init; }
 }
 

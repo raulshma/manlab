@@ -461,10 +461,37 @@ public sealed partial class BinariesController : ControllerBase
                     ["AuthToken"] = string.Empty,
                     ["HeartbeatIntervalSeconds"] = 15,
                     ["MaxReconnectDelaySeconds"] = 60,
+                    ["TelemetryCacheSeconds"] = 30,
+                    ["PrimaryInterfaceName"] = string.Empty,
+                    ["EnableNetworkTelemetry"] = true,
+                    ["EnablePingTelemetry"] = true,
+                    ["EnableGpuTelemetry"] = true,
+                    ["EnableUpsTelemetry"] = true,
+                    ["EnableEnhancedNetworkTelemetry"] = true,
+                    ["EnableEnhancedGpuTelemetry"] = true,
+                    ["EnableApmTelemetry"] = false,
+                    ["ApmHealthCheckEndpoints"] = new JsonArray(),
+                    ["ApmDatabaseEndpoints"] = new JsonArray(),
                     ["EnableLogViewer"] = false,
                     ["EnableScripts"] = false,
                     ["EnableTerminal"] = false,
-                    ["EnableFileBrowser"] = false
+                    ["EnableFileBrowser"] = false,
+                    ["PingTarget"] = string.Empty,
+                    ["PingTimeoutMs"] = 800,
+                    ["PingWindowSize"] = 10,
+                    ["LogMaxBytes"] = 64 * 1024,
+                    ["LogMinSecondsBetweenRequests"] = 1,
+                    ["ScriptMaxOutputBytes"] = 64 * 1024,
+                    ["ScriptMaxDurationSeconds"] = 60,
+                    ["ScriptMinSecondsBetweenRuns"] = 1,
+                    ["TerminalMaxOutputBytes"] = 64 * 1024,
+                    ["TerminalMaxDurationSeconds"] = 10 * 60,
+                    ["FileBrowserMaxBytes"] = 2 * 1024 * 1024,
+                    ["FileZipMaxUncompressedBytes"] = 1024 * 1024 * 1024,
+                    ["FileZipMaxFileCount"] = 10_000,
+                    ["AgentLogFilePath"] = string.Empty,
+                    ["AgentLogFileMaxBytes"] = 5 * 1024 * 1024,
+                    ["AgentLogFileRetainedFiles"] = 3
                 }
             };
         }
@@ -590,6 +617,8 @@ public sealed partial class BinariesController : ControllerBase
         agent["TerminalMaxOutputBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TerminalMaxOutputBytes, GetInt(agent, "TerminalMaxOutputBytes", 64 * 1024));
         agent["TerminalMaxDurationSeconds"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.TerminalMaxDurationSeconds, GetInt(agent, "TerminalMaxDurationSeconds", 10 * 60));
         agent["FileBrowserMaxBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.FileBrowserMaxBytes, GetInt(agent, "FileBrowserMaxBytes", 2 * 1024 * 1024));
+        agent["FileZipMaxUncompressedBytes"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.FileZipMaxUncompressedBytes, GetInt(agent, "FileZipMaxUncompressedBytes", 1024 * 1024 * 1024));
+        agent["FileZipMaxFileCount"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.FileZipMaxFileCount, GetInt(agent, "FileZipMaxFileCount", 10_000));
 
         // Agent self-logging
         agent["AgentLogFilePath"] = await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.AgentLogFilePath, GetString(agent, "AgentLogFilePath", string.Empty) ?? string.Empty);

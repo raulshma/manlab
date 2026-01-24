@@ -238,6 +238,132 @@ export interface WolSendResult {
 }
 
 /**
+ * MAC vendor lookup request.
+ */
+export interface MacVendorLookupRequest {
+  macAddress: string;
+}
+
+/**
+ * MAC vendor lookup result.
+ */
+export interface MacVendorLookupResult {
+  macAddress: string;
+  vendor: string | null;
+  vendorCount: number;
+}
+
+/**
+ * Speed test request.
+ */
+export interface SpeedTestRequest {
+  downloadSizeBytes?: number;
+  uploadSizeBytes?: number;
+  latencySamples?: number;
+}
+
+/**
+ * Speed test metadata for high-fidelity UI.
+ */
+export interface SpeedTestMetadata {
+  downloadSizeBytes: number;
+  uploadSizeBytes: number;
+  latencySamples: number;
+  locateUrl?: string | null;
+  downloadUrl?: string | null;
+  uploadUrl?: string | null;
+  serviceName?: string | null;
+  serviceType?: string | null;
+  clientName?: string | null;
+  clientVersion?: string | null;
+  clientLibraryName?: string | null;
+  clientLibraryVersion?: string | null;
+}
+
+/**
+ * Speed test progress for live UI.
+ */
+export interface SpeedTestProgress {
+  phase: string;
+  bytesTransferred: number;
+  targetBytes: number;
+  mbps: number | null;
+  latencySampleMs: number | null;
+  latencySamplesCollected: number;
+  latencySamplesTarget: number;
+  elapsedMs: number;
+}
+
+/**
+ * Combined speed test update payload.
+ */
+export interface SpeedTestProgressUpdate {
+  metadata?: SpeedTestMetadata | null;
+  progress?: SpeedTestProgress | null;
+  timestampUtc: string;
+}
+
+/**
+ * Speed test result.
+ */
+export interface SpeedTestResult {
+  startedAt: string;
+  completedAt: string;
+  success: boolean;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  downloadBytes: number;
+  uploadBytes: number;
+  latencyMinMs: number | null;
+  latencyAvgMs: number | null;
+  latencyMaxMs: number | null;
+  jitterMs: number | null;
+  downloadSizeBytes: number;
+  uploadSizeBytes: number;
+  latencySamples: number;
+  locateUrl?: string | null;
+  downloadUrl?: string | null;
+  uploadUrl?: string | null;
+  serviceName?: string | null;
+  serviceType?: string | null;
+  clientName?: string | null;
+  clientVersion?: string | null;
+  clientLibraryName?: string | null;
+  clientLibraryVersion?: string | null;
+  durationMs: number;
+  error?: string | null;
+}
+
+/**
+ * Speed test started event.
+ */
+export interface SpeedTestStartedEvent {
+  startedAt: string;
+  request: SpeedTestRequest;
+}
+
+/**
+ * Speed test progress event.
+ */
+export interface SpeedTestProgressEvent {
+  update: SpeedTestProgressUpdate;
+}
+
+/**
+ * Speed test completed event.
+ */
+export interface SpeedTestCompletedEvent {
+  result: SpeedTestResult;
+}
+
+/**
+ * Speed test failed event.
+ */
+export interface SpeedTestFailedEvent {
+  error: string;
+}
+
+/**
  * SSL inspection request.
  */
 export interface SslInspectRequest {
@@ -594,6 +720,40 @@ export async function sendWakeOnLan(
   return withNetworkRetry(async () => {
     const { data } = await api.post<WolSendResult>(
       "/network/wol",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Lookup MAC vendor.
+ */
+export async function lookupMacVendor(
+  request: MacVendorLookupRequest,
+  options?: RequestOptions
+): Promise<MacVendorLookupResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<MacVendorLookupResult>(
+      "/network/mac/vendor",
+      request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Run server-side speed test.
+ */
+export async function runSpeedTest(
+  request: SpeedTestRequest = {},
+  options?: RequestOptions
+): Promise<SpeedTestResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<SpeedTestResult>(
+      "/network/speedtest",
       request,
       options
     );
@@ -1054,7 +1214,9 @@ export type NetworkToolType =
   | "dns-lookup"
   | "whois"
   | "wol"
-  | "ssl-inspect";
+  | "ssl-inspect"
+  | "mac-vendor"
+  | "speedtest";
 
 /**
  * Network tool history entry from the server.

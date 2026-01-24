@@ -40,6 +40,12 @@ import type {
   WifiNetworkFoundEvent,
   WifiScanCompletedEvent,
   OpenPort,
+  MacVendorLookupResult,
+  SpeedTestRequest,
+  SpeedTestStartedEvent,
+  SpeedTestProgressEvent,
+  SpeedTestCompletedEvent,
+  SpeedTestFailedEvent,
 } from "../api/networkApi";
 
 // ============================================================================
@@ -384,6 +390,16 @@ export interface WifiScanHandlers {
 }
 
 /**
+ * Event handlers for speed test events.
+ */
+export interface SpeedTestHandlers {
+  onSpeedTestStarted?: (event: SpeedTestStartedEvent) => void;
+  onSpeedTestProgress?: (event: SpeedTestProgressEvent) => void;
+  onSpeedTestCompleted?: (event: SpeedTestCompletedEvent) => void;
+  onSpeedTestFailed?: (event: SpeedTestFailedEvent) => void;
+}
+
+/**
  * Return type for useNetworkHub hook.
  */
 export interface UseNetworkHubReturn {
@@ -415,6 +431,8 @@ export interface UseNetworkHubReturn {
     scanDurationSeconds?: number
   ) => Promise<DiscoveryScanResult>;
   scanWifi: (adapterName?: string) => Promise<WifiScanResult>;
+  lookupMacVendor: (macAddress: string) => Promise<MacVendorLookupResult>;
+  runSpeedTest: (request?: SpeedTestRequest) => Promise<SpeedTestCompletedEvent["result"]>;
   subscribeScan: (scanId: string) => Promise<void>;
   unsubscribeScan: (scanId: string) => Promise<void>;
 
@@ -424,6 +442,7 @@ export interface UseNetworkHubReturn {
   subscribeToPortScan: (handlers: PortScanHandlers) => () => void;
   subscribeToDiscovery: (handlers: DiscoveryHandlers) => () => void;
   subscribeToWifiScan: (handlers: WifiScanHandlers) => () => void;
+  subscribeToSpeedTest: (handlers: SpeedTestHandlers) => () => void;
 }
 
 // ============================================================================
@@ -570,6 +589,32 @@ export function useNetworkHub(
       return await connectionRef.current.invoke<WifiScanResult>(
         "ScanWifi",
         adapterName
+      );
+    },
+    []
+  );
+
+  const lookupMacVendor = useCallback(
+    async (macAddress: string): Promise<MacVendorLookupResult> => {
+      if (!connectionRef.current) {
+        throw new Error("Not connected to Network Hub");
+      }
+      return await connectionRef.current.invoke<MacVendorLookupResult>(
+        "LookupMacVendor",
+        macAddress
+      );
+    },
+    []
+  );
+
+  const runSpeedTest = useCallback(
+    async (request?: SpeedTestRequest) => {
+      if (!connectionRef.current) {
+        throw new Error("Not connected to Network Hub");
+      }
+      return await connectionRef.current.invoke<SpeedTestCompletedEvent["result"]>(
+        "RunSpeedTest",
+        request ?? {}
       );
     },
     []
@@ -780,6 +825,35 @@ export function useNetworkHub(
     []
   );
 
+  const subscribeToSpeedTest = useCallback(
+    (handlers: SpeedTestHandlers) => {
+      if (!connectionRef.current) return () => {};
+
+      const conn = connectionRef.current;
+
+      if (handlers.onSpeedTestStarted) {
+        conn.on("SpeedTestStarted", handlers.onSpeedTestStarted);
+      }
+      if (handlers.onSpeedTestProgress) {
+        conn.on("SpeedTestProgress", handlers.onSpeedTestProgress);
+      }
+      if (handlers.onSpeedTestCompleted) {
+        conn.on("SpeedTestCompleted", handlers.onSpeedTestCompleted);
+      }
+      if (handlers.onSpeedTestFailed) {
+        conn.on("SpeedTestFailed", handlers.onSpeedTestFailed);
+      }
+
+      return () => {
+        if (handlers.onSpeedTestStarted) conn.off("SpeedTestStarted");
+        if (handlers.onSpeedTestProgress) conn.off("SpeedTestProgress");
+        if (handlers.onSpeedTestCompleted) conn.off("SpeedTestCompleted");
+        if (handlers.onSpeedTestFailed) conn.off("SpeedTestFailed");
+      };
+    },
+    []
+  );
+
   return {
     // Connection state
     connection,
@@ -794,6 +868,8 @@ export function useNetworkHub(
     scanPorts,
     discoverDevices,
     scanWifi,
+    lookupMacVendor,
+    runSpeedTest,
     subscribeScan,
     unsubscribeScan,
 
@@ -803,5 +879,6 @@ export function useNetworkHub(
     subscribeToPortScan,
     subscribeToDiscovery,
     subscribeToWifiScan,
+    subscribeToSpeedTest,
   };
 }

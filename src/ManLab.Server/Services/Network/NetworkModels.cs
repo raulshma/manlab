@@ -412,6 +412,223 @@ public record WolSendResult
 }
 
 /// <summary>
+/// Result of a MAC vendor lookup.
+/// </summary>
+public record MacVendorLookupResult
+{
+    /// <summary>
+    /// Normalized MAC address (XX:XX:XX:XX:XX:XX).
+    /// </summary>
+    public required string MacAddress { get; init; }
+
+    /// <summary>
+    /// Vendor name, if known.
+    /// </summary>
+    public string? Vendor { get; init; }
+
+    /// <summary>
+    /// Total number of vendors in the database.
+    /// </summary>
+    public int VendorCount { get; init; }
+}
+
+/// <summary>
+/// Request for a speed test run.
+/// </summary>
+public record SpeedTestRequest
+{
+    /// <summary>
+    /// Download size in bytes (optional).
+    /// </summary>
+    public int? DownloadSizeBytes { get; init; }
+
+    /// <summary>
+    /// Upload size in bytes (optional).
+    /// </summary>
+    public int? UploadSizeBytes { get; init; }
+
+    /// <summary>
+    /// Number of latency samples to measure (optional).
+    /// </summary>
+    public int? LatencySamples { get; init; }
+}
+
+/// <summary>
+/// Result of an internet speed test.
+/// </summary>
+public record SpeedTestResult
+{
+    /// <summary>
+    /// When the test started (UTC).
+    /// </summary>
+    public DateTime StartedAt { get; init; }
+
+    /// <summary>
+    /// When the test completed (UTC).
+    /// </summary>
+    public DateTime CompletedAt { get; init; }
+
+    /// <summary>
+    /// Whether the test completed successfully.
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// Download throughput in Mbps.
+    /// </summary>
+    public double? DownloadMbps { get; init; }
+
+    /// <summary>
+    /// Upload throughput in Mbps.
+    /// </summary>
+    public double? UploadMbps { get; init; }
+
+    /// <summary>
+    /// Total bytes downloaded during the test.
+    /// </summary>
+    public long DownloadBytes { get; init; }
+
+    /// <summary>
+    /// Total bytes uploaded during the test.
+    /// </summary>
+    public long UploadBytes { get; init; }
+
+    /// <summary>
+    /// Minimum measured latency in milliseconds.
+    /// </summary>
+    public double? LatencyMinMs { get; init; }
+
+    /// <summary>
+    /// Average measured latency in milliseconds.
+    /// </summary>
+    public double? LatencyAvgMs { get; init; }
+
+    /// <summary>
+    /// Maximum measured latency in milliseconds.
+    /// </summary>
+    public double? LatencyMaxMs { get; init; }
+
+    /// <summary>
+    /// Latency jitter (standard deviation) in milliseconds.
+    /// </summary>
+    public double? JitterMs { get; init; }
+
+    /// <summary>
+    /// Download size requested in bytes.
+    /// </summary>
+    public int DownloadSizeBytes { get; init; }
+
+    /// <summary>
+    /// Upload size requested in bytes.
+    /// </summary>
+    public int UploadSizeBytes { get; init; }
+
+    /// <summary>
+    /// Latency sample count requested.
+    /// </summary>
+    public int LatencySamples { get; init; }
+
+    /// <summary>
+    /// Locate service URL used for ndt7 discovery.
+    /// </summary>
+    public string? LocateUrl { get; init; }
+
+    /// <summary>
+    /// Download test URL used for the ndt7 session.
+    /// </summary>
+    public string? DownloadUrl { get; init; }
+
+    /// <summary>
+    /// Upload test URL used for the ndt7 session.
+    /// </summary>
+    public string? UploadUrl { get; init; }
+
+    /// <summary>
+    /// Locate service name (e.g. ndt).
+    /// </summary>
+    public string? ServiceName { get; init; }
+
+    /// <summary>
+    /// Locate service type (e.g. ndt7).
+    /// </summary>
+    public string? ServiceType { get; init; }
+
+    /// <summary>
+    /// Client name metadata.
+    /// </summary>
+    public string? ClientName { get; init; }
+
+    /// <summary>
+    /// Client version metadata.
+    /// </summary>
+    public string? ClientVersion { get; init; }
+
+    /// <summary>
+    /// Client library name metadata.
+    /// </summary>
+    public string? ClientLibraryName { get; init; }
+
+    /// <summary>
+    /// Client library version metadata.
+    /// </summary>
+    public string? ClientLibraryVersion { get; init; }
+
+    /// <summary>
+    /// Total duration of the test in milliseconds.
+    /// </summary>
+    public long DurationMs => (long)(CompletedAt - StartedAt).TotalMilliseconds;
+
+    /// <summary>
+    /// Error message if the test failed.
+    /// </summary>
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// Metadata describing the active speed test session.
+/// </summary>
+public record SpeedTestMetadata
+{
+    public int DownloadSizeBytes { get; init; }
+    public int UploadSizeBytes { get; init; }
+    public int LatencySamples { get; init; }
+    public string? LocateUrl { get; init; }
+    public string? DownloadUrl { get; init; }
+    public string? UploadUrl { get; init; }
+    public string? ServiceName { get; init; }
+    public string? ServiceType { get; init; }
+    public string? ClientName { get; init; }
+    public string? ClientVersion { get; init; }
+    public string? ClientLibraryName { get; init; }
+    public string? ClientLibraryVersion { get; init; }
+}
+
+/// <summary>
+/// Progress update for an active speed test phase.
+/// </summary>
+public record SpeedTestProgress
+{
+    public required string Phase { get; init; }
+    public long BytesTransferred { get; init; }
+    public int TargetBytes { get; init; }
+    public double? Mbps { get; init; }
+    public double? LatencySampleMs { get; init; }
+    public int LatencySamplesCollected { get; init; }
+    public int LatencySamplesTarget { get; init; }
+    public long ElapsedMs { get; init; }
+}
+
+/// <summary>
+/// Combined speed test update payload for real-time UI.
+/// </summary>
+public record SpeedTestProgressUpdate
+{
+    public SpeedTestMetadata? Metadata { get; init; }
+    public SpeedTestProgress? Progress { get; init; }
+    public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
+}
+
+/// <summary>
 /// SSL/TLS certificate details.
 /// </summary>
 public record SslCertificateInfo

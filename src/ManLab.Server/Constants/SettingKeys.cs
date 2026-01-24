@@ -43,6 +43,8 @@ public static class SettingKeys
         public const string TerminalMaxOutputBytes = "Agent.TerminalMaxOutputBytes";
         public const string TerminalMaxDurationSeconds = "Agent.TerminalMaxDurationSeconds";
         public const string FileBrowserMaxBytes = "Agent.FileBrowserMaxBytes";
+        public const string FileZipMaxUncompressedBytes = "Agent.FileZipMaxUncompressedBytes";
+        public const string FileZipMaxFileCount = "Agent.FileZipMaxFileCount";
 
         // Agent self-logging settings
         public const string AgentLogFilePath = "Agent.AgentLogFilePath";

@@ -24,22 +24,30 @@ import {
   MapPin,
   Timer,
   AlertCircle,
-  ArrowRight,
   Copy,
   Target,
-  CircleDot,
   AlertTriangle,
+  Share2,
+  Activity,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+} from "recharts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -48,7 +56,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Skeleton } from "@/components/ui/skeleton";
 import { notify } from "@/lib/network-notify";
 import {
   traceroute as tracerouteApi,
@@ -173,7 +180,7 @@ function exportToText(result: TracerouteResult): void {
     const hostname = hop.hostname || "-";
     const rtt =
       hop.status === "Success" || hop.status === "TtlExpired"
-        ? `${hop.roundtripTime}`
+        ? (hop.roundtripTime === 0 ? "<1" : `${hop.roundtripTime}`)
         : "*";
     lines.push(
       `${hop.hopNumber.toString().padStart(3)} | ${ip.padEnd(15)} | ${hostname.padEnd(30)} | ${rtt.padStart(6)} | ${hop.status}`
@@ -199,7 +206,7 @@ function exportToCSV(result: TracerouteResult): void {
     hop.address || "*",
     hop.hostname || "",
     hop.status === "Success" || hop.status === "TtlExpired"
-      ? hop.roundtripTime.toString()
+      ? (hop.roundtripTime === 0 ? "<1" : hop.roundtripTime.toString())
       : "",
     hop.status,
   ]);
@@ -235,112 +242,194 @@ function getStoredNumber(key: string, fallback: number): number {
 // Sub-Components
 // ============================================================================
 
-interface HopCardProps {
+
+
+interface LatencyChartProps {
+  hops: TracerouteHop[];
+}
+
+function LatencyChart({ hops }: LatencyChartProps) {
+  const data = hops.map((h) => ({
+    hop: h.hopNumber,
+    rtt: h.status === "Success" || h.status === "TtlExpired" ? h.roundtripTime : 0,
+    isTimeout: h.status === "TimedOut",
+  }));
+
+  if (data.length < 2) return null;
+
+  return (
+    <div className="h-[200px] w-full mt-6 mb-8">
+      <div className="flex items-center gap-2 mb-4">
+        <Activity className="h-4 w-4 text-primary" />
+        <h3 className="text-sm font-medium">Latency Timeline</h3>
+      </div>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="colorRtt" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.5} />
+          <XAxis 
+            dataKey="hop" 
+            stroke="hsl(var(--muted-foreground))" 
+            fontSize={12} 
+            tickLine={false}
+            axisLine={false}
+          />
+          <YAxis 
+            stroke="hsl(var(--muted-foreground))" 
+            fontSize={12} 
+            tickLine={false}
+            axisLine={false}
+            unit="ms"
+          />
+          <RechartsTooltip
+            contentStyle={{
+              backgroundColor: "hsl(var(--card))",
+              borderColor: "hsl(var(--border))",
+              borderRadius: "0.5rem",
+              fontSize: "12px",
+            }}
+            itemStyle={{ color: "hsl(var(--foreground))" }}
+            formatter={(value: number) => [`${value === 0 ? "<1" : value}ms`, "Latency"]}
+            labelFormatter={(label) => `Hop ${label}`}
+          />
+          <Area
+            type="monotone"
+            dataKey="rtt"
+            stroke="#10b981"
+            strokeWidth={2}
+            fillOpacity={1}
+            fill="url(#colorRtt)"
+            animationDuration={1000}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+interface HopTimelineItemProps {
   hop: TracerouteHop;
   isDestination: boolean;
   isFirst: boolean;
+  isLast: boolean;
   maxRtt: number;
 }
 
-function HopCard({ hop, isDestination, isFirst, maxRtt }: HopCardProps) {
+function HopTimelineItem({
+  hop,
+  isDestination,
+  isFirst,
+  isLast,
+  maxRtt,
+}: HopTimelineItemProps) {
   const isTimeout = hop.status === "TimedOut";
   const isSuccess = hop.status === "Success" || hop.status === "TtlExpired";
   const rttPercentage = isSuccess ? (hop.roundtripTime / maxRtt) * 100 : 0;
 
   return (
-    <div
-      className={`relative flex items-start gap-4 p-4 rounded-lg border transition-all ${
-        isDestination
-          ? "border-green-500/50 bg-green-500/5"
-          : isTimeout
-            ? "border-muted bg-muted/20"
-            : "border-border hover:border-primary/30"
-      }`}
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="relative pl-8 pb-0"
     >
-      {/* Hop Number Badge */}
+      {/* Connector Line */}
+      {!isLast && (
+        <div 
+          className="absolute left-[11px] top-8 bottom-[-16px] w-[2px] bg-border" 
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Node Dot */}
       <div
-        className={`shrink-0 flex items-center justify-center w-10 h-10 rounded-full font-bold text-sm ${
+        className={`absolute left-0 top-1 h-6 w-6 rounded-full border-2 flex items-center justify-center z-10 bg-background transition-colors ${
           isDestination
-            ? "bg-green-500 text-white"
+            ? "border-green-500 text-green-500"
             : isFirst
-              ? "bg-primary text-primary-foreground"
-              : isTimeout
-                ? "bg-muted text-muted-foreground"
-                : "bg-secondary text-secondary-foreground"
+            ? "border-primary text-primary"
+            : isTimeout
+            ? "border-muted-foreground/30 text-muted-foreground/50"
+            : "border-primary/40 text-primary/70"
         }`}
       >
-        {hop.hopNumber}
+        <span className="text-[10px] font-bold font-mono">{hop.hopNumber}</span>
       </div>
 
-      {/* Hop Details */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          {isDestination ? (
-            <Target className="h-4 w-4 text-green-500" />
-          ) : isFirst ? (
-            <CircleDot className="h-4 w-4 text-primary" />
-          ) : isTimeout ? (
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-          )}
-          {isTimeout ? (
-            <span className="font-medium text-muted-foreground">
-              Request timed out
+      {/* Card Content */}
+      <div 
+        className={`group relative flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg border transition-all duration-200 mb-4 ${
+          isDestination
+            ? "bg-green-500/5 border-green-500/20 hover:border-green-500/40"
+            : isTimeout
+            ? "bg-muted/10 border-border hover:bg-muted/20"
+            : "bg-card border-border hover:border-primary/20 hover:shadow-sm"
+        }`}
+      >
+        {/* Main Info */}
+        <div className="flex-1 min-w-0 grid gap-1">
+          <div className="flex items-center gap-2">
+            <span className={`font-mono text-sm ${isTimeout ? "text-muted-foreground italic" : "font-medium"}`}>
+               {isTimeout ? "Request timed out" : hop.address}
             </span>
-          ) : (
-            <div className="flex items-center gap-2 flex-wrap">
-              {hop.address && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => copyToClipboard(hop.address!)}
-                      className="font-mono text-sm hover:text-primary transition-colors"
-                    >
-                      {hop.address}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>Click to copy</TooltipContent>
-                </Tooltip>
-              )}
-              {hop.hostname && hop.hostname !== hop.address && (
-                <span className="text-sm text-muted-foreground truncate max-w-50">
-                  ({hop.hostname})
-                </span>
-              )}
-            </div>
+            {hop.hostname && hop.hostname !== hop.address && (
+              <span className="text-xs text-muted-foreground truncate hidden sm:inline-block max-w-[200px]">
+                {hop.hostname}
+              </span>
+            )}
+            {isDestination && (
+              <Badge variant="outline" className="ml-auto sm:ml-2 h-5 text-[10px] bg-green-500/10 text-green-600 border-green-500/20">
+                Destination
+              </Badge>
+            )}
+          </div>
+          
+          {/* Mobile Hostname */}
+          {hop.hostname && hop.hostname !== hop.address && (
+             <span className="text-xs text-muted-foreground truncate sm:hidden">
+                {hop.hostname}
+             </span>
           )}
         </div>
 
-        {/* RTT Progress Bar */}
-        {isSuccess && (
-          <div className="mt-2">
-            <div className="flex items-center gap-2 mb-1">
-              <Timer className="h-3 w-3 text-muted-foreground" />
-              <span
-                className={`text-sm font-medium ${getRttColor(hop.roundtripTime)}`}
-              >
-                {hop.roundtripTime}ms
-              </span>
+        {/* RTT Stats */}
+        {!isTimeout && (
+          <div className="flex items-center gap-4 shrink-0 mt-2 sm:mt-0">
+            {/* Visual RTT Bar */}
+            <div className="hidden sm:block w-24 h-1.5 bg-secondary rounded-full overflow-hidden">
+               <motion.div 
+                 initial={{ width: 0 }}
+                 animate={{ width: `${Math.max(rttPercentage, 5)}%` }}
+                 className={`h-full rounded-full ${getRttBgColor(hop.roundtripTime)}`}
+               />
             </div>
-            <div className="h-2 bg-secondary rounded-full overflow-hidden">
-              <div
-                className={`h-full ${getRttBgColor(hop.roundtripTime)} transition-all duration-300`}
-                style={{ width: `${Math.max(rttPercentage, 5)}%` }}
-              />
+            
+            <div className={`flex items-center gap-1.5 text-sm font-mono w-16 justify-end ${getRttColor(hop.roundtripTime)}`}>
+              <Activity className="h-3 w-3 opacity-70" />
+              <span>{hop.roundtripTime === 0 ? "<1ms" : `${hop.roundtripTime}ms`}</span>
             </div>
           </div>
         )}
+        
+        {/* Copy Action */}
+        {!isTimeout && hop.address && (
+           <Button
+             variant="ghost"
+             size="icon"
+             className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity absolute right-2 top-2 sm:static sm:opacity-0 sm:group-hover:opacity-100"
+             onClick={() => copyToClipboard(hop.address!)}
+           >
+             <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+             <span className="sr-only">Copy IP</span>
+           </Button>
+        )}
       </div>
-
-      {/* Status Badge */}
-      <Badge
-        variant={isDestination ? "default" : isTimeout ? "outline" : "secondary"}
-        className={isDestination ? "bg-green-500" : ""}
-      >
-        {isDestination ? "Destination" : isTimeout ? "Timeout" : "OK"}
-      </Badge>
-    </div>
+    </motion.div>
   );
 }
 
@@ -600,97 +689,115 @@ export function TracerouteTool() {
             successfulHops.length
         )
       : 0;
-  const totalRtt =
-    successfulHops.length > 0
-      ? successfulHops.reduce((sum, h) => sum + h.roundtripTime, 0)
-      : 0;
+
   const timeoutCount = displayHops.filter((h) => h.status === "TimedOut").length;
 
   return (
-    <div className="space-y-6">
-      {/* Input Section */}
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Route className="h-5 w-5" />
-            Traceroute
-          </CardTitle>
-          <CardDescription>
-            Trace the network path to a remote host and visualize each hop along
-            the route
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-6 md:grid-cols-[1fr_150px_150px_auto]">
-            {/* Host Input */}
-            <div className="space-y-2">
-              <Label htmlFor="traceroute-host">Target Host</Label>
-              <Input
-                id="traceroute-host"
-                ref={inputRef}
-                placeholder="e.g., google.com or 8.8.8.8"
-                value={host}
-                onChange={(e) => handleHostChange(e.target.value)}
-                onKeyDown={handleKeyDown}
-                className={validationError ? "border-destructive" : ""}
-                disabled={isLoading}
-                aria-invalid={!!validationError}
-                aria-describedby={validationError ? "traceroute-host-error" : undefined}
-              />
-              {validationError && (
-                <p id="traceroute-host-error" className="text-sm text-destructive" role="alert">
-                  {validationError}
-                </p>
+    <div className="space-y-6 max-w-5xl mx-auto">
+      {/* Header & Input Section */}
+      <div className="grid gap-6">
+        <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-light tracking-tight flex items-center gap-2">
+              <Route className="h-6 w-6 text-primary" />
+              Traceroute
+            </h2>
+            <div className="flex gap-2">
+              {(result || displayHops.length > 0) && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex gap-2"
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" size="icon" onClick={handleExportText} className="rounded-full">
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Export TXT</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" size="icon" onClick={handleExportCSV} className="rounded-full">
+                        <Share2 className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Export CSV</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" size="icon" onClick={handleClear} className="rounded-full hover:bg-destructive/10 hover:text-destructive">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Clear</TooltipContent>
+                  </Tooltip>
+                </motion.div>
               )}
             </div>
+        </div>
 
-            {/* Max Hops Slider */}
-            <div className="space-y-2">
-              <Label>Max Hops: {maxHops}</Label>
-              <Slider
-                value={[maxHops]}
-                onValueChange={(value) => {
-                  const newValue = Array.isArray(value) ? value[0] : value;
-                  setMaxHops(newValue);
-                }}
-                min={1}
-                max={64}
-                step={1}
-                disabled={isLoading}
-                className="mt-3"
-              />
-              <p className="text-xs text-muted-foreground">1 - 64</p>
-            </div>
+        <Card className="border-none shadow-lg bg-card/50 backdrop-blur-sm">
+          <CardContent className="pt-6">
+            <div className="flex flex-col md:flex-row gap-4 items-end">
+              <div className="flex-1 space-y-2 w-full">
+                <Label htmlFor="traceroute-host">Target Host or IP</Label>
+                <div className="relative">
+                   <Target className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                   <Input
+                    id="traceroute-host"
+                    ref={inputRef}
+                    placeholder="google.com"
+                    value={host}
+                    onChange={(e) => handleHostChange(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    className={`pl-9 h-11 transition-all ${validationError ? "border-destructive focus-visible:ring-destructive" : "focus-visible:ring-primary"}`}
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+              
+              <div className="flex gap-4 w-full md:w-auto">
+                 <div className="space-y-2 flex-1 md:flex-none md:w-32">
+                    <div className="flex justify-between">
+                       <Label className="text-xs">Max Hops</Label>
+                       <span className="text-xs text-muted-foreground">{maxHops}</span>
+                    </div>
+                    <Slider
+                      value={[maxHops]}
+                      onValueChange={(val: number[]) => setMaxHops(val[0])}
+                      min={1}
+                      max={64}
+                      step={1}
+                      disabled={isLoading}
+                    />
+                 </div>
+                 <div className="space-y-2 flex-1 md:flex-none md:w-32">
+                    <div className="flex justify-between">
+                       <Label className="text-xs">Timeout</Label>
+                       <span className="text-xs text-muted-foreground">{(timeout/1000).toFixed(1)}s</span>
+                    </div>
+                    <Slider
+                      value={[timeout]}
+                      onValueChange={(val: number[]) => setTimeoutMs(val[0])}
+                      min={100}
+                      max={5000}
+                      step={100}
+                      disabled={isLoading}
+                    />
+                 </div>
+              </div>
 
-            {/* Timeout Slider */}
-            <div className="space-y-2">
-              <Label>Timeout: {timeout}ms</Label>
-              <Slider
-                value={[timeout]}
-                onValueChange={(value) => {
-                  const newValue = Array.isArray(value) ? value[0] : value;
-                  setTimeoutMs(newValue);
-                }}
-                min={100}
-                max={5000}
-                step={100}
-                disabled={isLoading}
-                className="mt-3"
-              />
-              <p className="text-xs text-muted-foreground">100ms - 5000ms</p>
-            </div>
-
-            {/* Submit Button */}
-            <div className="flex items-end">
               <Button
                 onClick={handleTraceroute}
                 disabled={isLoading || !host}
-                className="w-full md:w-auto min-h-11"
+                className="h-11 min-w-[120px] shadow-md transition-all hover:scale-105 active:scale-95"
+                size="lg"
               >
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Tracing...
+                    Tracing
                   </>
                 ) : (
                   <>
@@ -700,267 +807,214 @@ export function TracerouteTool() {
                 )}
               </Button>
             </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Live Progress Indicator */}
-      {rateLimitMessage && (
-        <Card className="border-orange-500/40 bg-orange-500/5">
-          <CardContent className="pt-4 flex items-center gap-2 text-sm text-orange-600 dark:text-orange-400">
-            <AlertTriangle className="h-4 w-4" />
-            {rateLimitMessage}
-          </CardContent>
-        </Card>
-      )}
-
-      {isTracing && (
-        <Card className="border-primary/50">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">Tracing route to {host}...</p>
-                <p className="text-sm text-muted-foreground">
-                  {liveHops.length} hops discovered
-                </p>
-              </div>
-              <Progress value={(liveHops.length / maxHops) * 100} className="w-32" />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {isTracing && displayHops.length === 0 && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <div key={index} className="flex items-center gap-4">
-                  <Skeleton className="h-10 w-10 rounded-full" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-48" />
-                    <Skeleton className="h-2 w-full" />
-                  </div>
-                  <Skeleton className="h-6 w-20" />
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Result Summary */}
-      {result && (
-        <Card
-          className={`border-l-4 ${result.reachedDestination ? "border-l-green-500" : "border-l-yellow-500"}`}
-        >
-          <CardContent className="pt-6">
-            <div className="grid gap-4 md:grid-cols-5">
-              {/* Status */}
-              <div className="flex items-center gap-3">
-                {result.reachedDestination ? (
-                  <CheckCircle2 className="h-8 w-8 text-green-500" />
-                ) : (
-                  <XCircle className="h-8 w-8 text-yellow-500" />
-                )}
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <Badge
-                    variant={result.reachedDestination ? "default" : "secondary"}
-                    className={result.reachedDestination ? "bg-green-500" : ""}
-                  >
-                    {result.reachedDestination
-                      ? "Destination Reached"
-                      : "Incomplete"}
-                  </Badge>
-                </div>
-              </div>
-
-              {/* Total Hops */}
-              <div className="flex items-center gap-3">
-                <MapPin className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Hops</p>
-                  <p className="text-2xl font-bold">{result.hops.length}</p>
-                </div>
-              </div>
-
-              {/* Average RTT */}
-              <div className="flex items-center gap-3">
-                <Timer className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Average RTT</p>
-                  <p className={`text-2xl font-bold ${getRttColor(avgRtt)}`}>
-                    {avgRtt}ms
-                  </p>
-                </div>
-              </div>
-
-              {/* Total Latency */}
-              <div className="flex items-center gap-3">
-                <Clock className="h-8 w-8 text-primary" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Latency</p>
-                  <p className="text-2xl font-bold">{totalRtt}ms</p>
-                </div>
-              </div>
-
-              {/* Timeouts */}
-              <div className="flex items-center gap-3">
-                <AlertCircle
-                  className={`h-8 w-8 ${timeoutCount > 0 ? "text-yellow-500" : "text-muted-foreground"}`}
-                />
-                <div>
-                  <p className="text-sm text-muted-foreground">Timeouts</p>
-                  <p className="text-2xl font-bold">{timeoutCount}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Resolved Address */}
-            {result.resolvedAddress && result.resolvedAddress !== result.hostname && (
-              <div className="mt-4 pt-4 border-t flex items-center gap-2 text-sm">
-                <span className="text-muted-foreground">Resolved IP:</span>
-                <code className="px-2 py-1 bg-muted rounded font-mono">
-                  {result.resolvedAddress}
-                </code>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => copyToClipboard(result.resolvedAddress!)}
-                      className="min-h-10"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Copy IP</TooltipContent>
-                </Tooltip>
-              </div>
+            {validationError && (
+              <p className="text-sm text-destructive mt-2 animate-in slide-in-from-top-1 opacity-0 fade-in-0 fill-mode-forwards duration-300">
+                {validationError}
+              </p>
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* Rate Limit Alert */}
+      {rateLimitMessage && (
+        <motion.div 
+           initial={{ opacity: 0, y: -10 }} 
+           animate={{ opacity: 1, y: 0 }}
+           className="rounded-md bg-orange-500/10 p-4 border border-orange-500/20 flex items-center gap-3 text-orange-600 dark:text-orange-400"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <p className="text-sm font-medium">{rateLimitMessage}</p>
+        </motion.div>
       )}
 
-      {/* Hop-by-Hop Display */}
-      {displayHops.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Route className="h-4 w-4" />
-                Route Path ({displayHops.length} hops)
-              </CardTitle>
-              <div className="flex gap-2">
-                {result && (
-                  <>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="outline" size="sm" onClick={handleExportText}>
-                          <Download className="h-4 w-4 mr-1" />
-                          TXT
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Export to Text</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="outline" size="sm" onClick={handleExportCSV}>
-                          <Download className="h-4 w-4 mr-1" />
-                          CSV
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Export to CSV</TooltipContent>
-                    </Tooltip>
-                  </>
-                )}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="sm" onClick={handleClear}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Clear Results</TooltipContent>
-                </Tooltip>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {/* Visual Route Path */}
-            <div className="space-y-2">
-              {displayHops.map((hop, index) => (
-                <HopCard
-                  key={`${hop.hopNumber}-${index}`}
-                  hop={hop}
-                  isDestination={
-                    hop.status === "Success" && index === displayHops.length - 1
-                  }
-                  isFirst={index === 0}
-                  maxRtt={maxRtt}
-                />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Results Section */}
+      <AnimatePresence mode="wait">
+         {displayHops.length > 0 && (
+           <motion.div
+             initial={{ opacity: 0 }}
+             animate={{ opacity: 1 }}
+             exit={{ opacity: 0 }}
+             className="space-y-6"
+           >
+             {/* Stats Grid */}
+             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Card className="bg-card/50 backdrop-blur-sm">
+                   <CardContent className="pt-6">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                         <MapPin className="h-4 w-4" />
+                         <span className="text-xs font-medium uppercase tracking-wider">Hops</span>
+                      </div>
+                      <div className="text-2xl font-bold font-mono">
+                         {displayHops.length}
+                         <span className="text-sm font-normal text-muted-foreground ml-1">/ {maxHops}</span>
+                      </div>
+                   </CardContent>
+                </Card>
+                <Card className="bg-card/50 backdrop-blur-sm">
+                   <CardContent className="pt-6">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                         <Timer className="h-4 w-4" />
+                         <span className="text-xs font-medium uppercase tracking-wider">Avg Latency</span>
+                      </div>
+                      <div className={`text-2xl font-bold font-mono ${getRttColor(avgRtt)}`}>
+                         {avgRtt === 0 && successfulHops.length > 0 ? "<1" : avgRtt}
+                         <span className="text-sm text-muted-foreground ml-1">ms</span>
+                      </div>
+                   </CardContent>
+                </Card>
+                <Card className="bg-card/50 backdrop-blur-sm">
+                   <CardContent className="pt-6">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                         <AlertCircle className="h-4 w-4" />
+                         <span className="text-xs font-medium uppercase tracking-wider">Packet Loss</span>
+                      </div>
+                      <div className="text-2xl font-bold font-mono">
+                         {displayHops.length > 0 ? ((timeoutCount / displayHops.length) * 100).toFixed(0) : 0}
+                         <span className="text-sm text-muted-foreground ml-1">%</span>
+                      </div>
+                   </CardContent>
+                </Card>
+                <Card className={`bg-card/50 backdrop-blur-sm border-l-4 ${result?.reachedDestination ? "border-l-green-500" : isTracing ? "border-l-blue-500" : "border-l-yellow-500"}`}>
+                   <CardContent className="pt-6">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                         <Activity className="h-4 w-4" />
+                         <span className="text-xs font-medium uppercase tracking-wider">Status</span>
+                      </div>
+                      <div className="font-bold flex items-center gap-2">
+                         {result?.reachedDestination ? (
+                           <>
+                             <CheckCircle2 className="h-5 w-5 text-green-500" />
+                             <span>Success</span>
+                           </>
+                         ) : isTracing ? (
+                           <>
+                             <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />
+                             <span>Tracing...</span>
+                           </>
+                         ) : (
+                           <>
+                             <XCircle className="h-5 w-5 text-yellow-500" />
+                             <span>Incomplete</span>
+                           </>
+                         )}
+                      </div>
+                   </CardContent>
+                </Card>
+             </div>
 
-      {/* History Section */}
-      {history.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Recent Traceroutes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {history.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors cursor-pointer"
-                  onClick={() => setResult(entry.result)}
-                >
-                  <div className="flex items-center gap-3">
-                    <Route className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="font-medium text-sm">
-                        {entry.result.hostname}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatTime(entry.timestamp)} • {entry.result.hops.length}{" "}
-                        hops
-                      </p>
-                    </div>
-                  </div>
-                  <Badge
-                    variant={
-                      entry.result.reachedDestination ? "default" : "secondary"
-                    }
-                    className={
-                      entry.result.reachedDestination ? "bg-green-500" : ""
-                    }
-                  >
-                    {entry.result.reachedDestination ? "Complete" : "Incomplete"}
-                  </Badge>
+             {/* Chart & Timeline Layout */}
+             <div className="grid lg:grid-cols-[1fr_300px] gap-8">
+                {/* Main Timeline Column */}
+                <div className="space-y-6">
+                   <LatencyChart hops={displayHops} />
+
+                   <Card className="border-none shadow-none bg-transparent">
+                      <CardContent className="p-0">
+                         {displayHops.map((hop, index) => (
+                            <HopTimelineItem
+                              key={`${hop.hopNumber}-${index}`}
+                              hop={hop}
+                              isDestination={hop.status === "Success" && index === displayHops.length - 1}
+                              isFirst={index === 0}
+                              isLast={index === displayHops.length - 1}
+                              maxRtt={maxRtt}
+                            />
+                         ))}
+                         
+                         {isTracing && (
+                           <div className="pl-8 pt-4 pb-8 flex items-center gap-3 animate-pulse">
+                              <div className="h-2 w-2 rounded-full bg-primary" />
+                              <span className="text-sm text-muted-foreground">Probing hop {displayHops.length + 1}...</span>
+                           </div>
+                         )}
+                      </CardContent>
+                   </Card>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+
+                {/* Sidebar Info (History) */}
+                <div className="space-y-6">
+                   {/* Current Details */}
+                   {result?.resolvedAddress && (
+                     <Card>
+                       <CardHeader className="pb-3">
+                         <CardTitle className="text-sm font-medium">Target Details</CardTitle>
+                       </CardHeader>
+                       <CardContent className="text-sm space-y-3">
+                          <div className="flex justify-between border-b pb-2">
+                            <span className="text-muted-foreground">Hostname</span>
+                            <span className="font-mono text-right truncate max-w-[150px]">{result.hostname}</span>
+                          </div>
+                          <div className="flex justify-between items-center border-b pb-2">
+                            <span className="text-muted-foreground">IP Address</span>
+                            <div className="flex items-center gap-2">
+                              <code className="bg-muted px-1.5 py-0.5 rounded font-mono text-xs">{result.resolvedAddress}</code>
+                              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copyToClipboard(result.resolvedAddress!)}>
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="flex justify-between">
+                             <span className="text-muted-foreground">Time</span>
+                             <span>{new Date().toLocaleTimeString()}</span>
+                          </div>
+                       </CardContent>
+                     </Card>
+                   )}
+
+                   {/* History List */}
+                   {history.length > 0 && (
+                     <Card className="max-h-[500px] overflow-hidden flex flex-col">
+                       <CardHeader className="pb-3">
+                          <CardTitle className="text-sm font-medium flex items-center gap-2">
+                             <Clock className="h-4 w-4" />
+                             Recent Traces
+                          </CardTitle>
+                       </CardHeader>
+                       <CardContent className="overflow-y-auto flex-1 p-0">
+                          {history.map((entry) => (
+                             <div 
+                               key={entry.id}
+                               onClick={() => {
+                                 setResult(entry.result);
+                                 setLiveHops([]); // Stop showing live
+                               }}
+                               className="p-3 border-b last:border-0 hover:bg-muted/50 cursor-pointer transition-colors"
+                             >
+                                <div className="flex justify-between items-start mb-1">
+                                   <span className="font-medium text-sm truncate max-w-[120px]">{entry.result.hostname}</span>
+                                   <span className="text-[10px] text-muted-foreground">{formatTime(entry.timestamp)}</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                   <Badge variant={entry.result.reachedDestination ? "default" : "secondary"} className={`text-[10px] h-4 ${entry.result.reachedDestination ? "bg-green-500/10 text-green-600 hover:bg-green-500/20" : ""}`}>
+                                      {entry.result.reachedDestination ? "Success" : "Failed"}
+                                   </Badge>
+                                   <span className="text-[10px] text-muted-foreground">{entry.result.hops.length} Hops</span>
+                                </div>
+                             </div>
+                          ))}
+                       </CardContent>
+                     </Card>
+                   )}
+                </div>
+             </div>
+           </motion.div>
+         )}
+      </AnimatePresence>
 
       {/* Empty State */}
-      {displayHops.length === 0 && !result && !isTracing && (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <Route className="h-12 w-12 mb-4 text-muted-foreground opacity-50" />
-            <h3 className="text-lg font-medium mb-2">No traceroute results</h3>
-            <p className="text-sm text-muted-foreground max-w-sm">
-              Enter a hostname or IP address above and click "Trace" to
-              visualize the network path and measure latency at each hop.
-            </p>
-          </CardContent>
-        </Card>
+      {!isTracing && displayHops.length === 0 && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center py-20 opacity-50"
+        >
+           <Route className="h-16 w-16 mx-auto mb-4 text-muted-foreground/30" />
+           <h3 className="text-lg font-medium text-muted-foreground">Ready to trace</h3>
+           <p className="text-sm text-muted-foreground/70 max-w-sm mx-auto mt-2">
+             Enter a target host or IP address to visualize the network path.
+           </p>
+        </motion.div>
       )}
     </div>
   );

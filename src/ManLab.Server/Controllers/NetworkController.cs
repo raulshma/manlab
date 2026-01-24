@@ -16,6 +16,8 @@ public class NetworkController : ControllerBase
     private readonly IDeviceDiscoveryService _discovery;
     private readonly IWifiScannerService _wifiScanner;
     private readonly IIpGeolocationService _geolocation;
+    private readonly IOuiDatabase _ouiDatabase;
+    private readonly ISpeedTestService _speedTest;
     private readonly INetworkToolHistoryService _history;
     private readonly ILogger<NetworkController> _logger;
     private readonly IAuditLog _audit;
@@ -25,6 +27,8 @@ public class NetworkController : ControllerBase
         IDeviceDiscoveryService discovery,
         IWifiScannerService wifiScanner,
         IIpGeolocationService geolocation,
+        IOuiDatabase ouiDatabase,
+        ISpeedTestService speedTest,
         INetworkToolHistoryService history,
         ILogger<NetworkController> logger,
         IAuditLog audit)
@@ -33,6 +37,8 @@ public class NetworkController : ControllerBase
         _discovery = discovery;
         _wifiScanner = wifiScanner;
         _geolocation = geolocation;
+        _ouiDatabase = ouiDatabase;
+        _speedTest = speedTest;
         _history = history;
         _logger = logger;
         _audit = audit;
@@ -678,6 +684,131 @@ public class NetworkController : ControllerBase
     }
 
     /// <summary>
+    /// Looks up the vendor for a MAC address.
+    /// </summary>
+    [HttpPost("mac/vendor")]
+    public ActionResult<MacVendorLookupResult> LookupMacVendor([FromBody] MacVendorLookupRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.MacAddress))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_MAC",
+                Message = "MAC address is required"
+            });
+        }
+
+        if (!TryNormalizeMacAddress(request.MacAddress, out var normalized))
+        {
+            return BadRequest(new NetworkScanError
+            {
+                Code = "INVALID_MAC",
+                Message = "Invalid MAC address format"
+            });
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var vendor = _ouiDatabase.LookupVendor(normalized);
+        var result = new MacVendorLookupResult
+        {
+            MacAddress = normalized,
+            Vendor = vendor,
+            VendorCount = _ouiDatabase.VendorCount
+        };
+        sw.Stop();
+
+        _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+            kind: "activity",
+            eventName: "network.mac.vendor",
+            httpContext: HttpContext,
+            success: vendor is not null,
+            statusCode: 200,
+            category: "network",
+            message: vendor is null
+                ? $"MAC vendor lookup for {normalized}: not found"
+                : $"MAC vendor lookup for {normalized}: {vendor}"));
+
+        _ = _history.RecordAsync(
+            toolType: "mac-vendor",
+            target: normalized,
+            input: new { macAddress = request.MacAddress },
+            result: result,
+            success: vendor is not null,
+            durationMs: (int)sw.ElapsedMilliseconds,
+            connectionId: HttpContext.Connection.Id);
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Runs a server-side internet speed test.
+    /// </summary>
+    [HttpPost("speedtest")]
+    public async Task<ActionResult<SpeedTestResult>> RunSpeedTest([FromBody] SpeedTestRequest? request, CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _speedTest.RunAsync(request ?? new SpeedTestRequest(), ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.speedtest",
+                httpContext: HttpContext,
+                success: result.Success,
+                statusCode: 200,
+                category: "network",
+                message: result.Success
+                    ? $"Speed test completed: ↓ {result.DownloadMbps:0.##} Mbps, ↑ {result.UploadMbps:0.##} Mbps"
+                    : "Speed test failed"));
+
+            _ = _history.RecordAsync(
+                toolType: "speedtest",
+                target: "internet",
+                input: request,
+                result: new
+                {
+                    result.DownloadMbps,
+                    result.UploadMbps,
+                    result.LatencyAvgMs,
+                    result.LatencyMinMs,
+                    result.LatencyMaxMs,
+                    result.JitterMs
+                },
+                success: result.Success,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: result.Error,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "Speed test failed");
+
+            _ = _history.RecordAsync(
+                toolType: "speedtest",
+                target: "internet",
+                input: request,
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "SPEEDTEST_FAILED",
+                Message = "Speed test failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
     /// Inspects SSL/TLS certificate chain for a host.
     /// </summary>
     [HttpPost("ssl/inspect")]
@@ -1293,6 +1424,40 @@ public class NetworkController : ControllerBase
         return false;
     }
 
+    private static bool TryNormalizeMacAddress(string input, out string normalized)
+    {
+        normalized = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        var cleaned = input
+            .Replace(":", "", StringComparison.Ordinal)
+            .Replace("-", "", StringComparison.Ordinal)
+            .Replace(".", "", StringComparison.Ordinal)
+            .Trim();
+
+        if (cleaned.Length != 12)
+        {
+            return false;
+        }
+
+        var bytes = new byte[6];
+        for (int i = 0; i < 6; i++)
+        {
+            var hex = cleaned.Substring(i * 2, 2);
+            if (!byte.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out bytes[i]))
+            {
+                return false;
+            }
+        }
+
+        normalized = string.Join(":", bytes.Select(b => b.ToString("X2")));
+        return true;
+    }
+
     #endregion
 }
 
@@ -1489,6 +1654,17 @@ public record WolRequest
     /// Optional UDP port (default 9).
     /// </summary>
     public int? Port { get; init; }
+}
+
+/// <summary>
+/// Request for MAC vendor lookup.
+/// </summary>
+public record MacVendorLookupRequest
+{
+    /// <summary>
+    /// MAC address to lookup.
+    /// </summary>
+    public string MacAddress { get; init; } = string.Empty;
 }
 
 /// <summary>

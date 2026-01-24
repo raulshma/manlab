@@ -316,10 +316,37 @@ try {
             AuthToken = ""
             HeartbeatIntervalSeconds = 15
             MaxReconnectDelaySeconds = 60
+            TelemetryCacheSeconds = 30
+            PrimaryInterfaceName = ""
+            EnableNetworkTelemetry = $true
+            EnablePingTelemetry = $true
+            EnableGpuTelemetry = $true
+            EnableUpsTelemetry = $true
+            EnableEnhancedNetworkTelemetry = $true
+            EnableEnhancedGpuTelemetry = $true
+            EnableApmTelemetry = $false
+            ApmHealthCheckEndpoints = @()
+            ApmDatabaseEndpoints = @()
             EnableLogViewer = $EnableLogViewer -eq 'true'
             EnableScripts = $EnableScripts -eq 'true'
             EnableTerminal = $EnableTerminal -eq 'true'
             EnableFileBrowser = $EnableFileBrowser -eq 'true'
+            PingTarget = ""
+            PingTimeoutMs = 800
+            PingWindowSize = 10
+            LogMaxBytes = 65536
+            LogMinSecondsBetweenRequests = 1
+            ScriptMaxOutputBytes = 65536
+            ScriptMaxDurationSeconds = 60
+            ScriptMinSecondsBetweenRuns = 1
+            TerminalMaxOutputBytes = 65536
+            TerminalMaxDurationSeconds = 600
+            FileBrowserMaxBytes = 2097152
+            FileZipMaxUncompressedBytes = 1073741824
+            FileZipMaxFileCount = 10000
+            AgentLogFilePath = ""
+            AgentLogFileMaxBytes = 5242880
+            AgentLogFileRetainedFiles = 3
         }
     }
     $config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8

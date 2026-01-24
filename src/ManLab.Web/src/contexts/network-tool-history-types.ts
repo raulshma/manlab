@@ -18,7 +18,9 @@ export type NetworkToolType =
   | "dns-lookup"
   | "whois"
   | "wol"
-  | "ssl-inspect";
+  | "ssl-inspect"
+  | "mac-vendor"
+  | "speedtest";
 
 /**
  * Parsed history entry for UI consumption.

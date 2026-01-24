@@ -25,6 +25,8 @@ import {
   BookText,
   Power,
   ShieldCheck,
+  Fingerprint,
+  Gauge,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,6 +87,10 @@ function getToolIcon(toolType: NetworkToolType) {
       return <Power className="h-4 w-4" />;
     case "ssl-inspect":
       return <ShieldCheck className="h-4 w-4" />;
+    case "mac-vendor":
+      return <Fingerprint className="h-4 w-4" />;
+    case "speedtest":
+      return <Gauge className="h-4 w-4" />;
     default:
       return <History className="h-4 w-4" />;
   }
@@ -115,6 +121,10 @@ function getToolLabel(toolType: NetworkToolType): string {
       return "Wake-on-LAN";
     case "ssl-inspect":
       return "SSL Inspect";
+    case "mac-vendor":
+      return "MAC Vendor";
+    case "speedtest":
+      return "Speed Test";
     default:
       return toolType;
   }
@@ -284,6 +294,8 @@ export function NetworkToolHistoryPanel() {
     "whois",
     "wol",
     "ssl-inspect",
+    "mac-vendor",
+    "speedtest",
   ];
 
   return (

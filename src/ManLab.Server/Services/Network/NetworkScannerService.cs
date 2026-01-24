@@ -270,7 +270,9 @@ public sealed class NetworkScannerService : INetworkScannerService
             
             try
             {
+                var pingSw = Stopwatch.StartNew();
                 var reply = await ping.SendPingAsync(hostname, timeout, buffer, options);
+                pingSw.Stop();
                 
                 string? hopHostname = null;
                 if (reply.Address is not null && !IsUnspecifiedAddress(reply.Address))
@@ -284,12 +286,21 @@ public sealed class NetworkScannerService : INetworkScannerService
                     catch (ArgumentException) { /* Unspecified/invalid address */ }
                 }
 
+                var rtt = reply.RoundtripTime;
+                if (rtt == 0 && (reply.Status == IPStatus.Success || reply.Status == IPStatus.TtlExpired))
+                {
+                    // Fallback to stopwatch if Ping reports 0ms but was successful
+                    // This often happens on fast networks or Windows TtlExpired
+                    rtt = pingSw.ElapsedMilliseconds;
+                    if (rtt == 0) rtt = 1; // Ensure at least 1ms if successful
+                }
+
                 var hop = new TracerouteHop
                 {
                     HopNumber = ttl,
                     Address = reply.Address?.ToString(),
                     Hostname = hopHostname,
-                    RoundtripTime = reply.RoundtripTime,
+                    RoundtripTime = rtt,
                     Status = reply.Status
                 };
                 hops.Add(hop);
