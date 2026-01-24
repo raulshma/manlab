@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import {
   fetchTrafficSamples,
   runTrafficMonitor,
   updateTrafficMonitorConfig,
+  deleteTrafficMonitorConfig,
 } from "@/api";
 
 function formatBytesPerSec(value: number | null | undefined): string {
@@ -36,6 +37,7 @@ export function TrafficMonitorPanel() {
   const [draftCron, setDraftCron] = useState<string | null>(null);
   const [draftInterface, setDraftInterface] = useState<string | null>(null);
   const [draftEnabled, setDraftEnabled] = useState<boolean | null>(null);
+  const DEFAULT_CRON = "*/30 * * * * ?";
 
   const { data: config } = useQuery({
     queryKey: ["monitoring", "traffic", "config"],
@@ -53,6 +55,17 @@ export function TrafficMonitorPanel() {
       updateTrafficMonitorConfig(payload),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["monitoring", "traffic"] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteTrafficMonitorConfig,
+    onSuccess: async () => {
+      setDraftCron(null);
+      setDraftInterface(null);
+      setDraftEnabled(null);
+      await queryClient.invalidateQueries({ queryKey: ["monitoring", "traffic"] });
+      await queryClient.invalidateQueries({ queryKey: ["monitoring", "jobs"] });
     },
   });
 
@@ -86,15 +99,26 @@ export function TrafficMonitorPanel() {
             <h3 className="text-lg font-semibold">Traffic Monitor Settings</h3>
             <p className="text-sm text-muted-foreground">Configure server-side interface sampling.</p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => runMutation.mutate()}>
-            Run now
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => runMutation.mutate()} disabled={!config}>
+              Run now
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => deleteMutation.mutate()}
+              disabled={!config || deleteMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete job
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Input
             placeholder="Cron schedule"
-            value={draftCron ?? config?.cron ?? ""}
+            value={draftCron ?? config?.cron ?? DEFAULT_CRON}
             onChange={(event) => setDraftCron(event.target.value)}
           />
           <Input
@@ -104,7 +128,7 @@ export function TrafficMonitorPanel() {
           />
           <div className="flex items-center gap-2">
             <Switch
-              checked={draftEnabled ?? config?.enabled ?? false}
+              checked={draftEnabled ?? config?.enabled ?? true}
               onCheckedChange={(checked) => setDraftEnabled(checked)}
             />
             <span className="text-sm text-muted-foreground">Enabled</span>
@@ -114,13 +138,13 @@ export function TrafficMonitorPanel() {
               size="sm"
               onClick={() =>
                 updateMutation.mutate({
-                  cron: draftCron ?? config?.cron ?? "*/30 * * * * ?",
+                  cron: draftCron ?? config?.cron ?? DEFAULT_CRON,
                   enabled: draftEnabled ?? config?.enabled ?? true,
                   interfaceName: (draftInterface ?? config?.interfaceName ?? "") || null,
                 })
               }
             >
-              Save changes
+              {config ? "Save changes" : "Create job"}
             </Button>
           </div>
         </div>

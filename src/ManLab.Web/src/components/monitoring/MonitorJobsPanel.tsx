@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Play, PauseCircle, PlayCircle } from "lucide-react";
+import { RefreshCw, Play, PauseCircle, PlayCircle, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -25,7 +25,7 @@ function formatDate(value: string | null): string {
   }
 }
 
-export function MonitorJobsPanel() {
+export function MonitorJobsPanel({ onManageJob }: { onManageJob?: (type: "http" | "traffic") => void }) {
   const queryClient = useQueryClient();
 
   const { data: jobs, isLoading, refetch, isFetching } = useQuery({
@@ -92,7 +92,7 @@ export function MonitorJobsPanel() {
     return map;
   }, [httpMonitors]);
 
-  const traffic = trafficConfig;
+  const traffic = trafficConfig ?? undefined;
 
   return (
     <div className="space-y-4">
@@ -154,6 +154,14 @@ export function MonitorJobsPanel() {
                   >
                     {enabled ? <Play className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
                     Run now
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onManageJob?.(job.type)}
+                  >
+                    <Settings className="h-4 w-4" />
+                    Manage
                   </Button>
                   {enabled ? (
                     <PauseCircle className="h-4 w-4 text-muted-foreground" />

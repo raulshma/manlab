@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Activity, Network, Globe } from "lucide-react";
@@ -6,6 +7,8 @@ import { HttpMonitorsPanel } from "../components/monitoring/HttpMonitorsPanel";
 import { TrafficMonitorPanel } from "../components/monitoring/TrafficMonitorPanel";
 
 export function MonitoringPage() {
+  const [activeTab, setActiveTab] = useState("jobs");
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -21,7 +24,7 @@ export function MonitoringPage() {
       </div>
 
       <Card className="border-0 shadow-none sm:border sm:shadow">
-        <Tabs defaultValue="jobs" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <CardHeader className="pb-2">
             <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3">
               <TabsTrigger value="jobs" className="gap-2">
@@ -40,7 +43,7 @@ export function MonitoringPage() {
           </CardHeader>
           <CardContent>
             <TabsContent value="jobs" className="mt-0">
-              <MonitorJobsPanel />
+              <MonitorJobsPanel onManageJob={(type) => setActiveTab(type === "http" ? "http" : "traffic")} />
             </TabsContent>
             <TabsContent value="http" className="mt-0">
               <HttpMonitorsPanel />

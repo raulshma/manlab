@@ -25,7 +25,15 @@ public sealed class TrafficMonitorController : ControllerBase
     [HttpGet("config")]
     public async Task<ActionResult<TrafficMonitorConfigDto>> GetConfig(CancellationToken ct)
     {
-        var config = await EnsureConfigAsync(ct).ConfigureAwait(false);
+        var config = await _db.TrafficMonitorConfigs
+            .AsNoTracking()
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+        if (config is null)
+        {
+            return NotFound();
+        }
+
         return Ok(MapConfig(config));
     }
 
@@ -77,7 +85,11 @@ public sealed class TrafficMonitorController : ControllerBase
     [HttpPost("run")]
     public async Task<ActionResult> RunNow(CancellationToken ct)
     {
-        var config = await EnsureConfigAsync(ct).ConfigureAwait(false);
+        var config = await _db.TrafficMonitorConfigs.FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        if (config is null)
+        {
+            return NotFound();
+        }
 
         try
         {
@@ -89,6 +101,22 @@ public sealed class TrafficMonitorController : ControllerBase
             _logger.LogError(ex, "Failed to trigger traffic monitor");
             return StatusCode(500, "Failed to trigger traffic monitor");
         }
+    }
+
+    [HttpDelete("config")]
+    public async Task<ActionResult> DeleteConfig(CancellationToken ct)
+    {
+        var config = await _db.TrafficMonitorConfigs.FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        if (config is null)
+        {
+            return NotFound();
+        }
+
+        _db.TrafficMonitorConfigs.Remove(config);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _scheduler.RemoveTrafficMonitorAsync(config.Id, ct).ConfigureAwait(false);
+
+        return NoContent();
     }
 
     private async Task<TrafficMonitorConfig> EnsureConfigAsync(CancellationToken ct)

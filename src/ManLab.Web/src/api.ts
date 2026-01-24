@@ -1512,8 +1512,11 @@ export async function fetchHttpMonitorHistory(id: string, count: number = 200): 
   return response.json();
 }
 
-export async function fetchTrafficMonitorConfig(): Promise<TrafficMonitorConfig> {
+export async function fetchTrafficMonitorConfig(): Promise<TrafficMonitorConfig | null> {
   const response = await fetch(`${API_BASE}/monitoring/traffic/config`);
+  if (response.status === 404) {
+    return null;
+  }
   if (!response.ok) {
     throw new Error(`Failed to fetch traffic monitor config: ${response.statusText}`);
   }
@@ -1534,6 +1537,13 @@ export async function updateTrafficMonitorConfig(body: {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export async function deleteTrafficMonitorConfig(): Promise<void> {
+  const response = await fetch(`${API_BASE}/monitoring/traffic/config`, { method: "DELETE" });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Failed to delete traffic monitor config: ${response.statusText}`);
+  }
 }
 
 export async function fetchTrafficSamples(count: number = 360, interfaceName?: string): Promise<TrafficSample[]> {
