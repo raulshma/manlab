@@ -47,6 +47,57 @@ export interface PingResult {
 }
 
 /**
+ * Internet health snapshot request.
+ */
+export interface InternetHealthRequest {
+  pingTargets?: string[];
+  pingTimeoutMs?: number;
+  dnsQuery?: string;
+  includePublicIp?: boolean;
+}
+
+/**
+ * Internet health ping snapshot.
+ */
+export interface InternetHealthPingSnapshot {
+  target: string;
+  result?: PingResult | null;
+  durationMs: number;
+  error?: string | null;
+}
+
+/**
+ * Internet health DNS snapshot.
+ */
+export interface InternetHealthDnsSnapshot {
+  query: string;
+  durationMs: number;
+  recordCount: number;
+  success: boolean;
+  error?: string | null;
+}
+
+/**
+ * Internet health public IP snapshot.
+ */
+export interface InternetHealthPublicIpSnapshot {
+  result?: PublicIpResult | null;
+  durationMs: number;
+  success: boolean;
+  error?: string | null;
+}
+
+/**
+ * Internet health combined snapshot.
+ */
+export interface InternetHealthResult {
+  timestampUtc: string;
+  pings: InternetHealthPingSnapshot[];
+  dns: InternetHealthDnsSnapshot;
+  publicIp?: InternetHealthPublicIpSnapshot | null;
+}
+
+/**
  * Subnet discovery request parameters.
  */
 export interface SubnetDiscoverRequest {
@@ -894,6 +945,23 @@ export async function updatePingAggregateHistory(
 ): Promise<void> {
   await withNetworkRetry(async () => {
     await api.put(`/network/ping/aggregate/${encodeURIComponent(id)}`, request, options);
+  });
+}
+
+/**
+ * Retrieve an internet health snapshot.
+ */
+export async function getInternetHealthSnapshot(
+  request: InternetHealthRequest,
+  options?: RequestOptions
+): Promise<InternetHealthResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.post<InternetHealthResult>(
+      "/network/internet-health",
+      request,
+      options
+    );
+    return data;
   });
 }
 

@@ -238,6 +238,135 @@ public class NetworkController : ControllerBase
     }
 
     /// <summary>
+    /// Retrieves a combined internet health snapshot (ping, DNS resolution, optional public IP).
+    /// </summary>
+    [HttpPost("internet-health")]
+    public async Task<ActionResult<InternetHealthResult>> GetInternetHealth([
+        FromBody] InternetHealthRequest? request,
+        CancellationToken ct)
+    {
+        var targets = request?.PingTargets
+            ?.Where(target => !string.IsNullOrWhiteSpace(target))
+            .Select(target => target.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToArray();
+
+        if (targets is null || targets.Length == 0)
+        {
+            targets = ["8.8.8.8", "1.1.1.1"];
+        }
+
+        var timeout = Math.Clamp(request?.PingTimeoutMs ?? 1000, 100, 10000);
+        var dnsQuery = string.IsNullOrWhiteSpace(request?.DnsQuery) ? "example.com" : request!.DnsQuery.Trim();
+        var includePublicIp = request?.IncludePublicIp ?? false;
+
+        var pingSnapshots = new List<InternetHealthPingSnapshot>(targets.Length);
+
+        foreach (var target in targets)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                var result = await _scanner.PingAsync(target, timeout, ct);
+                sw.Stop();
+                pingSnapshots.Add(new InternetHealthPingSnapshot
+                {
+                    Target = target,
+                    Result = result,
+                    DurationMs = sw.ElapsedMilliseconds
+                });
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                pingSnapshots.Add(new InternetHealthPingSnapshot
+                {
+                    Target = target,
+                    Result = null,
+                    DurationMs = sw.ElapsedMilliseconds,
+                    Error = ex.Message
+                });
+            }
+        }
+
+        InternetHealthDnsSnapshot dnsSnapshot;
+        var dnsSw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var dnsResult = await _scanner.DnsLookupAsync(dnsQuery, includeReverse: false, ct);
+            dnsSw.Stop();
+            dnsSnapshot = new InternetHealthDnsSnapshot
+            {
+                Query = dnsQuery,
+                DurationMs = dnsSw.ElapsedMilliseconds,
+                RecordCount = dnsResult.Records.Count,
+                Success = true
+            };
+        }
+        catch (Exception ex)
+        {
+            dnsSw.Stop();
+            dnsSnapshot = new InternetHealthDnsSnapshot
+            {
+                Query = dnsQuery,
+                DurationMs = dnsSw.ElapsedMilliseconds,
+                RecordCount = 0,
+                Success = false,
+                Error = ex.Message
+            };
+        }
+
+        InternetHealthPublicIpSnapshot? publicIpSnapshot = null;
+        if (includePublicIp)
+        {
+            var ipSw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                var result = await _scanner.GetPublicIpAsync(ct);
+                ipSw.Stop();
+                publicIpSnapshot = new InternetHealthPublicIpSnapshot
+                {
+                    Result = result,
+                    DurationMs = ipSw.ElapsedMilliseconds,
+                    Success = true
+                };
+            }
+            catch (Exception ex)
+            {
+                ipSw.Stop();
+                publicIpSnapshot = new InternetHealthPublicIpSnapshot
+                {
+                    Result = null,
+                    DurationMs = ipSw.ElapsedMilliseconds,
+                    Success = false,
+                    Error = ex.Message
+                };
+            }
+        }
+
+        var snapshot = new InternetHealthResult
+        {
+            TimestampUtc = DateTime.UtcNow,
+            Pings = pingSnapshots,
+            Dns = dnsSnapshot,
+            PublicIp = publicIpSnapshot
+        };
+
+        var success = pingSnapshots.Any(ping => ping.Result?.IsSuccess == true);
+        _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+            kind: "activity",
+            eventName: "network.internet_health",
+            httpContext: HttpContext,
+            success: success,
+            statusCode: 200,
+            category: "network",
+            message: $"Internet health snapshot: {pingSnapshots.Count} pings, DNS {dnsQuery}"));
+
+        return Ok(snapshot);
+    }
+
+    /// <summary>
     /// Discovers active hosts on a subnet.
     /// </summary>
     /// <param name="request">The subnet scan request.</param>

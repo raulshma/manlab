@@ -12,6 +12,7 @@ import { createContext, type ReactNode } from "react";
 /** Available network tool tabs */
 export type NetworkToolTab =
   | "ping"
+  | "internet-health"
   | "subnet"
   | "topology"
   | "traceroute"

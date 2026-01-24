@@ -27,6 +27,7 @@ import {
   Share2,
   Check,
   X,
+  Signal,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -52,6 +53,7 @@ import { ArpTableTool } from "@/components/network/ArpTableTool";
 import { NetworkToolHistoryPanel } from "@/components/network/NetworkToolHistoryPanel";
 import { NetworkErrorBoundary } from "@/components/network/NetworkErrorBoundary";
 import { NetworkToolHistoryProvider } from "@/contexts/NetworkToolHistoryContext";
+import { InternetHealthTool } from "@/components/network/InternetHealthTool";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import {
@@ -74,6 +76,7 @@ import { cn } from "@/lib/utils";
 // Tool Definitions
 const TOOLS = [
   { id: "ping", label: "Ping", icon: Radio },
+  { id: "internet-health", label: "Internet Health", icon: Signal },
   { id: "subnet", label: "Subnet", icon: Search },
   { id: "topology", label: "Topology", icon: Share2 },
   { id: "traceroute", label: "Traceroute", icon: Route },
@@ -448,6 +451,12 @@ export function NetworkScannerPage() {
             <TabsContent value="ping" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="Ping Tool Error">
                 <PingTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
+            <TabsContent value="internet-health" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Internet Health Error">
+                <InternetHealthTool />
               </NetworkErrorBoundary>
             </TabsContent>
 

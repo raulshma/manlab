@@ -44,6 +44,147 @@ public record PingResult
 }
 
 /// <summary>
+/// Request for an internet health snapshot.
+/// </summary>
+public record InternetHealthRequest
+{
+    /// <summary>
+    /// Ping targets to probe (defaults to common public resolvers).
+    /// </summary>
+    public string[]? PingTargets { get; init; }
+
+    /// <summary>
+    /// Ping timeout in milliseconds.
+    /// </summary>
+    public int? PingTimeoutMs { get; init; }
+
+    /// <summary>
+    /// DNS query to resolve (defaults to example.com).
+    /// </summary>
+    public string? DnsQuery { get; init; }
+
+    /// <summary>
+    /// Whether to include public IP lookup.
+    /// </summary>
+    public bool? IncludePublicIp { get; init; }
+}
+
+/// <summary>
+/// Ping snapshot for internet health.
+/// </summary>
+public record InternetHealthPingSnapshot
+{
+    /// <summary>
+    /// Target hostname or IP.
+    /// </summary>
+    public required string Target { get; init; }
+
+    /// <summary>
+    /// Ping result (null on failure).
+    /// </summary>
+    public PingResult? Result { get; init; }
+
+    /// <summary>
+    /// Duration of the ping operation in milliseconds.
+    /// </summary>
+    public long DurationMs { get; init; }
+
+    /// <summary>
+    /// Error message if the ping failed.
+    /// </summary>
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// DNS resolution snapshot for internet health.
+/// </summary>
+public record InternetHealthDnsSnapshot
+{
+    /// <summary>
+    /// Query that was resolved.
+    /// </summary>
+    public required string Query { get; init; }
+
+    /// <summary>
+    /// Duration of the DNS lookup in milliseconds.
+    /// </summary>
+    public long DurationMs { get; init; }
+
+    /// <summary>
+    /// Number of DNS records returned.
+    /// </summary>
+    public int RecordCount { get; init; }
+
+    /// <summary>
+    /// Whether the lookup succeeded.
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// Error message if the lookup failed.
+    /// </summary>
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// Public IP snapshot for internet health.
+/// </summary>
+public record InternetHealthPublicIpSnapshot
+{
+    /// <summary>
+    /// Public IP lookup result (null on failure).
+    /// </summary>
+    public PublicIpResult? Result { get; init; }
+
+    /// <summary>
+    /// Duration of the lookup in milliseconds.
+    /// </summary>
+    public long DurationMs { get; init; }
+
+    /// <summary>
+    /// Whether the lookup succeeded.
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// Error message if lookup failed.
+    /// </summary>
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// Combined internet health snapshot.
+/// </summary>
+public record InternetHealthResult
+{
+    /// <summary>
+    /// Timestamp of the snapshot (UTC).
+    /// </summary>
+    public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Ping results for each target.
+    /// </summary>
+    public List<InternetHealthPingSnapshot> Pings { get; init; } = [];
+
+    /// <summary>
+    /// DNS resolution snapshot.
+    /// </summary>
+    public InternetHealthDnsSnapshot Dns { get; init; } = new()
+    {
+        Query = string.Empty,
+        DurationMs = 0,
+        RecordCount = 0,
+        Success = false
+    };
+
+    /// <summary>
+    /// Optional public IP snapshot.
+    /// </summary>
+    public InternetHealthPublicIpSnapshot? PublicIp { get; init; }
+}
+
+/// <summary>
 /// A host discovered during a subnet scan.
 /// </summary>
 public record DiscoveredHost

@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { notify } from "@/lib/network-notify";
 import { announce } from "@/lib/accessibility";
+import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 import {
   buildNetworkTopology,
   type NetworkTopologyResult,
@@ -66,6 +67,21 @@ const KIND_COLORS: Record<string, string> = {
   upnp: "#a855f7",
 };
 
+const KIND_GLYPHS: Record<string, string> = {
+  root: "R",
+  subnet: "S",
+  host: "H",
+  mdns: "m",
+  upnp: "u",
+};
+
+const VENDOR_BADGE: Record<string, { label: string; color: string }> = {
+  apple: { label: "A", color: "bg-neutral-900 text-white" },
+  synology: { label: "S", color: "bg-orange-500 text-white" },
+  ubiquiti: { label: "U", color: "bg-blue-600 text-white" },
+  ubnt: { label: "U", color: "bg-blue-600 text-white" },
+};
+
 function getStoredString(key: string, fallback: string): string {
   if (typeof window === "undefined") return fallback;
   return localStorage.getItem(key) ?? fallback;
@@ -102,6 +118,7 @@ function isValidCIDR(cidr: string): boolean {
 }
 
 export function NetworkTopologyTool() {
+  const networkTools = useNetworkToolsOptional();
   const [cidr, setCidr] = useState(() => getStoredString(TOPOLOGY_CIDR_KEY, ""));
   const [concurrency, setConcurrency] = useState(() => getStoredNumber(TOPOLOGY_CONCURRENCY_KEY, 120));
   const [timeout, setTimeoutMs] = useState(() => getStoredNumber(TOPOLOGY_TIMEOUT_KEY, 750));
@@ -162,6 +179,28 @@ export function NetworkTopologyTool() {
     return { nodes, links };
   }, [result]);
 
+  useEffect(() => {
+    if (!graphRef.current) return;
+    const chargeForce = graphRef.current.d3Force("charge");
+    if (chargeForce?.strength) {
+      chargeForce.strength(-160);
+    }
+    const linkForce = graphRef.current.d3Force("link");
+    if (linkForce && "distance" in linkForce) {
+      (linkForce as { distance: (fn: (link: unknown) => number) => void }).distance((link) => {
+        const typed = link as NetworkTopologyLink;
+        return typed.kind === "service" ? 32 : 85;
+      });
+    }
+  }, [result]);
+
+  const vendorBadge = useMemo(() => {
+    const vendor = selectedNode?.node.vendor?.toLowerCase() ?? "";
+    if (!vendor) return null;
+    const match = Object.keys(VENDOR_BADGE).find((key) => vendor.includes(key));
+    return match ? VENDOR_BADGE[match] : null;
+  }, [selectedNode]);
+
   const handleBuildTopology = useCallback(async () => {
     if (!cidr || !isValidCIDR(cidr)) {
       setValidationError("Please enter a valid CIDR notation (e.g., 192.168.1.0/24)");
@@ -211,6 +250,7 @@ export function NetworkTopologyTool() {
       const isSelected = selectedNode?.id === graphNode.id;
       const size = graphNode.kind === "subnet" ? 9 : graphNode.kind === "root" ? 10 : 6;
       const fontSize = 11 / globalScale;
+      const glyph = KIND_GLYPHS[graphNode.kind] ?? "?";
 
       ctx.beginPath();
       ctx.arc(graphNode.x || 0, graphNode.y || 0, size, 0, 2 * Math.PI);
@@ -221,6 +261,14 @@ export function NetworkTopologyTool() {
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 2 / globalScale;
         ctx.stroke();
+      }
+
+      if (globalScale > 0.6) {
+        ctx.font = `${Math.max(7, 9 / globalScale)}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#0f172a";
+        ctx.fillText(glyph, graphNode.x || 0, graphNode.y || 0);
       }
 
       if (globalScale > 0.8) {
@@ -494,7 +542,14 @@ export function NetworkTopologyTool() {
                     {selectedNode.node.vendor && (
                       <div>
                         <p className="text-xs text-muted-foreground">Vendor</p>
-                        <p className="text-sm">{selectedNode.node.vendor}</p>
+                        <div className="flex items-center gap-2">
+                          {vendorBadge && (
+                            <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-semibold ${vendorBadge.color}`}>
+                              {vendorBadge.label}
+                            </div>
+                          )}
+                          <p className="text-sm">{selectedNode.node.vendor}</p>
+                        </div>
                       </div>
                     )}
                     {selectedNode.node.deviceType && (
@@ -513,6 +568,24 @@ export function NetworkTopologyTool() {
                       <div>
                         <p className="text-xs text-muted-foreground">Port</p>
                         <p className="text-sm">{selectedNode.node.port}</p>
+                      </div>
+                    )}
+                    {selectedNode.node.ipAddress && networkTools && (
+                      <div className="pt-2 flex flex-col gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => networkTools.quickPing(selectedNode.node.ipAddress!)}
+                        >
+                          Quick Ping
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => networkTools.quickPortScan(selectedNode.node.ipAddress!)}
+                        >
+                          Scan Ports
+                        </Button>
                       </div>
                     )}
                   </CardContent>

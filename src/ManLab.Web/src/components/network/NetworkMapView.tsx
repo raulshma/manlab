@@ -26,6 +26,7 @@ import {
   downloadGeolocationDatabase,
 } from "@/api/networkApi";
 import { announce } from "@/lib/accessibility";
+import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 
 // Types for force graph - using simple object types for library compat
 interface GraphNode {
@@ -65,6 +66,13 @@ const SUBNET_COLORS = [
   "#6366f1", // indigo
 ];
 
+const VENDOR_BADGE: Record<string, { label: string; color: string }> = {
+  apple: { label: "A", color: "bg-neutral-900 text-white" },
+  synology: { label: "S", color: "bg-orange-500 text-white" },
+  ubiquiti: { label: "U", color: "bg-blue-600 text-white" },
+  ubnt: { label: "U", color: "bg-blue-600 text-white" },
+};
+
 // Get subnet key from IP address
 function getSubnetKey(ip: string): string {
   const parts = ip.split(".");
@@ -79,12 +87,25 @@ function getSubnetColor(subnet: string, subnetMap: Map<string, number>): string 
   return SUBNET_COLORS[subnetMap.get(subnet)! % SUBNET_COLORS.length];
 }
 
+function getHostGlyph(host: DiscoveredHost): string {
+  const vendor = host.vendor?.toLowerCase() ?? "";
+  const match = Object.keys(VENDOR_BADGE).find((key) => vendor.includes(key));
+  if (match) return VENDOR_BADGE[match].label;
+  const deviceType = host.deviceType?.toLowerCase() ?? "";
+  if (deviceType.includes("router") || deviceType.includes("gateway")) return "R";
+  if (deviceType.includes("printer")) return "P";
+  if (deviceType.includes("phone") || deviceType.includes("mobile")) return "M";
+  if (deviceType.includes("server")) return "S";
+  return "•";
+}
+
 interface NetworkMapViewProps {
   hosts: DiscoveredHost[];
   onHostSelect?: (host: DiscoveredHost | null) => void;
 }
 
 export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
+  const networkTools = useNetworkToolsOptional();
   const graphRef = useRef<ForceGraphRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -155,6 +176,14 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
     return { nodes, links };
   }, [hosts]);
 
+  useEffect(() => {
+    if (!graphRef.current) return;
+    const chargeForce = graphRef.current.d3Force("charge");
+    if (chargeForce?.strength) {
+      chargeForce.strength(-140);
+    }
+  }, [hosts]);
+
   // Node click handler
   const handleNodeClick = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -175,6 +204,7 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
       const isSelected = selectedNode?.id === graphNode.id;
       const size = isSelected ? 8 : 6;
       const fontSize = 11 / globalScale;
+      const glyph = getHostGlyph(graphNode.host);
 
       // Draw node circle
       ctx.beginPath();
@@ -186,6 +216,14 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 2 / globalScale;
         ctx.stroke();
+      }
+
+      if (globalScale > 0.6) {
+        ctx.font = `${Math.max(7, 9 / globalScale)}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#0f172a";
+        ctx.fillText(glyph, graphNode.x || 0, graphNode.y || 0);
       }
 
       // Draw label if zoomed in enough
@@ -453,6 +491,7 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                 onNodeClick={handleNodeClick}
                 linkColor={() => "rgba(255,255,255,0.15)"}
                 linkWidth={1}
+                linkDistance={() => 75}
                 d3AlphaDecay={0.02}
                 d3VelocityDecay={0.3}
                 cooldownTicks={100}
@@ -543,7 +582,20 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                     {selectedNode.host.vendor && (
                       <div>
                         <p className="text-xs text-muted-foreground">Vendor</p>
-                        <p className="text-sm">{selectedNode.host.vendor}</p>
+                        <div className="flex items-center gap-2">
+                          {(() => {
+                            const vendor = selectedNode.host.vendor?.toLowerCase() ?? "";
+                            const match = Object.keys(VENDOR_BADGE).find((key) => vendor.includes(key));
+                            if (!match) return null;
+                            const badge = VENDOR_BADGE[match];
+                            return (
+                              <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-semibold ${badge.color}`}>
+                                {badge.label}
+                              </div>
+                            );
+                          })()}
+                          <p className="text-sm">{selectedNode.host.vendor}</p>
+                        </div>
                       </div>
                     )}
                     {selectedNode.host.deviceType && (
@@ -566,6 +618,24 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                         {selectedNode.group}
                       </Badge>
                     </div>
+                    {networkTools && (
+                      <div className="pt-2 flex flex-col gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => networkTools.quickPing(selectedNode.host.ipAddress)}
+                        >
+                          Quick Ping
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => networkTools.quickPortScan(selectedNode.host.ipAddress)}
+                        >
+                          Scan Ports
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
