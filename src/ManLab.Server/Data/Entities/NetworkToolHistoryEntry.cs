@@ -49,6 +49,23 @@ public sealed class NetworkToolHistoryEntry
     public string? ErrorMessage { get; set; }
 
     /// <summary>
+    /// Tags associated with the history entry (stored as JSON array).
+    /// </summary>
+    [MaxLength(2048)]
+    public string? TagsJson { get; set; }
+
+    /// <summary>
+    /// User annotations or notes for the history entry.
+    /// </summary>
+    [MaxLength(4096)]
+    public string? Notes { get; set; }
+
+    /// <summary>
+    /// Last updated timestamp for metadata changes.
+    /// </summary>
+    public DateTime? UpdatedUtc { get; set; }
+
+    /// <summary>
     /// SignalR connection ID for correlation (optional).
     /// </summary>
     [MaxLength(128)]

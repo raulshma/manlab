@@ -1258,6 +1258,36 @@ export interface NetworkToolHistoryEntry {
   success: boolean;
   durationMs: number;
   errorMessage: string | null;
+  tags: string[];
+  notes: string | null;
+}
+
+export type HistoryStatusFilter = "all" | "success" | "failed";
+export type HistorySortBy = "timestamp" | "duration" | "tool" | "target" | "status";
+export type HistorySortDir = "asc" | "desc";
+
+export interface NetworkToolHistoryQueryParams {
+  page?: number;
+  pageSize?: number;
+  toolTypes?: NetworkToolType[];
+  status?: HistoryStatusFilter;
+  search?: string;
+  fromUtc?: string | null;
+  toUtc?: string | null;
+  sortBy?: HistorySortBy;
+  sortDir?: HistorySortDir;
+}
+
+export interface NetworkToolHistoryQueryResult {
+  items: NetworkToolHistoryEntry[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface UpdateHistoryMetadataRequest {
+  tags: string[];
+  notes?: string | null;
 }
 
 /**
@@ -1279,6 +1309,91 @@ export async function getNetworkToolHistory(
     );
     return data;
   });
+}
+
+/**
+ * Query network tool history with advanced filtering.
+ */
+export async function queryNetworkToolHistory(
+  params: NetworkToolHistoryQueryParams,
+  options?: RequestOptions
+): Promise<NetworkToolHistoryQueryResult> {
+  return withNetworkRetry(async () => {
+    const qs = new URLSearchParams();
+
+    const add = (k: string, v: unknown) => {
+      if (v === undefined || v === null) return;
+      const s = String(v).trim();
+      if (!s) return;
+      qs.set(k, s);
+    };
+
+    if (params.page) add("page", Math.max(1, Math.floor(params.page)));
+    if (params.pageSize) add("pageSize", Math.max(10, Math.min(200, Math.floor(params.pageSize))));
+    if (params.toolTypes && params.toolTypes.length > 0) add("toolTypes", params.toolTypes.join(","));
+    if (params.status && params.status !== "all") add("status", params.status);
+    add("search", params.search);
+    add("fromUtc", params.fromUtc);
+    add("toUtc", params.toUtc);
+    add("sortBy", params.sortBy ?? "timestamp");
+    add("sortDir", params.sortDir ?? "desc");
+
+    const url = `/network/history/query${qs.size ? `?${qs.toString()}` : ""}`;
+    const { data } = await api.get<NetworkToolHistoryQueryResult>(url, options);
+    return data;
+  });
+}
+
+/**
+ * Update tags and notes for a history entry.
+ */
+export async function updateNetworkToolHistoryMetadata(
+  id: string,
+  request: UpdateHistoryMetadataRequest,
+  options?: RequestOptions
+): Promise<NetworkToolHistoryEntry> {
+  const { data } = await api.put<NetworkToolHistoryEntry>(
+    `/network/history/${encodeURIComponent(id)}/metadata`,
+    request,
+    options
+  );
+  return data;
+}
+
+/**
+ * Export network tool history for current filters.
+ */
+export async function exportNetworkToolHistory(
+  params: NetworkToolHistoryQueryParams,
+  format: "csv" | "json"
+): Promise<Blob> {
+  const qs = new URLSearchParams();
+  const add = (k: string, v: unknown) => {
+    if (v === undefined || v === null) return;
+    const s = String(v).trim();
+    if (!s) return;
+    qs.set(k, s);
+  };
+
+  if (params.toolTypes && params.toolTypes.length > 0) add("toolTypes", params.toolTypes.join(","));
+  if (params.status && params.status !== "all") add("status", params.status);
+  add("search", params.search);
+  add("fromUtc", params.fromUtc);
+  add("toUtc", params.toUtc);
+  add("sortBy", params.sortBy ?? "timestamp");
+  add("sortDir", params.sortDir ?? "desc");
+  add("format", format);
+
+  const url = `/api/network/history/export${qs.size ? `?${qs.toString()}` : ""}`;
+  const response = await fetch(url, {
+    method: "GET",
+  });
+
+  if (!response.ok) {
+    throw new Error(response.statusText);
+  }
+
+  return response.blob();
 }
 
 /**

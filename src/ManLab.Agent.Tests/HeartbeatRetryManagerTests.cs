@@ -160,15 +160,15 @@ public class HeartbeatRetryManagerTests
         var manager = CreateManager(baseDelaySeconds: 1, maxDelaySeconds: 100);
 
         var retry1 = manager.RecordFailure();
-        var expectedBase1 = 1.0; // 1 * 2^0 = 1
+        // Expected base: 1.0 (1 * 2^0 = 1)
 
         manager.RecordFailure();
         var retry2 = manager.NextRetryTimeUtc!.Value;
-        var expectedBase2 = 2.0; // 1 * 2^1 = 2
+        // Expected base: 2.0 (1 * 2^1 = 2)
 
         manager.RecordFailure();
         var retry3 = manager.NextRetryTimeUtc!.Value;
-        var expectedBase3 = 4.0; // 1 * 2^2 = 4
+        // Expected base: 4.0 (1 * 2^2 = 4)
 
         // With jitter, actual delays could be ±10% off, so verify order of magnitude
         // Check that retry times are increasing (accounting for when they were recorded)

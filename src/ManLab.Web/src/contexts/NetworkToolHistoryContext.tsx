@@ -3,15 +3,16 @@
  * Provides context for network tool history state and operations.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   NetworkToolHistoryContext,
-  type NetworkToolType,
   type ParsedHistoryEntry,
+  type NetworkToolHistoryQueryState,
 } from "./network-tool-history-types";
 import {
-  getNetworkToolHistory,
+  queryNetworkToolHistory,
   deleteNetworkToolHistoryEntry,
+  updateNetworkToolHistoryMetadata,
   type NetworkToolHistoryEntry,
 } from "@/api/networkApi";
 
@@ -60,6 +61,8 @@ function parseHistoryEntry(raw: NetworkToolHistoryEntry): ParsedHistoryEntry {
     success: raw.success,
     durationMs: raw.durationMs,
     error: raw.errorMessage,
+    tags: raw.tags ?? [],
+    notes: raw.notes ?? null,
   };
 }
 
@@ -69,36 +72,86 @@ export function NetworkToolHistoryProvider({
   autoRefreshMs = 0,
 }: NetworkToolHistoryProviderProps) {
   const [history, setHistory] = useState<ParsedHistoryEntry[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeFilter, setActiveFilter] = useState<NetworkToolType | null>(null);
+
+  const defaultQuery = useMemo<NetworkToolHistoryQueryState>(() => ({
+    page: 1,
+    pageSize: Math.max(10, Math.min(200, initialCount)),
+    toolTypes: [],
+    status: "all",
+    search: "",
+    fromUtc: null,
+    toUtc: null,
+    sortBy: "timestamp",
+    sortDir: "desc",
+  }), [initialCount]);
+
+  const [query, setQueryState] = useState<NetworkToolHistoryQueryState>(defaultQuery);
+
+  const setQuery = useCallback((update: Partial<NetworkToolHistoryQueryState>) => {
+    setQueryState((prev) => ({
+      ...prev,
+      ...update,
+      page: update.page ?? (update.pageSize || update.toolTypes || update.status || update.search || update.fromUtc || update.toUtc || update.sortBy || update.sortDir
+        ? 1
+        : prev.page),
+    }));
+  }, []);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const entries = await getNetworkToolHistory(initialCount, activeFilter ?? undefined);
-      setHistory(entries.map(parseHistoryEntry));
+      const result = await queryNetworkToolHistory({
+        page: query.page,
+        pageSize: query.pageSize,
+        toolTypes: query.toolTypes.length > 0 ? query.toolTypes : undefined,
+        status: query.status,
+        search: query.search,
+        fromUtc: query.fromUtc,
+        toUtc: query.toUtc,
+        sortBy: query.sortBy,
+        sortDir: query.sortDir,
+      });
+      setHistory(result.items.map(parseHistoryEntry));
+      setTotalCount(result.totalCount);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load history";
       setError(message);
     } finally {
       setIsLoading(false);
     }
-  }, [initialCount, activeFilter]);
+  }, [query]);
 
   const deleteEntry = useCallback(async (id: string) => {
     try {
       await deleteNetworkToolHistoryEntry(id);
       setHistory((prev) => prev.filter((entry) => entry.id !== id));
+      setTotalCount((prev) => Math.max(0, prev - 1));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to delete entry";
       setError(message);
     }
   }, []);
 
-  const setFilter = useCallback((toolType: NetworkToolType | null) => {
-    setActiveFilter(toolType);
+  const updateMetadata = useCallback(async (id: string, tags: string[], notes?: string | null) => {
+    try {
+      const updated = await updateNetworkToolHistoryMetadata(id, { tags, notes });
+      setHistory((prev) => prev.map((entry) =>
+        entry.id === id
+          ? {
+              ...entry,
+              tags: updated.tags ?? [],
+              notes: updated.notes ?? null,
+            }
+          : entry
+      ));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update metadata";
+      setError(message);
+    }
   }, []);
 
   // Fetch on mount and when filter changes
@@ -117,12 +170,14 @@ export function NetworkToolHistoryProvider({
     <NetworkToolHistoryContext.Provider
       value={{
         history,
+        totalCount,
         isLoading,
         error,
         refresh,
         deleteEntry,
-        activeFilter,
-        setFilter,
+        updateMetadata,
+        query,
+        setQuery,
       }}
     >
       {children}

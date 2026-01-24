@@ -23,6 +23,22 @@ export type NetworkToolType =
   | "mac-vendor"
   | "speedtest";
 
+export type HistoryStatusFilter = "all" | "success" | "failed";
+export type HistorySortBy = "timestamp" | "duration" | "tool" | "target" | "status";
+export type HistorySortDir = "asc" | "desc";
+
+export interface NetworkToolHistoryQueryState {
+  page: number;
+  pageSize: number;
+  toolTypes: NetworkToolType[];
+  status: HistoryStatusFilter;
+  search: string;
+  fromUtc: string | null;
+  toUtc: string | null;
+  sortBy: HistorySortBy;
+  sortDir: HistorySortDir;
+}
+
 /**
  * Parsed history entry for UI consumption.
  */
@@ -36,6 +52,8 @@ export interface ParsedHistoryEntry {
   success: boolean;
   durationMs: number;
   error: string | null;
+  tags: string[];
+  notes: string | null;
 }
 
 /**
@@ -44,6 +62,8 @@ export interface ParsedHistoryEntry {
 export interface NetworkToolHistoryContextValue {
   /** History entries (most recent first) */
   history: ParsedHistoryEntry[];
+  /** Total count for current query */
+  totalCount: number;
   /** Whether history is being loaded */
   isLoading: boolean;
   /** Error message if loading failed */
@@ -52,10 +72,12 @@ export interface NetworkToolHistoryContextValue {
   refresh: () => Promise<void>;
   /** Delete a history entry */
   deleteEntry: (id: string) => Promise<void>;
-  /** Current tool type filter */
-  activeFilter: NetworkToolType | null;
-  /** Set tool type filter */
-  setFilter: (toolType: NetworkToolType | null) => void;
+  /** Update history metadata */
+  updateMetadata: (id: string, tags: string[], notes?: string | null) => Promise<void>;
+  /** Current query state */
+  query: NetworkToolHistoryQueryState;
+  /** Update query state */
+  setQuery: (update: Partial<NetworkToolHistoryQueryState>) => void;
 }
 
 export const NetworkToolHistoryContext = createContext<NetworkToolHistoryContextValue | null>(null);

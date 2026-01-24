@@ -92,6 +92,37 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
             .ToListAsync();
     }
 
+    public async Task<NetworkToolHistoryQueryResult> QueryAsync(NetworkToolHistoryQuery query)
+    {
+        var page = Math.Max(1, query.Page);
+        var pageSize = Math.Clamp(query.PageSize, 10, 200);
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var baseQuery = ApplyFilters(db.NetworkToolHistory.AsNoTracking(), query);
+        var totalCount = await baseQuery.CountAsync();
+
+        var sorted = ApplySorting(baseQuery, query);
+        var items = await sorted
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return new NetworkToolHistoryQueryResult(items, totalCount, page, pageSize);
+    }
+
+    public async Task<List<NetworkToolHistoryEntry>> GetFilteredAsync(NetworkToolHistoryQuery query)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var baseQuery = ApplyFilters(db.NetworkToolHistory.AsNoTracking(), query);
+        var sorted = ApplySorting(baseQuery, query);
+
+        return await sorted.ToListAsync();
+    }
+
     public async Task<NetworkToolHistoryEntry?> GetByIdAsync(Guid id)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -155,6 +186,25 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
 
         await db.SaveChangesAsync();
         return true;
+    }
+
+    public async Task<NetworkToolHistoryEntry?> UpdateMetadataAsync(Guid id, IReadOnlyList<string> tags, string? notes)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var entry = await db.NetworkToolHistory.FirstOrDefaultAsync(e => e.Id == id);
+        if (entry is null)
+        {
+            return null;
+        }
+
+        entry.TagsJson = SerializeTags(tags);
+        entry.Notes = TruncateString(notes, 4096);
+        entry.UpdatedUtc = DateTime.UtcNow;
+
+        await db.SaveChangesAsync();
+        return entry;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -280,5 +330,86 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
     {
         if (string.IsNullOrEmpty(s)) return null;
         return s.Length <= maxLen ? s : s[..maxLen];
+    }
+
+    private static IQueryable<NetworkToolHistoryEntry> ApplyFilters(
+        IQueryable<NetworkToolHistoryEntry> query,
+        NetworkToolHistoryQuery filters)
+    {
+        if (filters.ToolTypes is { Count: > 0 })
+        {
+            query = query.Where(e => filters.ToolTypes.Contains(e.ToolType));
+        }
+
+        if (filters.Success.HasValue)
+        {
+            query = query.Where(e => e.Success == filters.Success.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filters.Search))
+        {
+            var term = filters.Search.Trim().ToLowerInvariant();
+            query = query.Where(e =>
+                (e.Target != null && e.Target.ToLower().Contains(term))
+                || e.ToolType.ToLower().Contains(term)
+                || (e.ErrorMessage != null && e.ErrorMessage.ToLower().Contains(term))
+            );
+        }
+
+        if (filters.FromUtc.HasValue)
+        {
+            query = query.Where(e => e.TimestampUtc >= filters.FromUtc.Value);
+        }
+
+        if (filters.ToUtc.HasValue)
+        {
+            query = query.Where(e => e.TimestampUtc <= filters.ToUtc.Value);
+        }
+
+        return query;
+    }
+
+    private static IQueryable<NetworkToolHistoryEntry> ApplySorting(
+        IQueryable<NetworkToolHistoryEntry> query,
+        NetworkToolHistoryQuery filters)
+    {
+        var sortBy = filters.SortBy.Trim().ToLowerInvariant();
+        var desc = !string.Equals(filters.SortDirection, "asc", StringComparison.OrdinalIgnoreCase);
+
+        return (sortBy, desc) switch
+        {
+            ("duration", true) => query.OrderByDescending(e => e.DurationMs).ThenByDescending(e => e.TimestampUtc),
+            ("duration", false) => query.OrderBy(e => e.DurationMs).ThenByDescending(e => e.TimestampUtc),
+            ("tool", true) => query.OrderByDescending(e => e.ToolType).ThenByDescending(e => e.TimestampUtc),
+            ("tool", false) => query.OrderBy(e => e.ToolType).ThenByDescending(e => e.TimestampUtc),
+            ("target", true) => query.OrderByDescending(e => e.Target).ThenByDescending(e => e.TimestampUtc),
+            ("target", false) => query.OrderBy(e => e.Target).ThenByDescending(e => e.TimestampUtc),
+            ("status", true) => query.OrderByDescending(e => e.Success).ThenByDescending(e => e.TimestampUtc),
+            ("status", false) => query.OrderBy(e => e.Success).ThenByDescending(e => e.TimestampUtc),
+            _ => desc
+                ? query.OrderByDescending(e => e.TimestampUtc)
+                : query.OrderBy(e => e.TimestampUtc)
+        };
+    }
+
+    private static string? SerializeTags(IReadOnlyList<string> tags)
+    {
+        if (tags is null || tags.Count == 0)
+        {
+            return null;
+        }
+
+        var cleaned = tags
+            .Select(t => t.Trim())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (cleaned.Length == 0)
+        {
+            return null;
+        }
+
+        return SerializeToJson(cleaned);
     }
 }

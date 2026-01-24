@@ -38,6 +38,16 @@ public interface INetworkToolHistoryService
     Task<List<NetworkToolHistoryEntry>> GetRecentAsync(int count = 50, string? toolType = null);
 
     /// <summary>
+    /// Queries history entries with advanced filtering, sorting, and paging.
+    /// </summary>
+    Task<NetworkToolHistoryQueryResult> QueryAsync(NetworkToolHistoryQuery query);
+
+    /// <summary>
+    /// Gets all history entries matching filters (no paging).
+    /// </summary>
+    Task<List<NetworkToolHistoryEntry>> GetFilteredAsync(NetworkToolHistoryQuery query);
+
+    /// <summary>
     /// Gets a history entry by ID.
     /// </summary>
     Task<NetworkToolHistoryEntry?> GetByIdAsync(Guid id);
@@ -63,4 +73,35 @@ public interface INetworkToolHistoryService
         int durationMs,
         string? error = null,
         string? target = null);
+
+    /// <summary>
+    /// Updates tags and notes for an existing history entry.
+    /// </summary>
+    Task<NetworkToolHistoryEntry?> UpdateMetadataAsync(Guid id, IReadOnlyList<string> tags, string? notes);
 }
+
+/// <summary>
+/// Query parameters for network tool history.
+/// </summary>
+public sealed record NetworkToolHistoryQuery
+{
+    public int Page { get; init; } = 1;
+    public int PageSize { get; init; } = 50;
+    public IReadOnlyList<string>? ToolTypes { get; init; }
+    public bool? Success { get; init; }
+    public string? Search { get; init; }
+    public DateTime? FromUtc { get; init; }
+    public DateTime? ToUtc { get; init; }
+    public string SortBy { get; init; } = "timestamp";
+    public string SortDirection { get; init; } = "desc";
+}
+
+/// <summary>
+/// Result payload for paged history query.
+/// </summary>
+public sealed record NetworkToolHistoryQueryResult(
+    IReadOnlyList<NetworkToolHistoryEntry> Items,
+    int TotalCount,
+    int Page,
+    int PageSize
+);
