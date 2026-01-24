@@ -410,26 +410,25 @@ public class NetworkHub : Hub
             DurationSeconds = scanDurationSeconds
         });
 
-        var result = await _discovery.DiscoverAllAsync(scanDurationSeconds);
-
-        // Notify each device found
-        foreach (var device in result.MdnsDevices)
-        {
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("MdnsDeviceFound", new MdnsDeviceFoundEvent
+        Task SendMdnsAsync(MdnsDiscoveredDevice device)
+            => Clients.Group(GetScanGroup(scanId)).SendAsync("MdnsDeviceFound", new MdnsDeviceFoundEvent
             {
                 ScanId = scanId,
                 Device = device
             });
-        }
 
-        foreach (var device in result.UpnpDevices)
-        {
-            await Clients.Group(GetScanGroup(scanId)).SendAsync("UpnpDeviceFound", new UpnpDeviceFoundEvent
+        Task SendUpnpAsync(UpnpDiscoveredDevice device)
+            => Clients.Group(GetScanGroup(scanId)).SendAsync("UpnpDeviceFound", new UpnpDeviceFoundEvent
             {
                 ScanId = scanId,
                 Device = device
             });
-        }
+
+        var result = await _discovery.DiscoverAllAsync(
+            scanDurationSeconds,
+            onMdnsDeviceFound: SendMdnsAsync,
+            onUpnpDeviceFound: SendUpnpAsync,
+            ct: Context.ConnectionAborted);
 
         await Clients.Group(GetScanGroup(scanId)).SendAsync("DiscoveryCompleted", result);
 

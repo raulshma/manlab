@@ -24,7 +24,11 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
     }
 
     /// <inheritdoc />
-    public async Task<DiscoveryScanResult> DiscoverAllAsync(int scanDurationSeconds = 5, CancellationToken ct = default)
+    public async Task<DiscoveryScanResult> DiscoverAllAsync(
+        int scanDurationSeconds = 5,
+        Func<MdnsDiscoveredDevice, Task>? onMdnsDeviceFound = null,
+        Func<UpnpDiscoveredDevice, Task>? onUpnpDeviceFound = null,
+        CancellationToken ct = default)
     {
         scanDurationSeconds = Math.Clamp(scanDurationSeconds, 1, 30);
         var startedAt = DateTime.UtcNow;
@@ -32,8 +36,8 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         _logger.LogInformation("Starting combined mDNS/UPnP discovery scan for {Duration}s", scanDurationSeconds);
 
         // Run both discovery methods in parallel
-        var mdnsTask = DiscoverMdnsAsync(null, scanDurationSeconds, ct);
-        var upnpTask = DiscoverUpnpAsync(null, scanDurationSeconds, ct);
+        var mdnsTask = DiscoverMdnsInternalAsync(null, scanDurationSeconds, onMdnsDeviceFound, ct);
+        var upnpTask = DiscoverUpnpInternalAsync(null, scanDurationSeconds, onUpnpDeviceFound, ct);
 
         await Task.WhenAll(mdnsTask, upnpTask);
 
@@ -54,10 +58,17 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
     }
 
     /// <inheritdoc />
-    public async Task<List<MdnsDiscoveredDevice>> DiscoverMdnsAsync(
+    public Task<List<MdnsDiscoveredDevice>> DiscoverMdnsAsync(
         string[]? serviceTypes = null,
         int scanDurationSeconds = 5,
         CancellationToken ct = default)
+        => DiscoverMdnsInternalAsync(serviceTypes, scanDurationSeconds, onDeviceFound: null, ct);
+
+    private async Task<List<MdnsDiscoveredDevice>> DiscoverMdnsInternalAsync(
+        string[]? serviceTypes,
+        int scanDurationSeconds,
+        Func<MdnsDiscoveredDevice, Task>? onDeviceFound,
+        CancellationToken ct)
     {
         scanDurationSeconds = Math.Clamp(scanDurationSeconds, 1, 30);
         serviceTypes ??= MdnsServiceTypes.CommonTypes;
@@ -97,7 +108,10 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                         DiscoveredAt = DateTime.UtcNow
                     };
 
-                    discovered.TryAdd(key, device);
+                    if (discovered.TryAdd(key, device))
+                    {
+                        _ = SafeInvokeAsync(onDeviceFound, device, "mDNS device");
+                    }
                     
                     _logger.LogDebug(
                         "mDNS: Discovered {Name} ({Type}) at {Host}:{Port}",
@@ -157,10 +171,17 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
     }
 
     /// <inheritdoc />
-    public async Task<List<UpnpDiscoveredDevice>> DiscoverUpnpAsync(
+    public Task<List<UpnpDiscoveredDevice>> DiscoverUpnpAsync(
         string? searchTarget = null,
         int scanDurationSeconds = 5,
         CancellationToken ct = default)
+        => DiscoverUpnpInternalAsync(searchTarget, scanDurationSeconds, onDeviceFound: null, ct);
+
+    private async Task<List<UpnpDiscoveredDevice>> DiscoverUpnpInternalAsync(
+        string? searchTarget,
+        int scanDurationSeconds,
+        Func<UpnpDiscoveredDevice, Task>? onDeviceFound,
+        CancellationToken ct)
     {
         scanDurationSeconds = Math.Clamp(scanDurationSeconds, 1, 30);
         searchTarget ??= "ssdp:all";
@@ -184,7 +205,10 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                     var device = await CreateUpnpDeviceAsync(e.DiscoveredDevice, cts.Token);
                     if (device != null)
                     {
-                        discovered.TryAdd(device.Usn, device);
+                        if (discovered.TryAdd(device.Usn, device))
+                        {
+                            _ = SafeInvokeAsync(onDeviceFound, device, "UPnP device");
+                        }
                         
                         _logger.LogDebug(
                             "UPnP: Discovered {Name} ({Type}) at {Location}",
@@ -213,7 +237,10 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                     var upnpDevice = await CreateUpnpDeviceAsync(device, cts.Token);
                     if (upnpDevice != null)
                     {
-                        discovered.TryAdd(upnpDevice.Usn, upnpDevice);
+                        if (discovered.TryAdd(upnpDevice.Usn, upnpDevice))
+                        {
+                            _ = SafeInvokeAsync(onDeviceFound, upnpDevice, "UPnP device");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -231,6 +258,28 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
 
         _logger.LogDebug("UPnP discovery completed: {Count} devices found", discovered.Count);
         return discovered.Values.ToList();
+    }
+
+    private Task SafeInvokeAsync<T>(Func<T, Task>? callback, T device, string label)
+    {
+        if (callback == null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeSafeAsync(callback, device, label);
+    }
+
+    private async Task InvokeSafeAsync<T>(Func<T, Task> callback, T device, string label)
+    {
+        try
+        {
+            await callback(device);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to send {Label} update", label);
+        }
     }
 
     /// <summary>

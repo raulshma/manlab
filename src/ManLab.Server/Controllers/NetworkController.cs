@@ -1973,7 +1973,7 @@ public class NetworkController : ControllerBase
 
         try
         {
-            var result = await _discovery.DiscoverAllAsync(scanDuration, ct);
+            var result = await _discovery.DiscoverAllAsync(scanDuration, ct: ct);
 
             _audit.TryEnqueue(AuditEventFactory.CreateHttp(
                 kind: "activity",

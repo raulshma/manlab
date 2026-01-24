@@ -9,9 +9,15 @@ public interface IDeviceDiscoveryService
     /// Discovers devices on the local network using both mDNS and UPnP/SSDP.
     /// </summary>
     /// <param name="scanDurationSeconds">How long to listen for device announcements (default: 5 seconds).</param>
+    /// <param name="onMdnsDeviceFound">Optional callback invoked when an mDNS device is found.</param>
+    /// <param name="onUpnpDeviceFound">Optional callback invoked when a UPnP device is found.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Discovery scan result containing all discovered devices.</returns>
-    Task<DiscoveryScanResult> DiscoverAllAsync(int scanDurationSeconds = 5, CancellationToken ct = default);
+    Task<DiscoveryScanResult> DiscoverAllAsync(
+        int scanDurationSeconds = 5,
+        Func<MdnsDiscoveredDevice, Task>? onMdnsDeviceFound = null,
+        Func<UpnpDiscoveredDevice, Task>? onUpnpDeviceFound = null,
+        CancellationToken ct = default);
     
     /// <summary>
     /// Discovers devices via mDNS (Multicast DNS / Bonjour / Avahi).

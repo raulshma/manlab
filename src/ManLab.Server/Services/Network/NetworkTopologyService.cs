@@ -38,7 +38,7 @@ public sealed class NetworkTopologyService : INetworkTopologyService
         {
             try
             {
-                discovery = await _discovery.DiscoverAllAsync(discoveryDuration, ct);
+                discovery = await _discovery.DiscoverAllAsync(discoveryDuration, ct: ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

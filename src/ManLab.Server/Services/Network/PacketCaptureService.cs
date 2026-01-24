@@ -18,6 +18,8 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
     private long _nextId;
     private long _droppedCount;
     private string? _error;
+    private bool _pcapUnavailable;
+    private bool _pcapUnavailableLogged;
     private string? _deviceName;
     private string? _filter;
     private bool _isCapturing;
@@ -62,6 +64,11 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
     {
         try
         {
+            if (!_options.Enabled)
+            {
+                return [];
+            }
+
             var devices = CaptureDeviceList.Instance;
             return devices
                 .Select(device => new PacketCaptureDeviceInfo
@@ -71,6 +78,11 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
                     IsLoopback = device is LibPcapLiveDevice liveDevice && liveDevice.Loopback
                 })
                 .ToList();
+        }
+        catch (DllNotFoundException ex)
+        {
+            SetPcapUnavailable(ex);
+            return [];
         }
         catch (Exception ex)
         {
@@ -110,6 +122,11 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
     public async Task<PacketCaptureStatus> StartCaptureAsync(PacketCaptureStartRequest request, CancellationToken ct)
     {
         if (!_options.Enabled)
+        {
+            return GetStatus();
+        }
+
+        if (IsPcapUnavailable())
         {
             return GetStatus();
         }
@@ -236,6 +253,11 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
 
             return devices[0];
         }
+        catch (DllNotFoundException ex)
+        {
+            SetPcapUnavailable(ex);
+            return null;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to resolve capture device");
@@ -245,6 +267,31 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
             }
             return null;
         }
+    }
+
+    private bool IsPcapUnavailable()
+    {
+        lock (_gate)
+        {
+            return _pcapUnavailable;
+        }
+    }
+
+    private void SetPcapUnavailable(Exception ex)
+    {
+        lock (_gate)
+        {
+            _pcapUnavailable = true;
+            _error = "Packet capture unavailable. Install Npcap (WinPcap-compatible) and restart the server.";
+        }
+
+        if (_pcapUnavailableLogged)
+        {
+            return;
+        }
+
+        _pcapUnavailableLogged = true;
+        _logger.LogWarning(ex, "Packet capture unavailable: missing native capture library");
     }
 
     private void HandlePacket(PacketCapture capture)
