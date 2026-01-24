@@ -18,6 +18,7 @@ import {
   Globe,
   ShieldCheck,
   RefreshCw,
+  Loader2,
   Power,
   Gauge,
   Calculator,
@@ -75,6 +76,7 @@ import {
   subscribeRealtimePreference,
 } from "@/lib/network-preferences";
 import { NetworkToolsProvider, type NetworkToolTab } from "@/contexts/NetworkToolsContext";
+import { useNetworkSettingsSync } from "@/hooks/useNetworkSettingsSync";
 import { cn } from "@/lib/utils";
 
 // Tool Definitions
@@ -169,6 +171,8 @@ function ConnectionIndicator({
 }
 
 export function NetworkScannerPage() {
+  const { isReady: settingsReady } = useNetworkSettingsSync();
+
   const getStoredTab = (): NetworkToolTab => {
     if (typeof window === "undefined") return "ping";
     const stored = localStorage.getItem(ACTIVE_TAB_KEY);
@@ -284,6 +288,21 @@ export function NetworkScannerPage() {
     if (typeof window === "undefined") return;
     localStorage.setItem(ACTIVE_TAB_KEY, activeTab);
   }, [activeTab]);
+
+  if (!settingsReady) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Card className="w-full max-w-md">
+          <CardContent className="flex items-center gap-3 py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <div className="text-sm text-muted-foreground">
+              Loading network settings...
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
 
   return (

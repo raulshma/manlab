@@ -182,6 +182,10 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
     if (chargeForce?.strength) {
       chargeForce.strength(-140);
     }
+    const linkForce = graphRef.current.d3Force("link");
+    if (linkForce && "distance" in linkForce) {
+      (linkForce as { distance: (value: number | ((link: unknown) => number)) => void }).distance(75);
+    }
   }, [hosts]);
 
   // Node click handler
@@ -491,7 +495,6 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                 onNodeClick={handleNodeClick}
                 linkColor={() => "rgba(255,255,255,0.15)"}
                 linkWidth={1}
-                linkDistance={() => 75}
                 d3AlphaDecay={0.02}
                 d3VelocityDecay={0.3}
                 cooldownTicks={100}

@@ -5,7 +5,9 @@
  * and notification preferences.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useCallback, useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useForm, useStore } from "@tanstack/react-form";
 import {
   Network,
   RotateCcw,
@@ -46,309 +48,105 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { toast } from "sonner";
+import { api } from "@/api";
 import {
-  isRealtimeEnabled,
-  isNotificationsEnabled,
-  setRealtimeEnabled,
-  setNotificationsEnabled,
   subscribeRealtimePreference,
   subscribeNotificationPreference,
 } from "@/lib/network-preferences";
-
-// ============================================================================
-// Storage Keys (matching those used in individual tool components)
-// ============================================================================
-
-const STORAGE_KEYS = {
-  // Ping Tool
-  pingHost: "manlab:network:ping-host",
-  pingTimeout: "manlab:network:ping-timeout",
-  // Subnet Scanner
-  lastSubnet: "manlab:network:last-subnet",
-  subnetConcurrency: "manlab:network:subnet-concurrency",
-  subnetTimeout: "manlab:network:subnet-timeout",
-  // Port Scanner
-  portHost: "manlab:network:port-host",
-  portConcurrency: "manlab:network:port-concurrency",
-  portTimeout: "manlab:network:port-timeout",
-  // Traceroute Tool
-  tracerouteHost: "manlab:network:traceroute-host",
-  tracerouteMaxHops: "manlab:network:traceroute-max-hops",
-  tracerouteTimeout: "manlab:network:traceroute-timeout",
-  // Device Discovery
-  discoveryDuration: "manlab:network:discovery-duration",
-  discoveryMode: "manlab:network:discovery-mode",
-  // WiFi Scanner
-  wifiAdapter: "manlab:network:wifi-adapter",
-  wifiBand: "manlab:network:wifi-band",
-  wifiSecurity: "manlab:network:wifi-security",
-  // Wake-on-LAN
-  wolMac: "manlab:network:wol-mac",
-  wolBroadcast: "manlab:network:wol-broadcast",
-  wolPort: "manlab:network:wol-port",
-  // Speed Test
-  speedtestDownloadMb: "manlab:network:speedtest-download-mb",
-  speedtestUploadMb: "manlab:network:speedtest-upload-mb",
-  speedtestLatencySamples: "manlab:network:speedtest-latency-samples",
-  // Topology
-  topologyCidr: "manlab:network:topology:cidr",
-  topologyConcurrency: "manlab:network:topology:concurrency",
-  topologyTimeout: "manlab:network:topology:timeout",
-  topologyDiscovery: "manlab:network:topology:discovery",
-  topologyDiscoveryDuration: "manlab:network:topology:discovery-duration",
-} as const;
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface NetworkPreferences {
-  // Global preferences
-  realtimeEnabled: boolean;
-  notificationsEnabled: boolean;
-  // Ping defaults
-  pingHost: string;
-  pingTimeout: number;
-  // Subnet defaults
-  lastSubnet: string;
-  subnetConcurrency: number;
-  subnetTimeout: number;
-  // Port scan defaults
-  portHost: string;
-  portConcurrency: number;
-  portTimeout: number;
-  // Traceroute defaults
-  tracerouteHost: string;
-  tracerouteMaxHops: number;
-  tracerouteTimeout: number;
-  // Discovery defaults
-  discoveryDuration: number;
-  discoveryMode: "both" | "mdns" | "upnp";
-  // WiFi defaults
-  wifiAdapter: string;
-  wifiBand: "all" | "2.4" | "5" | "6";
-  wifiSecurity: "all" | "secured" | "open";
-  // Wake-on-LAN defaults
-  wolMac: string;
-  wolBroadcast: string;
-  wolPort: number;
-  // Speed test defaults
-  speedtestDownloadMb: number;
-  speedtestUploadMb: number;
-  speedtestLatencySamples: number;
-  // Topology defaults
-  topologyCidr: string;
-  topologyConcurrency: number;
-  topologyTimeout: number;
-  topologyIncludeDiscovery: boolean;
-  topologyDiscoveryDuration: number;
-}
-
-const DEFAULT_PREFERENCES: NetworkPreferences = {
-  realtimeEnabled: true,
-  notificationsEnabled: true,
-  pingHost: "",
-  pingTimeout: 1000,
-  lastSubnet: "",
-  subnetConcurrency: 100,
-  subnetTimeout: 500,
-  portHost: "",
-  portConcurrency: 50,
-  portTimeout: 2000,
-  tracerouteHost: "",
-  tracerouteMaxHops: 30,
-  tracerouteTimeout: 1000,
-  discoveryDuration: 10,
-  discoveryMode: "both",
-  wifiAdapter: "",
-  wifiBand: "all",
-  wifiSecurity: "all",
-  wolMac: "",
-  wolBroadcast: "",
-  wolPort: 9,
-  speedtestDownloadMb: 10,
-  speedtestUploadMb: 5,
-  speedtestLatencySamples: 3,
-  topologyCidr: "",
-  topologyConcurrency: 120,
-  topologyTimeout: 750,
-  topologyIncludeDiscovery: true,
-  topologyDiscoveryDuration: 6,
-};
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-function getStoredNumber(key: string, fallback: number): number {
-  if (typeof window === "undefined") return fallback;
-  const raw = localStorage.getItem(key);
-  const parsed = raw ? Number(raw) : NaN;
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function getStoredString(key: string, fallback: string): string {
-  if (typeof window === "undefined") return fallback;
-  return localStorage.getItem(key) ?? fallback;
-}
-
-function getStoredBoolean(key: string, fallback: boolean): boolean {
-  if (typeof window === "undefined") return fallback;
-  const raw = localStorage.getItem(key);
-  if (raw === null) return fallback;
-  return raw === "true";
-}
-
-function loadPreferences(): NetworkPreferences {
-  return {
-    realtimeEnabled: isRealtimeEnabled(),
-    notificationsEnabled: isNotificationsEnabled(),
-    pingHost: getStoredString(STORAGE_KEYS.pingHost, DEFAULT_PREFERENCES.pingHost),
-    pingTimeout: getStoredNumber(STORAGE_KEYS.pingTimeout, DEFAULT_PREFERENCES.pingTimeout),
-    lastSubnet: getStoredString(STORAGE_KEYS.lastSubnet, DEFAULT_PREFERENCES.lastSubnet),
-    subnetConcurrency: getStoredNumber(STORAGE_KEYS.subnetConcurrency, DEFAULT_PREFERENCES.subnetConcurrency),
-    subnetTimeout: getStoredNumber(STORAGE_KEYS.subnetTimeout, DEFAULT_PREFERENCES.subnetTimeout),
-    portHost: getStoredString(STORAGE_KEYS.portHost, DEFAULT_PREFERENCES.portHost),
-    portConcurrency: getStoredNumber(STORAGE_KEYS.portConcurrency, DEFAULT_PREFERENCES.portConcurrency),
-    portTimeout: getStoredNumber(STORAGE_KEYS.portTimeout, DEFAULT_PREFERENCES.portTimeout),
-    tracerouteHost: getStoredString(STORAGE_KEYS.tracerouteHost, DEFAULT_PREFERENCES.tracerouteHost),
-    tracerouteMaxHops: getStoredNumber(STORAGE_KEYS.tracerouteMaxHops, DEFAULT_PREFERENCES.tracerouteMaxHops),
-    tracerouteTimeout: getStoredNumber(STORAGE_KEYS.tracerouteTimeout, DEFAULT_PREFERENCES.tracerouteTimeout),
-    discoveryDuration: getStoredNumber(STORAGE_KEYS.discoveryDuration, DEFAULT_PREFERENCES.discoveryDuration),
-    discoveryMode: getStoredString(STORAGE_KEYS.discoveryMode, DEFAULT_PREFERENCES.discoveryMode) as NetworkPreferences["discoveryMode"],
-    wifiAdapter: getStoredString(STORAGE_KEYS.wifiAdapter, DEFAULT_PREFERENCES.wifiAdapter),
-    wifiBand: getStoredString(STORAGE_KEYS.wifiBand, DEFAULT_PREFERENCES.wifiBand) as NetworkPreferences["wifiBand"],
-    wifiSecurity: getStoredString(STORAGE_KEYS.wifiSecurity, DEFAULT_PREFERENCES.wifiSecurity) as NetworkPreferences["wifiSecurity"],
-    wolMac: getStoredString(STORAGE_KEYS.wolMac, DEFAULT_PREFERENCES.wolMac),
-    wolBroadcast: getStoredString(STORAGE_KEYS.wolBroadcast, DEFAULT_PREFERENCES.wolBroadcast),
-    wolPort: getStoredNumber(STORAGE_KEYS.wolPort, DEFAULT_PREFERENCES.wolPort),
-    speedtestDownloadMb: getStoredNumber(STORAGE_KEYS.speedtestDownloadMb, DEFAULT_PREFERENCES.speedtestDownloadMb),
-    speedtestUploadMb: getStoredNumber(STORAGE_KEYS.speedtestUploadMb, DEFAULT_PREFERENCES.speedtestUploadMb),
-    speedtestLatencySamples: getStoredNumber(STORAGE_KEYS.speedtestLatencySamples, DEFAULT_PREFERENCES.speedtestLatencySamples),
-    topologyCidr: getStoredString(STORAGE_KEYS.topologyCidr, DEFAULT_PREFERENCES.topologyCidr),
-    topologyConcurrency: getStoredNumber(STORAGE_KEYS.topologyConcurrency, DEFAULT_PREFERENCES.topologyConcurrency),
-    topologyTimeout: getStoredNumber(STORAGE_KEYS.topologyTimeout, DEFAULT_PREFERENCES.topologyTimeout),
-    topologyIncludeDiscovery: getStoredBoolean(STORAGE_KEYS.topologyDiscovery, DEFAULT_PREFERENCES.topologyIncludeDiscovery),
-    topologyDiscoveryDuration: getStoredNumber(STORAGE_KEYS.topologyDiscoveryDuration, DEFAULT_PREFERENCES.topologyDiscoveryDuration),
-  };
-}
-
-function savePreferences(prefs: NetworkPreferences): void {
-  if (typeof window === "undefined") return;
-  
-  // Save global preferences via the preference module (triggers events)
-  setRealtimeEnabled(prefs.realtimeEnabled);
-  setNotificationsEnabled(prefs.notificationsEnabled);
-  
-  // Save tool-specific preferences to localStorage
-  localStorage.setItem(STORAGE_KEYS.pingHost, prefs.pingHost);
-  localStorage.setItem(STORAGE_KEYS.pingTimeout, String(prefs.pingTimeout));
-  localStorage.setItem(STORAGE_KEYS.lastSubnet, prefs.lastSubnet);
-  localStorage.setItem(STORAGE_KEYS.subnetConcurrency, String(prefs.subnetConcurrency));
-  localStorage.setItem(STORAGE_KEYS.subnetTimeout, String(prefs.subnetTimeout));
-  localStorage.setItem(STORAGE_KEYS.portHost, prefs.portHost);
-  localStorage.setItem(STORAGE_KEYS.portConcurrency, String(prefs.portConcurrency));
-  localStorage.setItem(STORAGE_KEYS.portTimeout, String(prefs.portTimeout));
-  localStorage.setItem(STORAGE_KEYS.tracerouteHost, prefs.tracerouteHost);
-  localStorage.setItem(STORAGE_KEYS.tracerouteMaxHops, String(prefs.tracerouteMaxHops));
-  localStorage.setItem(STORAGE_KEYS.tracerouteTimeout, String(prefs.tracerouteTimeout));
-  localStorage.setItem(STORAGE_KEYS.discoveryDuration, String(prefs.discoveryDuration));
-  localStorage.setItem(STORAGE_KEYS.discoveryMode, prefs.discoveryMode);
-  localStorage.setItem(STORAGE_KEYS.wifiAdapter, prefs.wifiAdapter);
-  localStorage.setItem(STORAGE_KEYS.wifiBand, prefs.wifiBand);
-  localStorage.setItem(STORAGE_KEYS.wifiSecurity, prefs.wifiSecurity);
-  localStorage.setItem(STORAGE_KEYS.wolMac, prefs.wolMac);
-  localStorage.setItem(STORAGE_KEYS.wolBroadcast, prefs.wolBroadcast);
-  localStorage.setItem(STORAGE_KEYS.wolPort, String(prefs.wolPort));
-  localStorage.setItem(STORAGE_KEYS.speedtestDownloadMb, String(prefs.speedtestDownloadMb));
-  localStorage.setItem(STORAGE_KEYS.speedtestUploadMb, String(prefs.speedtestUploadMb));
-  localStorage.setItem(STORAGE_KEYS.speedtestLatencySamples, String(prefs.speedtestLatencySamples));
-  localStorage.setItem(STORAGE_KEYS.topologyCidr, prefs.topologyCidr);
-  localStorage.setItem(STORAGE_KEYS.topologyConcurrency, String(prefs.topologyConcurrency));
-  localStorage.setItem(STORAGE_KEYS.topologyTimeout, String(prefs.topologyTimeout));
-  localStorage.setItem(STORAGE_KEYS.topologyDiscovery, String(prefs.topologyIncludeDiscovery));
-  localStorage.setItem(STORAGE_KEYS.topologyDiscoveryDuration, String(prefs.topologyDiscoveryDuration));
-}
-
-function clearAllNetworkPreferences(): void {
-  if (typeof window === "undefined") return;
-  
-  // Clear all network-related localStorage keys
-  Object.values(STORAGE_KEYS).forEach((key) => {
-    localStorage.removeItem(key);
-  });
-  
-  // Also clear the realtime and notification keys
-  localStorage.removeItem("manlab:network:realtime");
-  localStorage.removeItem("manlab:network:notifications");
-}
+import {
+  DEFAULT_NETWORK_PREFERENCES,
+  applyNetworkSettingsToStorage,
+  buildNetworkSettingsPayload,
+  loadNetworkPreferences,
+  saveNetworkPreferences,
+  type NetworkPreferences,
+  type SystemSetting,
+} from "@/lib/network-settings";
 
 // ============================================================================
 // Component
 // ============================================================================
 
 export function NetworkSettings() {
-  const [prefs, setPrefs] = useState<NetworkPreferences>(() => loadPreferences());
-  const [hasChanges, setHasChanges] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const queryClient = useQueryClient();
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: async () => {
+      const response = await api.get<SystemSetting[]>("/api/settings");
+      return response.data;
+    },
+  });
+
+  const serverValues = useMemo<NetworkPreferences>(() => {
+    return loadNetworkPreferences(settings);
+  }, [settings]);
+
+  const mutation = useMutation({
+    mutationFn: async (newSettings: SystemSetting[]) => {
+      await api.post("/api/settings", newSettings);
+    },
+  });
+
+  const form = useForm({
+    defaultValues: serverValues,
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(buildNetworkSettingsPayload(value));
+        queryClient.invalidateQueries({ queryKey: ["settings"] });
+        saveNetworkPreferences(value);
+        toast.success("Network settings saved successfully");
+      } catch (error) {
+        toast.error("Failed to save settings: " + (error as Error).message);
+      }
+    },
+  });
+
+  const values = useStore(form.store, (state) => state.values);
+  const hasChanges = useMemo(() => JSON.stringify(values) !== JSON.stringify(serverValues), [values, serverValues]);
+  const isSaving = mutation.isPending;
 
   // Subscribe to real-time preference changes
   useEffect(() => {
     const unsubscribeRealtime = subscribeRealtimePreference((enabled) => {
-      setPrefs((prev) => ({ ...prev, realtimeEnabled: enabled }));
+      form.setFieldValue("realtimeEnabled", enabled);
     });
     const unsubscribeNotifications = subscribeNotificationPreference((enabled) => {
-      setPrefs((prev) => ({ ...prev, notificationsEnabled: enabled }));
+      form.setFieldValue("notificationsEnabled", enabled);
     });
     return () => {
       unsubscribeRealtime();
       unsubscribeNotifications();
     };
-  }, []);
+  }, [form]);
 
-  // Track changes
   useEffect(() => {
-    const current = loadPreferences();
-    const hasChanged = JSON.stringify(prefs) !== JSON.stringify(current);
-    setHasChanges(hasChanged);
-  }, [prefs]);
-
-  const updatePref = useCallback(<K extends keyof NetworkPreferences>(
-    key: K,
-    value: NetworkPreferences[K]
-  ) => {
-    setPrefs((prev) => ({ ...prev, [key]: value }));
-    setHasChanges(true);
-  }, []);
+    if (!settings) return;
+    form.reset(serverValues);
+    applyNetworkSettingsToStorage(settings);
+  }, [form, settings, serverValues]);
 
   const handleSave = useCallback(() => {
-    setIsSaving(true);
-    try {
-      savePreferences(prefs);
-      setHasChanges(false);
-      toast.success("Network settings saved successfully");
-    } catch (error) {
-      console.error("Failed to save preferences:", error);
-      toast.error("Failed to save settings");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [prefs]);
+    form.handleSubmit();
+  }, [form]);
 
   const handleReset = useCallback(() => {
     if (!confirm("Reset all network settings to defaults? This cannot be undone.")) {
       return;
     }
-    
-    clearAllNetworkPreferences();
-    setPrefs(DEFAULT_PREFERENCES);
-    
-    // Apply the defaults to the preference system
-    setRealtimeEnabled(DEFAULT_PREFERENCES.realtimeEnabled);
-    setNotificationsEnabled(DEFAULT_PREFERENCES.notificationsEnabled);
-    
-    toast.success("Network settings reset to defaults");
-  }, []);
+
+    const defaults = DEFAULT_NETWORK_PREFERENCES;
+    mutation.mutate(buildNetworkSettingsPayload(defaults), {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ["settings"] });
+        form.reset(defaults);
+        saveNetworkPreferences(defaults);
+        toast.success("Network settings reset to defaults");
+      },
+      onError: (error) => {
+        toast.error("Failed to reset settings: " + error.message);
+      },
+    });
+  }, [form, mutation, queryClient]);
 
   return (
     <Card>
@@ -379,11 +177,15 @@ export function NetworkSettings() {
                   Enable live scan progress via WebSocket
                 </p>
               </div>
-              <Switch
-                id="realtime-switch"
-                checked={prefs.realtimeEnabled}
-                onCheckedChange={(checked) => updatePref("realtimeEnabled", checked)}
-              />
+              <form.Field name="realtimeEnabled">
+                {(field) => (
+                  <Switch
+                    id="realtime-switch"
+                    checked={field.state.value}
+                    onCheckedChange={field.handleChange}
+                  />
+                )}
+              </form.Field>
             </div>
             
             <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
@@ -396,11 +198,15 @@ export function NetworkSettings() {
                   Show toast notifications for scan events
                 </p>
               </div>
-              <Switch
-                id="notifications-switch"
-                checked={prefs.notificationsEnabled}
-                onCheckedChange={(checked) => updatePref("notificationsEnabled", checked)}
-              />
+              <form.Field name="notificationsEnabled">
+                {(field) => (
+                  <Switch
+                    id="notifications-switch"
+                    checked={field.state.value}
+                    onCheckedChange={field.handleChange}
+                  />
+                )}
+              </form.Field>
             </div>
           </div>
         </div>
@@ -423,11 +229,15 @@ export function NetworkSettings() {
                   <Label className="flex items-center gap-1.5">
                     Default Host
                   </Label>
-                  <Input
-                    value={prefs.pingHost}
-                    onChange={(e) => updatePref("pingHost", e.target.value)}
-                    placeholder="e.g., 8.8.8.8 or example.com"
-                  />
+                  <form.Field name="pingHost">
+                    {(field) => (
+                      <Input
+                        value={field.state.value}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        placeholder="e.g., 8.8.8.8 or example.com"
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Pre-fill the ping target
                   </p>
@@ -438,15 +248,25 @@ export function NetworkSettings() {
                       <Clock className="h-3.5 w-3.5" />
                       Default Timeout
                     </Label>
-                    <span className="text-sm font-medium">{prefs.pingTimeout}ms</span>
+                    <form.Subscribe
+                      selector={(state) => state.values.pingTimeout}
+                    >
+                      {(pingTimeout) => (
+                        <span className="text-sm font-medium">{pingTimeout}ms</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.pingTimeout]}
-                    onValueChange={(v) => updatePref("pingTimeout", Array.isArray(v) ? v[0] : v)}
-                    min={100}
-                    max={5000}
-                    step={100}
-                  />
+                  <form.Field name="pingTimeout">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={100}
+                        max={5000}
+                        step={100}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     How long to wait for a ping response (100ms - 5000ms)
                   </p>
@@ -470,11 +290,15 @@ export function NetworkSettings() {
                     <Network className="h-3.5 w-3.5" />
                     Default Subnet
                   </Label>
-                  <Input
-                    value={prefs.lastSubnet}
-                    onChange={(e) => updatePref("lastSubnet", e.target.value)}
-                    placeholder="e.g., 192.168.1.0/24"
-                  />
+                  <form.Field name="lastSubnet">
+                    {(field) => (
+                      <Input
+                        value={field.state.value}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        placeholder="e.g., 192.168.1.0/24"
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Remember the last scanned subnet
                   </p>
@@ -486,15 +310,23 @@ export function NetworkSettings() {
                       <Zap className="h-3.5 w-3.5" />
                       Concurrency
                     </Label>
-                    <span className="text-sm font-medium">{prefs.subnetConcurrency}</span>
+                    <form.Subscribe selector={(state) => state.values.subnetConcurrency}>
+                      {(subnetConcurrency) => (
+                        <span className="text-sm font-medium">{subnetConcurrency}</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.subnetConcurrency]}
-                    onValueChange={(v) => updatePref("subnetConcurrency", Array.isArray(v) ? v[0] : v)}
-                    min={10}
-                    max={500}
-                    step={10}
-                  />
+                  <form.Field name="subnetConcurrency">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={10}
+                        max={500}
+                        step={10}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Number of parallel ping requests (10 - 500)
                   </p>
@@ -506,15 +338,23 @@ export function NetworkSettings() {
                       <Clock className="h-3.5 w-3.5" />
                       Timeout
                     </Label>
-                    <span className="text-sm font-medium">{prefs.subnetTimeout}ms</span>
+                    <form.Subscribe selector={(state) => state.values.subnetTimeout}>
+                      {(subnetTimeout) => (
+                        <span className="text-sm font-medium">{subnetTimeout}ms</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.subnetTimeout]}
-                    onValueChange={(v) => updatePref("subnetTimeout", Array.isArray(v) ? v[0] : v)}
-                    min={100}
-                    max={2000}
-                    step={100}
-                  />
+                  <form.Field name="subnetTimeout">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={100}
+                        max={2000}
+                        step={100}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Per-host timeout for subnet scans (100ms - 2000ms)
                   </p>
@@ -537,11 +377,15 @@ export function NetworkSettings() {
                   <Label className="flex items-center gap-1.5">
                     Default Host
                   </Label>
-                  <Input
-                    value={prefs.portHost}
-                    onChange={(e) => updatePref("portHost", e.target.value)}
-                    placeholder="e.g., 192.168.1.10"
-                  />
+                  <form.Field name="portHost">
+                    {(field) => (
+                      <Input
+                        value={field.state.value}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        placeholder="e.g., 192.168.1.10"
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Pre-fill the scan target
                   </p>
@@ -552,15 +396,23 @@ export function NetworkSettings() {
                       <Zap className="h-3.5 w-3.5" />
                       Concurrency
                     </Label>
-                    <span className="text-sm font-medium">{prefs.portConcurrency}</span>
+                    <form.Subscribe selector={(state) => state.values.portConcurrency}>
+                      {(portConcurrency) => (
+                        <span className="text-sm font-medium">{portConcurrency}</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.portConcurrency]}
-                    onValueChange={(v) => updatePref("portConcurrency", Array.isArray(v) ? v[0] : v)}
-                    min={10}
-                    max={200}
-                    step={10}
-                  />
+                  <form.Field name="portConcurrency">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={10}
+                        max={200}
+                        step={10}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Number of parallel port connections (10 - 200)
                   </p>
@@ -572,15 +424,23 @@ export function NetworkSettings() {
                       <Clock className="h-3.5 w-3.5" />
                       Timeout
                     </Label>
-                    <span className="text-sm font-medium">{prefs.portTimeout}ms</span>
+                    <form.Subscribe selector={(state) => state.values.portTimeout}>
+                      {(portTimeout) => (
+                        <span className="text-sm font-medium">{portTimeout}ms</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.portTimeout]}
-                    onValueChange={(v) => updatePref("portTimeout", Array.isArray(v) ? v[0] : v)}
-                    min={500}
-                    max={10000}
-                    step={500}
-                  />
+                  <form.Field name="portTimeout">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={500}
+                        max={10000}
+                        step={500}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Connection timeout per port (500ms - 10000ms)
                   </p>
@@ -603,11 +463,15 @@ export function NetworkSettings() {
                   <Label className="flex items-center gap-1.5">
                     Default Host
                   </Label>
-                  <Input
-                    value={prefs.tracerouteHost}
-                    onChange={(e) => updatePref("tracerouteHost", e.target.value)}
-                    placeholder="e.g., 1.1.1.1"
-                  />
+                  <form.Field name="tracerouteHost">
+                    {(field) => (
+                      <Input
+                        value={field.state.value}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        placeholder="e.g., 1.1.1.1"
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Pre-fill the traceroute target
                   </p>
@@ -617,15 +481,23 @@ export function NetworkSettings() {
                     <Label className="flex items-center gap-1.5">
                       Max Hops
                     </Label>
-                    <span className="text-sm font-medium">{prefs.tracerouteMaxHops}</span>
+                    <form.Subscribe selector={(state) => state.values.tracerouteMaxHops}>
+                      {(tracerouteMaxHops) => (
+                        <span className="text-sm font-medium">{tracerouteMaxHops}</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.tracerouteMaxHops]}
-                    onValueChange={(v) => updatePref("tracerouteMaxHops", Array.isArray(v) ? v[0] : v)}
-                    min={5}
-                    max={64}
-                    step={1}
-                  />
+                  <form.Field name="tracerouteMaxHops">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={5}
+                        max={64}
+                        step={1}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Maximum number of network hops to trace (5 - 64)
                   </p>
@@ -637,15 +509,23 @@ export function NetworkSettings() {
                       <Clock className="h-3.5 w-3.5" />
                       Timeout
                     </Label>
-                    <span className="text-sm font-medium">{prefs.tracerouteTimeout}ms</span>
+                    <form.Subscribe selector={(state) => state.values.tracerouteTimeout}>
+                      {(tracerouteTimeout) => (
+                        <span className="text-sm font-medium">{tracerouteTimeout}ms</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.tracerouteTimeout]}
-                    onValueChange={(v) => updatePref("tracerouteTimeout", Array.isArray(v) ? v[0] : v)}
-                    min={500}
-                    max={5000}
-                    step={100}
-                  />
+                  <form.Field name="tracerouteTimeout">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={500}
+                        max={5000}
+                        step={100}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Timeout per hop (500ms - 5000ms)
                   </p>
@@ -668,19 +548,23 @@ export function NetworkSettings() {
                   <Label className="flex items-center gap-1.5">
                     Discovery Mode
                   </Label>
-                  <Select
-                    value={prefs.discoveryMode}
-                    onValueChange={(value) => updatePref("discoveryMode", value as NetworkPreferences["discoveryMode"])}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="both">mDNS + UPnP</SelectItem>
-                      <SelectItem value="mdns">mDNS Only</SelectItem>
-                      <SelectItem value="upnp">UPnP Only</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <form.Field name="discoveryMode">
+                    {(field) => (
+                      <Select
+                        value={field.state.value}
+                        onValueChange={(value) => field.handleChange(value as NetworkPreferences["discoveryMode"])}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="both">mDNS + UPnP</SelectItem>
+                          <SelectItem value="mdns">mDNS Only</SelectItem>
+                          <SelectItem value="upnp">UPnP Only</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Choose which protocols to listen for
                   </p>
@@ -691,15 +575,23 @@ export function NetworkSettings() {
                       <Clock className="h-3.5 w-3.5" />
                       Scan Duration
                     </Label>
-                    <span className="text-sm font-medium">{prefs.discoveryDuration}s</span>
+                    <form.Subscribe selector={(state) => state.values.discoveryDuration}>
+                      {(discoveryDuration) => (
+                        <span className="text-sm font-medium">{discoveryDuration}s</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.discoveryDuration]}
-                    onValueChange={(v) => updatePref("discoveryDuration", Array.isArray(v) ? v[0] : v)}
-                    min={1}
-                    max={30}
-                    step={1}
-                  />
+                  <form.Field name="discoveryDuration">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={1}
+                        max={30}
+                        step={1}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     How long to listen for mDNS/UPnP devices (1s - 30s)
                   </p>
@@ -722,11 +614,15 @@ export function NetworkSettings() {
                   <Label className="flex items-center gap-1.5">
                     Preferred Adapter
                   </Label>
-                  <Input
-                    value={prefs.wifiAdapter}
-                    onChange={(e) => updatePref("wifiAdapter", e.target.value)}
-                    placeholder="Adapter name (optional)"
-                  />
+                  <form.Field name="wifiAdapter">
+                    {(field) => (
+                      <Input
+                        value={field.state.value}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        placeholder="Adapter name (optional)"
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Used when multiple WiFi adapters are available
                   </p>
@@ -734,36 +630,44 @@ export function NetworkSettings() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Band Filter</Label>
-                    <Select
-                      value={prefs.wifiBand}
-                      onValueChange={(value) => updatePref("wifiBand", value as NetworkPreferences["wifiBand"])}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Bands</SelectItem>
-                        <SelectItem value="2.4">2.4 GHz</SelectItem>
-                        <SelectItem value="5">5 GHz</SelectItem>
-                        <SelectItem value="6">6 GHz</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <form.Field name="wifiBand">
+                      {(field) => (
+                        <Select
+                          value={field.state.value}
+                          onValueChange={(value) => field.handleChange(value as NetworkPreferences["wifiBand"])}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Bands</SelectItem>
+                            <SelectItem value="2.4">2.4 GHz</SelectItem>
+                            <SelectItem value="5">5 GHz</SelectItem>
+                            <SelectItem value="6">6 GHz</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </form.Field>
                   </div>
                   <div className="space-y-2">
                     <Label>Security Filter</Label>
-                    <Select
-                      value={prefs.wifiSecurity}
-                      onValueChange={(value) => updatePref("wifiSecurity", value as NetworkPreferences["wifiSecurity"])}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Networks</SelectItem>
-                        <SelectItem value="secured">Secured</SelectItem>
-                        <SelectItem value="open">Open</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <form.Field name="wifiSecurity">
+                      {(field) => (
+                        <Select
+                          value={field.state.value}
+                          onValueChange={(value) => field.handleChange(value as NetworkPreferences["wifiSecurity"])}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Networks</SelectItem>
+                            <SelectItem value="secured">Secured</SelectItem>
+                            <SelectItem value="open">Open</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </form.Field>
                   </div>
                 </div>
               </div>
@@ -782,33 +686,45 @@ export function NetworkSettings() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>Default MAC Address</Label>
-                  <Input
-                    value={prefs.wolMac}
-                    onChange={(e) => updatePref("wolMac", e.target.value)}
-                    placeholder="AA:BB:CC:DD:EE:FF"
-                  />
+                  <form.Field name="wolMac">
+                    {(field) => (
+                      <Input
+                        value={field.state.value}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        placeholder="AA:BB:CC:DD:EE:FF"
+                      />
+                    )}
+                  </form.Field>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Broadcast Address</Label>
-                    <Input
-                      value={prefs.wolBroadcast}
-                      onChange={(e) => updatePref("wolBroadcast", e.target.value)}
-                      placeholder="255.255.255.255"
-                    />
+                    <form.Field name="wolBroadcast">
+                      {(field) => (
+                        <Input
+                          value={field.state.value}
+                          onChange={(e) => field.handleChange(e.target.value)}
+                          placeholder="255.255.255.255"
+                        />
+                      )}
+                    </form.Field>
                   </div>
                   <div className="space-y-2">
                     <Label>Port</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={65535}
-                      value={prefs.wolPort}
-                      onChange={(e) => {
-                        const next = Number(e.target.value);
-                        updatePref("wolPort", Number.isFinite(next) ? next : DEFAULT_PREFERENCES.wolPort);
-                      }}
-                    />
+                    <form.Field name="wolPort">
+                      {(field) => (
+                        <Input
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={field.state.value}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            field.handleChange(Number.isFinite(next) ? next : DEFAULT_NETWORK_PREFERENCES.wolPort);
+                          }}
+                        />
+                      )}
+                    </form.Field>
                   </div>
                 </div>
               </div>
@@ -828,15 +744,23 @@ export function NetworkSettings() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Download Payload</Label>
-                    <span className="text-sm font-medium">{prefs.speedtestDownloadMb} MB</span>
+                    <form.Subscribe selector={(state) => state.values.speedtestDownloadMb}>
+                      {(speedtestDownloadMb) => (
+                        <span className="text-sm font-medium">{speedtestDownloadMb} MB</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.speedtestDownloadMb]}
-                    onValueChange={(v) => updatePref("speedtestDownloadMb", Array.isArray(v) ? v[0] : v)}
-                    min={1}
-                    max={100}
-                    step={1}
-                  />
+                  <form.Field name="speedtestDownloadMb">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={1}
+                        max={100}
+                        step={1}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Size of the download test payload
                   </p>
@@ -844,15 +768,23 @@ export function NetworkSettings() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Upload Payload</Label>
-                    <span className="text-sm font-medium">{prefs.speedtestUploadMb} MB</span>
+                    <form.Subscribe selector={(state) => state.values.speedtestUploadMb}>
+                      {(speedtestUploadMb) => (
+                        <span className="text-sm font-medium">{speedtestUploadMb} MB</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.speedtestUploadMb]}
-                    onValueChange={(v) => updatePref("speedtestUploadMb", Array.isArray(v) ? v[0] : v)}
-                    min={1}
-                    max={100}
-                    step={1}
-                  />
+                  <form.Field name="speedtestUploadMb">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={1}
+                        max={100}
+                        step={1}
+                      />
+                    )}
+                  </form.Field>
                   <p className="text-xs text-muted-foreground">
                     Size of the upload test payload
                   </p>
@@ -860,15 +792,23 @@ export function NetworkSettings() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Latency Samples</Label>
-                    <span className="text-sm font-medium">{prefs.speedtestLatencySamples}</span>
+                    <form.Subscribe selector={(state) => state.values.speedtestLatencySamples}>
+                      {(speedtestLatencySamples) => (
+                        <span className="text-sm font-medium">{speedtestLatencySamples}</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.speedtestLatencySamples]}
-                    onValueChange={(v) => updatePref("speedtestLatencySamples", Array.isArray(v) ? v[0] : v)}
-                    min={1}
-                    max={10}
-                    step={1}
-                  />
+                  <form.Field name="speedtestLatencySamples">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={1}
+                        max={10}
+                        step={1}
+                      />
+                    )}
+                  </form.Field>
                 </div>
               </div>
             </AccordionContent>
@@ -886,37 +826,57 @@ export function NetworkSettings() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>Default CIDR</Label>
-                  <Input
-                    value={prefs.topologyCidr}
-                    onChange={(e) => updatePref("topologyCidr", e.target.value)}
-                    placeholder="e.g., 192.168.0.0/24"
-                  />
+                  <form.Field name="topologyCidr">
+                    {(field) => (
+                      <Input
+                        value={field.state.value}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        placeholder="e.g., 192.168.0.0/24"
+                      />
+                    )}
+                  </form.Field>
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Concurrency</Label>
-                    <span className="text-sm font-medium">{prefs.topologyConcurrency}</span>
+                    <form.Subscribe selector={(state) => state.values.topologyConcurrency}>
+                      {(topologyConcurrency) => (
+                        <span className="text-sm font-medium">{topologyConcurrency}</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.topologyConcurrency]}
-                    onValueChange={(v) => updatePref("topologyConcurrency", Array.isArray(v) ? v[0] : v)}
-                    min={10}
-                    max={500}
-                    step={10}
-                  />
+                  <form.Field name="topologyConcurrency">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={10}
+                        max={500}
+                        step={10}
+                      />
+                    )}
+                  </form.Field>
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Timeout</Label>
-                    <span className="text-sm font-medium">{prefs.topologyTimeout}ms</span>
+                    <form.Subscribe selector={(state) => state.values.topologyTimeout}>
+                      {(topologyTimeout) => (
+                        <span className="text-sm font-medium">{topologyTimeout}ms</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.topologyTimeout]}
-                    onValueChange={(v) => updatePref("topologyTimeout", Array.isArray(v) ? v[0] : v)}
-                    min={200}
-                    max={2000}
-                    step={50}
-                  />
+                  <form.Field name="topologyTimeout">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={200}
+                        max={2000}
+                        step={50}
+                      />
+                    )}
+                  </form.Field>
                 </div>
                 <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
                   <div className="space-y-0.5">
@@ -927,23 +887,35 @@ export function NetworkSettings() {
                       Add mDNS/UPnP nodes to the topology map
                     </p>
                   </div>
-                  <Switch
-                    checked={prefs.topologyIncludeDiscovery}
-                    onCheckedChange={(checked) => updatePref("topologyIncludeDiscovery", checked)}
-                  />
+                  <form.Field name="topologyIncludeDiscovery">
+                    {(field) => (
+                      <Switch
+                        checked={field.state.value}
+                        onCheckedChange={field.handleChange}
+                      />
+                    )}
+                  </form.Field>
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Discovery Duration</Label>
-                    <span className="text-sm font-medium">{prefs.topologyDiscoveryDuration}s</span>
+                    <form.Subscribe selector={(state) => state.values.topologyDiscoveryDuration}>
+                      {(topologyDiscoveryDuration) => (
+                        <span className="text-sm font-medium">{topologyDiscoveryDuration}s</span>
+                      )}
+                    </form.Subscribe>
                   </div>
-                  <Slider
-                    value={[prefs.topologyDiscoveryDuration]}
-                    onValueChange={(v) => updatePref("topologyDiscoveryDuration", Array.isArray(v) ? v[0] : v)}
-                    min={1}
-                    max={30}
-                    step={1}
-                  />
+                  <form.Field name="topologyDiscoveryDuration">
+                    {(field) => (
+                      <Slider
+                        value={[field.state.value]}
+                        onValueChange={(v) => field.handleChange(Array.isArray(v) ? v[0] : v)}
+                        min={1}
+                        max={30}
+                        step={1}
+                      />
+                    )}
+                  </form.Field>
                 </div>
               </div>
             </AccordionContent>

@@ -75,4 +75,37 @@ public static class SettingKeys
         /// </summary>
         public const string LatestVersion = "GitHub.LatestVersion";
     }
+
+    public static class Network
+    {
+        public const string RealtimeEnabled = "Network.RealtimeEnabled";
+        public const string NotificationsEnabled = "Network.NotificationsEnabled";
+        public const string PingHost = "Network.PingHost";
+        public const string PingTimeout = "Network.PingTimeout";
+        public const string SubnetLast = "Network.SubnetLast";
+        public const string SubnetConcurrency = "Network.SubnetConcurrency";
+        public const string SubnetTimeout = "Network.SubnetTimeout";
+        public const string PortHost = "Network.PortHost";
+        public const string PortConcurrency = "Network.PortConcurrency";
+        public const string PortTimeout = "Network.PortTimeout";
+        public const string TracerouteHost = "Network.TracerouteHost";
+        public const string TracerouteMaxHops = "Network.TracerouteMaxHops";
+        public const string TracerouteTimeout = "Network.TracerouteTimeout";
+        public const string DiscoveryDuration = "Network.DiscoveryDuration";
+        public const string DiscoveryMode = "Network.DiscoveryMode";
+        public const string WifiAdapter = "Network.WifiAdapter";
+        public const string WifiBand = "Network.WifiBand";
+        public const string WifiSecurity = "Network.WifiSecurity";
+        public const string WolMac = "Network.WolMac";
+        public const string WolBroadcast = "Network.WolBroadcast";
+        public const string WolPort = "Network.WolPort";
+        public const string SpeedtestDownloadMb = "Network.SpeedtestDownloadMb";
+        public const string SpeedtestUploadMb = "Network.SpeedtestUploadMb";
+        public const string SpeedtestLatencySamples = "Network.SpeedtestLatencySamples";
+        public const string TopologyCidr = "Network.TopologyCidr";
+        public const string TopologyConcurrency = "Network.TopologyConcurrency";
+        public const string TopologyTimeout = "Network.TopologyTimeout";
+        public const string TopologyIncludeDiscovery = "Network.TopologyIncludeDiscovery";
+        public const string TopologyDiscoveryDuration = "Network.TopologyDiscoveryDuration";
+    }
 }
