@@ -9,7 +9,6 @@ namespace ManLab.Server.Data.Entities.Enhancements;
 [Table("TrafficSamples")]
 public sealed class TrafficSample
 {
-    [Key]
     public long Id { get; set; }
 
     [MaxLength(128)]

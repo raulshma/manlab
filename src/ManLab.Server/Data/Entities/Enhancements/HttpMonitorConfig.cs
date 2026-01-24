@@ -21,7 +21,7 @@ public sealed class HttpMonitorConfig
     public string Url { get; set; } = string.Empty;
 
     [MaxLength(16)]
-    public string Method { get; set; } = "GET";
+    public string? Method { get; set; } = "GET";
 
     public int? ExpectedStatus { get; set; }
 

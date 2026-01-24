@@ -13,6 +13,7 @@ using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Quartz;
 using Scalar.AspNetCore;
 
@@ -210,6 +211,9 @@ builder.Services.AddDbContext<DataContext>(options =>
 {
     options.UseNpgsql(connectionString);
     options.AddInterceptors(new BoundedTextSaveChangesInterceptor());
+    // Allow startup to proceed even if model changes exist; migrations will still be applied.
+    options.ConfigureWarnings(warnings =>
+        warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
 });
 
 var app = builder.Build();

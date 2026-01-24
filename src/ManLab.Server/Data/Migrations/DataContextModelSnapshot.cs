@@ -793,7 +793,7 @@ namespace ManLab.Server.Data.Migrations
                     b.Property<DateTime>("TimestampUtc")
                         .HasColumnType("timestamp with time zone");
 
-                    b.HasKey("Id");
+                    b.HasKey("Id", "TimestampUtc");
 
                     b.HasIndex("MonitorId");
 
@@ -878,7 +878,7 @@ namespace ManLab.Server.Data.Migrations
                     b.Property<float?>("UtilizationPercent")
                         .HasColumnType("real");
 
-                    b.HasKey("Id");
+                    b.HasKey("Id", "TimestampUtc");
 
                     b.HasIndex("InterfaceName");
 

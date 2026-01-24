@@ -24,8 +24,14 @@ var postgresPassword = builder.AddParameter(
 // (see ManLab.Server: builder.AddNpgsqlDbContext<DataContext>("manlab")).
 
 var postgres = builder.AddPostgres("postgres")
-    .WithImage("timescale/timescaledb:latest-pg17-oss")
-    .WithDataVolume("manlab-db-data")
+    // Use the glibc-based image to avoid collation version issues on musl/Alpine.
+    .WithImage("timescale/timescaledb:latest-pg17")
+    // Force a fresh data directory to avoid collation version mismatches from old volumes.
+    // .WithDataVolume("manlab-db-data-v2")
+    // Ensure initdb uses a stable locale to prevent template1 collation version errors.
+    .WithEnvironment("POSTGRES_INITDB_ARGS", "--locale=C --encoding=UTF8")
+    .WithEnvironment("LANG", "C.UTF-8")
+    .WithEnvironment("LC_ALL", "C.UTF-8")
     .WithPassword(postgresPassword);
 var manlabDb = postgres.AddDatabase("manlab");
 

@@ -70,7 +70,7 @@ namespace ManLab.Server.Data.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_HttpMonitorChecks", x => x.Id);
+                    table.PrimaryKey("PK_HttpMonitorChecks", x => new { x.Id, x.TimestampUtc });
                     table.ForeignKey(
                         name: "FK_HttpMonitorChecks_HttpMonitorConfigs_MonitorId",
                         column: x => x.MonitorId,
@@ -96,7 +96,7 @@ namespace ManLab.Server.Data.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_TrafficSamples", x => x.Id);
+                    table.PrimaryKey("PK_TrafficSamples", x => new { x.Id, x.TimestampUtc });
                 });
 
             migrationBuilder.CreateIndex(

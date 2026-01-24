@@ -251,6 +251,7 @@ public class DataContext : DbContext
         // Monitoring: HTTP monitor checks
         modelBuilder.Entity<HttpMonitorCheck>(entity =>
         {
+            entity.HasKey(e => new { e.Id, e.TimestampUtc });
             entity.HasIndex(e => e.MonitorId);
             entity.HasIndex(e => e.TimestampUtc);
             entity.HasIndex(e => new { e.MonitorId, e.TimestampUtc });
@@ -273,6 +274,7 @@ public class DataContext : DbContext
         // Monitoring: Traffic samples
         modelBuilder.Entity<TrafficSample>(entity =>
         {
+            entity.HasKey(e => new { e.Id, e.TimestampUtc });
             entity.HasIndex(e => e.TimestampUtc);
             entity.HasIndex(e => e.InterfaceName);
             entity.HasIndex(e => new { e.InterfaceName, e.TimestampUtc });

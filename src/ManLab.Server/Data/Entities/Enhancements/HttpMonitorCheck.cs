@@ -9,7 +9,6 @@ namespace ManLab.Server.Data.Entities.Enhancements;
 [Table("HttpMonitorChecks")]
 public sealed class HttpMonitorCheck
 {
-    [Key]
     public long Id { get; set; }
 
     public Guid MonitorId { get; set; }
