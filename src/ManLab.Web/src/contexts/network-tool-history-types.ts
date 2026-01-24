@@ -17,6 +17,7 @@ export type NetworkToolType =
   | "wifi-scan"
   | "dns-lookup"
   | "whois"
+  | "public-ip"
   | "wol"
   | "ssl-inspect"
   | "mac-vendor"

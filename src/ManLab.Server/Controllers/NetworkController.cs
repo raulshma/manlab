@@ -809,6 +809,63 @@ public class NetworkController : ControllerBase
     }
 
     /// <summary>
+    /// Gets the server's public IP address(es).
+    /// </summary>
+    [HttpGet("public-ip")]
+    public async Task<ActionResult<PublicIpResult>> GetPublicIp(CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            var result = await _scanner.GetPublicIpAsync(ct);
+            sw.Stop();
+
+            _audit.TryEnqueue(AuditEventFactory.CreateHttp(
+                kind: "activity",
+                eventName: "network.public_ip",
+                httpContext: HttpContext,
+                success: true,
+                statusCode: 200,
+                category: "network",
+                message: "Public IP lookup completed"));
+
+            _ = _history.RecordAsync(
+                toolType: "public-ip",
+                target: "self",
+                input: new { mode = "auto" },
+                result: result,
+                success: true,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                connectionId: HttpContext.Connection.Id);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _logger.LogError(ex, "Public IP lookup failed");
+
+            _ = _history.RecordAsync(
+                toolType: "public-ip",
+                target: "self",
+                input: new { mode = "auto" },
+                result: null,
+                success: false,
+                durationMs: (int)sw.ElapsedMilliseconds,
+                error: ex.Message,
+                connectionId: HttpContext.Connection.Id);
+
+            return StatusCode(500, new NetworkScanError
+            {
+                Code = "PUBLIC_IP_FAILED",
+                Message = "Public IP lookup failed",
+                Details = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
     /// Inspects SSL/TLS certificate chain for a host.
     /// </summary>
     [HttpPost("ssl/inspect")]

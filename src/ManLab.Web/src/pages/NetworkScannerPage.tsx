@@ -4,7 +4,7 @@
  * Provides tab-based navigation between different scanning tools.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef, useLayoutEffect } from "react";
 import {
   Network,
   Radio,
@@ -22,6 +22,9 @@ import {
   Gauge,
   Calculator,
   Fingerprint,
+  LocateFixed,
+  MoreHorizontal,
+  Check,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -40,10 +43,17 @@ import { WakeOnLanTool } from "@/components/network/WakeOnLanTool";
 import { SpeedTestTool } from "@/components/network/SpeedTestTool";
 import { SubnetCalculatorTool } from "@/components/network/SubnetCalculatorTool";
 import { MacVendorLookupTool } from "@/components/network/MacVendorLookupTool";
+import { PublicIpTool } from "@/components/network/PublicIpTool";
 import { NetworkToolHistoryPanel } from "@/components/network/NetworkToolHistoryPanel";
 import { NetworkErrorBoundary } from "@/components/network/NetworkErrorBoundary";
 import { NetworkToolHistoryProvider } from "@/contexts/NetworkToolHistoryContext";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   isRealtimeEnabled,
   isNotificationsEnabled,
@@ -53,6 +63,26 @@ import {
   subscribeRealtimePreference,
 } from "@/lib/network-preferences";
 import { NetworkToolsProvider, type NetworkToolTab } from "@/contexts/NetworkToolsContext";
+import { cn } from "@/lib/utils";
+
+// Tool Definitions
+const TOOLS = [
+  { id: "ping", label: "Ping", icon: Radio },
+  { id: "subnet", label: "Subnet", icon: Search },
+  { id: "traceroute", label: "Traceroute", icon: Route },
+  { id: "ports", label: "Ports", icon: Server },
+  { id: "wol", label: "WoL", icon: Power },
+  { id: "speedtest", label: "Speed Test", icon: Gauge },
+  { id: "subnetcalc", label: "Subnet Calc", icon: Calculator },
+  { id: "mac-vendor", label: "MAC Vendor", icon: Fingerprint },
+  { id: "dns", label: "DNS", icon: Globe },
+  { id: "public-ip", label: "Public IP", icon: LocateFixed },
+  { id: "ssl", label: "SSL", icon: ShieldCheck },
+  { id: "discovery", label: "Discovery", icon: Radar },
+  { id: "wifi", label: "WiFi", icon: Wifi },
+  { id: "geodb", label: "GeoIP", icon: Database },
+  { id: "history", label: "History", icon: History },
+] as const;
 
 // Connection status indicator with enhanced retry functionality
 function ConnectionIndicator({ 
@@ -75,7 +105,7 @@ function ConnectionIndicator({
         return "bg-red-500";
       default:
         return "bg-gray-500";
-    }
+      }
   };
 
   const getStatusText = () => {
@@ -124,6 +154,59 @@ export function NetworkScannerPage() {
   const [realtimeEnabled, setRealtimeEnabledState] = useState(isRealtimeEnabled());
   const [notificationsEnabled, setNotificationsEnabledState] = useState(isNotificationsEnabled());
 
+  // Responsive Tabs Logic
+  const [visibleCount, setVisibleCount] = useState<number>(TOOLS.length);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const calculateVisibleTabs = () => {
+      if (!containerRef.current || !ghostRef.current) return;
+
+      const containerWidth = containerRef.current.clientWidth;
+      const ghostItems = Array.from(ghostRef.current.children) as HTMLElement[];
+      const moreButtonWidth = 80; // Approximate width of "More" button + padding
+      
+      let currentWidth = 0;
+      let count = 0;
+
+      for (let i = 0; i < ghostItems.length; i++) {
+        const itemWidth = ghostItems[i].offsetWidth + 8; // +8 for gap preference
+        
+        // If this is the last item and it fits, we don't need the "More" button
+        if (i === ghostItems.length - 1) {
+             if (currentWidth + itemWidth <= containerWidth) {
+                 count++;
+             }
+             break;
+        }
+
+        if (currentWidth + itemWidth + moreButtonWidth <= containerWidth) {
+          currentWidth += itemWidth;
+          count++;
+        } else {
+          break;
+        }
+      }
+      
+      // Ensure at least one tab is visible if possible, though unlikely to fail
+      setVisibleCount(Math.max(1, count));
+    };
+
+    calculateVisibleTabs();
+    
+    const observer = new ResizeObserver(calculateVisibleTabs);
+    if (containerRef.current) {
+        observer.observe(containerRef.current);
+    }
+    
+    return () => observer.disconnect();
+  }, []);
+
+  const visibleTools = TOOLS.slice(0, visibleCount);
+  const overflowTools = TOOLS.slice(visibleCount);
+  const isOverflowActive = overflowTools.some(t => t.id === activeTab);
+  const activeOverflowTool = overflowTools.find(t => t.id === activeTab);
 
   // Force reconnect by toggling realtime off and on
   const handleRetryConnection = useCallback(() => {
@@ -186,70 +269,91 @@ export function NetworkScannerPage() {
         </div>
       </div>
 
-
-
       {/* Main Content with Tabs */}
       <Card className="border-0 shadow-none sm:border sm:shadow">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as NetworkToolTab)} className="w-full">
           <CardHeader className="px-0 sm:px-6 pb-2">
-            <TabsList className="flex w-full overflow-x-auto justify-start h-auto p-1 snap-x bg-muted/50 rounded-lg">
-              <TabsTrigger value="ping" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Radio className="h-4 w-4" />
-                <span className="inline">Ping</span>
-              </TabsTrigger>
-              <TabsTrigger value="subnet" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Search className="h-4 w-4" />
-                <span className="inline">Subnet</span>
-              </TabsTrigger>
-              <TabsTrigger value="traceroute" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Route className="h-4 w-4" />
-                <span className="inline">Traceroute</span>
-              </TabsTrigger>
-              <TabsTrigger value="ports" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Server className="h-4 w-4" />
-                <span className="inline">Ports</span>
-              </TabsTrigger>
-              <TabsTrigger value="wol" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Power className="h-4 w-4" />
-                <span className="inline">WoL</span>
-              </TabsTrigger>
-              <TabsTrigger value="speedtest" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Gauge className="h-4 w-4" />
-                <span className="inline">Speed Test</span>
-              </TabsTrigger>
-              <TabsTrigger value="subnetcalc" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Calculator className="h-4 w-4" />
-                <span className="inline">Subnet Calc</span>
-              </TabsTrigger>
-              <TabsTrigger value="mac-vendor" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Fingerprint className="h-4 w-4" />
-                <span className="inline">MAC Vendor</span>
-              </TabsTrigger>
-              <TabsTrigger value="dns" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Globe className="h-4 w-4" />
-                <span className="inline">DNS</span>
-              </TabsTrigger>
-              <TabsTrigger value="ssl" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <ShieldCheck className="h-4 w-4" />
-                <span className="inline">SSL</span>
-              </TabsTrigger>
-              <TabsTrigger value="discovery" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Radar className="h-4 w-4" />
-                <span className="inline">Discovery</span>
-              </TabsTrigger>
-              <TabsTrigger value="wifi" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Wifi className="h-4 w-4" />
-                <span className="inline">WiFi</span>
-              </TabsTrigger>
-              <TabsTrigger value="geodb" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <Database className="h-4 w-4" />
-                <span className="inline">GeoIP</span>
-              </TabsTrigger>
-              <TabsTrigger value="history" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
-                <History className="h-4 w-4" />
-                <span className="inline">History</span>
-              </TabsTrigger>
-            </TabsList>
+            
+            {/* Ghost List for Measurement (Invisible & Off-screen) */}
+            <div 
+                ref={ghostRef} 
+                className="flex fixed bottom-0 left-0 -z-50 opacity-0 pointer-events-none w-max"
+                aria-hidden="true"
+                style={{ transform: 'translateY(200%)' }} // Extra safety to force it out of view
+            >
+                 {TOOLS.map((tool) => {
+                    const Icon = tool.icon;
+                    return (
+                        <div key={tool.id} className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-transparent">
+                            <Icon className="h-4 w-4" />
+                            <span className="inline">{tool.label}</span>
+                        </div>
+                    );
+                 })}
+            </div>
+
+            {/* Real Tab List */}
+            <div ref={containerRef} className="w-full overflow-hidden">
+                <TabsList className="flex w-full justify-start h-auto p-1 bg-muted/50 rounded-lg gap-2">
+                {visibleTools.map((tool) => {
+                    const Icon = tool.icon;
+                    return (
+                        <TabsTrigger 
+                            key={tool.id} 
+                            value={tool.id} 
+                            className="gap-2 px-4 flex-none data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200"
+                        >
+                            <Icon className="h-4 w-4" />
+                            <span className="inline">{tool.label}</span>
+                        </TabsTrigger>
+                    );
+                })}
+                
+                {overflowTools.length > 0 && (
+                    <DropdownMenu>
+                        <DropdownMenuTrigger
+                            className={cn(
+                                "flex items-center justify-center gap-2 px-4 h-9 rounded-md text-sm font-medium transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent",
+                                isOverflowActive && "bg-background text-foreground shadow-sm ring-1 ring-border"
+                            )}
+                        >
+                                {isOverflowActive && activeOverflowTool ? (
+                                    <>
+                                        <activeOverflowTool.icon className="h-4 w-4" />
+                                        <span className="inline">{activeOverflowTool.label}</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <MoreHorizontal className="h-4 w-4" />
+                                        <span className="inline">More</span>
+                                    </>
+                                )}
+                                <div className="ml-1 text-[10px] font-mono opacity-50 bg-primary/10 px-1 rounded">
+                                    {overflowTools.length}
+                                </div>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-[200px]">
+                            {overflowTools.map((tool) => {
+                                const Icon = tool.icon;
+                                return (
+                                    <DropdownMenuItem
+                                        key={tool.id}
+                                        onClick={() => setActiveTab(tool.id as NetworkToolTab)}
+                                        className="gap-2 cursor-pointer"
+                                    >
+                                        <Icon className="h-4 w-4 text-muted-foreground" />
+                                        {tool.label}
+                                        {activeTab === tool.id && (
+                                            <Check className="ml-auto h-4 w-4 text-primary" />
+                                        )}
+                                    </DropdownMenuItem>
+                                );
+                            })}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                )}
+                </TabsList>
+            </div>
           </CardHeader>
 
           <CardContent className="pt-2 px-0 sm:px-6">
@@ -307,6 +411,12 @@ export function NetworkScannerPage() {
               </NetworkErrorBoundary>
             </TabsContent>
 
+            <TabsContent value="public-ip" className="mt-0 space-y-4">
+              <NetworkErrorBoundary fallbackTitle="Public IP Tool Error">
+                <PublicIpTool />
+              </NetworkErrorBoundary>
+            </TabsContent>
+
             <TabsContent value="ssl" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="SSL Inspector Error">
                 <SslInspectorTool />
@@ -345,3 +455,4 @@ export function NetworkScannerPage() {
     </NetworkToolsProvider>
   );
 }
+

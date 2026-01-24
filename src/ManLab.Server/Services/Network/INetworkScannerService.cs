@@ -102,6 +102,13 @@ public interface INetworkScannerService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>SSL inspection result.</returns>
     Task<SslInspectionResult> InspectCertificateAsync(string host, int port = 443, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves the server's public IP address(es).
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Public IP lookup result.</returns>
+    Task<PublicIpResult> GetPublicIpAsync(CancellationToken ct = default);
     
     /// <summary>
     /// Parses a CIDR notation string and returns the IP range.

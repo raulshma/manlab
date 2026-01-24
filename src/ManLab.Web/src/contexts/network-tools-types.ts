@@ -16,6 +16,7 @@ export type NetworkToolTab =
   | "traceroute"
   | "ports"
   | "dns"
+  | "public-ip"
   | "ssl"
   | "discovery"
   | "wifi"

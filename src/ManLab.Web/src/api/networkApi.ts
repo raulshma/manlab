@@ -218,6 +218,17 @@ export interface WhoisResult {
 }
 
 /**
+ * Public IP lookup result.
+ */
+export interface PublicIpResult {
+  ipv4: string | null;
+  ipv4Provider: string | null;
+  ipv6: string | null;
+  ipv6Provider: string | null;
+  retrievedAt: string;
+}
+
+/**
  * Wake-on-LAN request.
  */
 export interface WolRequest {
@@ -704,6 +715,21 @@ export async function whoisLookup(
     const { data } = await api.post<WhoisResult>(
       "/network/whois",
       request,
+      options
+    );
+    return data;
+  });
+}
+
+/**
+ * Get public IP address(es) for the server.
+ */
+export async function getPublicIp(
+  options?: RequestOptions
+): Promise<PublicIpResult> {
+  return withNetworkRetry(async () => {
+    const { data } = await api.get<PublicIpResult>(
+      "/network/public-ip",
       options
     );
     return data;
@@ -1213,6 +1239,7 @@ export type NetworkToolType =
   | "wifi-scan"
   | "dns-lookup"
   | "whois"
+  | "public-ip"
   | "wol"
   | "ssl-inspect"
   | "mac-vendor"

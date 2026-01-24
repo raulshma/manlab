@@ -724,3 +724,34 @@ public record SslInspectionResult
     /// </summary>
     public bool IsValidNow { get; init; }
 }
+
+/// <summary>
+/// Result of a public IP lookup.
+/// </summary>
+public record PublicIpResult
+{
+    /// <summary>
+    /// Public IPv4 address (if available).
+    /// </summary>
+    public string? Ipv4 { get; init; }
+
+    /// <summary>
+    /// Provider used for the IPv4 lookup.
+    /// </summary>
+    public string? Ipv4Provider { get; init; }
+
+    /// <summary>
+    /// Public IPv6 address (if available).
+    /// </summary>
+    public string? Ipv6 { get; init; }
+
+    /// <summary>
+    /// Provider used for the IPv6 lookup.
+    /// </summary>
+    public string? Ipv6Provider { get; init; }
+
+    /// <summary>
+    /// When the lookup occurred (UTC).
+    /// </summary>
+    public DateTime RetrievedAt { get; init; }
+}

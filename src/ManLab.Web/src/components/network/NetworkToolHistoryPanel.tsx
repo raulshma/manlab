@@ -22,6 +22,7 @@ import {
   Loader2,
   AlertCircle,
   Globe,
+  LocateFixed,
   BookText,
   Power,
   ShieldCheck,
@@ -83,6 +84,8 @@ function getToolIcon(toolType: NetworkToolType) {
       return <Globe className="h-4 w-4" />;
     case "whois":
       return <BookText className="h-4 w-4" />;
+    case "public-ip":
+      return <LocateFixed className="h-4 w-4" />;
     case "wol":
       return <Power className="h-4 w-4" />;
     case "ssl-inspect":
@@ -117,6 +120,8 @@ function getToolLabel(toolType: NetworkToolType): string {
       return "DNS Lookup";
     case "whois":
       return "WHOIS";
+    case "public-ip":
+      return "Public IP";
     case "wol":
       return "Wake-on-LAN";
     case "ssl-inspect":
@@ -292,6 +297,7 @@ export function NetworkToolHistoryPanel() {
     "wifi-scan",
     "dns-lookup",
     "whois",
+    "public-ip",
     "wol",
     "ssl-inspect",
     "mac-vendor",

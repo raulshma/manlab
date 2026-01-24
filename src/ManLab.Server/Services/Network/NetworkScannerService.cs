@@ -3,10 +3,12 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.NetworkInformation;
+using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using DnsClient;
 
@@ -21,6 +23,7 @@ public sealed class NetworkScannerService : INetworkScannerService
     private readonly IArpService? _arpService;
     private readonly IOuiDatabase? _ouiDatabase;
     private readonly LookupClient _dnsClient;
+    private readonly HttpClient _httpClient;
 
     /// <summary>
     /// Common ports to scan when no specific ports are provided.
@@ -51,12 +54,15 @@ public sealed class NetworkScannerService : INetworkScannerService
 
     public NetworkScannerService(
         ILogger<NetworkScannerService> logger,
+        IHttpClientFactory httpClientFactory,
         IArpService? arpService = null,
         IOuiDatabase? ouiDatabase = null)
     {
         _logger = logger;
         _arpService = arpService;
         _ouiDatabase = ouiDatabase;
+        _httpClient = httpClientFactory.CreateClient();
+        _httpClient.Timeout = TimeSpan.FromSeconds(5);
         _dnsClient = new LookupClient(new LookupClientOptions
         {
             UseCache = true,
@@ -705,6 +711,42 @@ public sealed class NetworkScannerService : INetworkScannerService
     }
 
     /// <inheritdoc />
+    public async Task<PublicIpResult> GetPublicIpAsync(CancellationToken ct = default)
+    {
+        var retrievedAt = DateTime.UtcNow;
+
+        var (ipv4, ipv4Provider) = await TryResolvePublicIpAsync(
+            new[]
+            {
+                new PublicIpEndpoint("ipify", new Uri("https://api.ipify.org?format=json")),
+                new PublicIpEndpoint("ifconfig", new Uri("https://ifconfig.co/json"))
+            },
+            ct).ConfigureAwait(false);
+
+        var (ipv6, ipv6Provider) = await TryResolvePublicIpAsync(
+            new[]
+            {
+                new PublicIpEndpoint("ipify", new Uri("https://api64.ipify.org?format=json")),
+                new PublicIpEndpoint("ifconfig", new Uri("https://ifconfig.co/json"))
+            },
+            ct).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(ipv4) && string.IsNullOrWhiteSpace(ipv6))
+        {
+            throw new InvalidOperationException("Unable to determine public IP address.");
+        }
+
+        return new PublicIpResult
+        {
+            Ipv4 = ipv4,
+            Ipv4Provider = ipv4Provider,
+            Ipv6 = ipv6,
+            Ipv6Provider = ipv6Provider,
+            RetrievedAt = retrievedAt
+        };
+    }
+
+    /// <inheritdoc />
     public IEnumerable<IPAddress> ParseCidr(string cidr)
     {
         if (string.IsNullOrWhiteSpace(cidr))
@@ -1053,5 +1095,70 @@ public sealed class NetworkScannerService : INetworkScannerService
                 .Replace("DNS Name=", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("IP Address=", "", StringComparison.OrdinalIgnoreCase))
             .ToList();
+    }
+
+    private readonly record struct PublicIpEndpoint(string Provider, Uri Url);
+
+    private async Task<(string? ip, string? provider)> TryResolvePublicIpAsync(
+        IEnumerable<PublicIpEndpoint> endpoints,
+        CancellationToken ct)
+    {
+        foreach (var endpoint in endpoints)
+        {
+            try
+            {
+                var ip = await TryFetchPublicIpAsync(endpoint.Url, ct).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(ip))
+                {
+                    return (ip, endpoint.Provider);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "Public IP lookup failed for {Provider}", endpoint.Provider);
+            }
+        }
+
+        return (null, null);
+    }
+
+    private async Task<string?> TryFetchPublicIpAsync(Uri url, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.UserAgent.ParseAdd("ManLab/1.0");
+
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+            .ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var payload = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return null;
+        }
+
+        var trimmed = payload.Trim();
+        if (trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            if (doc.RootElement.TryGetProperty("ip", out var ipElement))
+            {
+                var ipValue = ipElement.GetString();
+                return IPAddress.TryParse(ipValue, out var parsed) ? parsed.ToString() : null;
+            }
+
+            if (doc.RootElement.TryGetProperty("ip_address", out var ipAddressElement))
+            {
+                var ipValue = ipAddressElement.GetString();
+                return IPAddress.TryParse(ipValue, out var parsed) ? parsed.ToString() : null;
+            }
+        }
+
+        return IPAddress.TryParse(trimmed, out var ip) ? ip.ToString() : null;
     }
 }
