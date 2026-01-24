@@ -26,8 +26,7 @@ var postgresPassword = builder.AddParameter(
 var postgres = builder.AddPostgres("postgres")
     // Use the glibc-based image to avoid collation version issues on musl/Alpine.
     .WithImage("timescale/timescaledb:latest-pg17")
-    // Force a fresh data directory to avoid collation version mismatches from old volumes.
-    // .WithDataVolume("manlab-db-data-v2")
+    .WithDataVolume("manlab-db-data")
     // Ensure initdb uses a stable locale to prevent template1 collation version errors.
     .WithEnvironment("POSTGRES_INITDB_ARGS", "--locale=C --encoding=UTF8")
     .WithEnvironment("LANG", "C.UTF-8")

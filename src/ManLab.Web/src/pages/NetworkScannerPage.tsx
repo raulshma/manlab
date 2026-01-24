@@ -26,7 +26,6 @@ import {
   LocateFixed,
   MoreHorizontal,
   Share2,
-  Check,
   X,
   Signal,
   FileText,
@@ -62,11 +61,12 @@ import { PacketCaptureTool } from "@/components/network/PacketCaptureTool";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   isRealtimeEnabled,
   isNotificationsEnabled,
@@ -200,13 +200,32 @@ export function NetworkScannerPage() {
   const [visibleCount, setVisibleCount] = useState<number>(TOOLS.length);
   const containerRef = useRef<HTMLDivElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
+  const ghostMoreRef = useRef<HTMLDivElement>(null);
+  const calculateVisibleTabsRef = useRef<() => void>(() => undefined);
 
-  const calculateVisibleTabs = useCallback(() => {
+  const scheduleRecalculate = useCallback(() => {
+    window.requestAnimationFrame(() => calculateVisibleTabsRef.current());
+  }, []);
+
+    const calculateVisibleTabs = useCallback(() => {
       if (!containerRef.current || !ghostRef.current) return;
 
-      const containerWidth = containerRef.current.clientWidth;
-      const ghostItems = Array.from(ghostRef.current.children) as HTMLElement[];
-      const moreButtonWidth = 80; // Approximate width of "More" button + padding
+      const containerWidth = containerRef.current.clientWidth - 8; // Account for TabsList horizontal padding
+      const ghostItems = Array.from(ghostRef.current.children).filter(
+        (child) => child !== ghostMoreRef.current
+      ) as HTMLElement[];
+      const moreButtonWidth = ghostMoreRef.current?.offsetWidth ?? 120;
+
+      if (containerWidth <= 0) {
+        scheduleRecalculate();
+        return;
+      }
+
+      const ghostWidths = ghostItems.map((item) => item.offsetWidth);
+      if (ghostWidths.some((width) => width === 0)) {
+        scheduleRecalculate();
+        return;
+      }
       
       let currentWidth = 0;
       let count = 0;
@@ -232,7 +251,11 @@ export function NetworkScannerPage() {
       
       // Ensure at least one tab is visible if possible, though unlikely to fail
       setVisibleCount(Math.max(1, count));
-    }, []);
+    }, [scheduleRecalculate]);
+
+    useEffect(() => {
+      calculateVisibleTabsRef.current = calculateVisibleTabs;
+    }, [calculateVisibleTabs]);
 
     const handleToolQueryChange = useCallback((value: string) => {
       setToolQuery(value);
@@ -251,6 +274,8 @@ export function NetworkScannerPage() {
     }, [activeTab, calculateVisibleTabs]);
 
   useLayoutEffect(() => {
+    if (!settingsReady) return;
+
     const frame = window.requestAnimationFrame(calculateVisibleTabs);
 
     const observer = new ResizeObserver(calculateVisibleTabs);
@@ -262,12 +287,25 @@ export function NetworkScannerPage() {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
     };
+  }, [calculateVisibleTabs, settingsReady, filteredTools.length]);
+
+  useEffect(() => {
+    const handleRecalculate = () => calculateVisibleTabs();
+    window.addEventListener("load", handleRecalculate);
+
+    const fontsReady = (document as Document & { fonts?: FontFaceSet }).fonts?.ready;
+    if (fontsReady) {
+      fontsReady.then(handleRecalculate).catch(() => undefined);
+    }
+
+    return () => {
+      window.removeEventListener("load", handleRecalculate);
+    };
   }, [calculateVisibleTabs]);
 
   const visibleTools = filteredTools.slice(0, visibleCount);
   const overflowTools = filteredTools.slice(visibleCount);
   const isOverflowActive = overflowTools.some(t => t.id === activeTab);
-  const activeOverflowTool = overflowTools.find(t => t.id === activeTab);
 
   // Force reconnect by toggling realtime off and on
   const handleRetryConnection = useCallback(() => {
@@ -400,6 +438,13 @@ export function NetworkScannerPage() {
                         </div>
                     );
                  })}
+                 <div
+                   ref={ghostMoreRef}
+                   className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-transparent"
+                 >
+                   <MoreHorizontal className="h-4 w-4" />
+                   <span className="inline">More</span>
+                 </div>
             </div>
 
             {/* Real Tab List */}
@@ -426,47 +471,38 @@ export function NetworkScannerPage() {
                 )}
 
                 {overflowTools.length > 0 && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
+                  <Select
+                    value={isOverflowActive ? activeTab : ""}
+                    onValueChange={(value) => setActiveTab(value as NetworkToolTab)}
+                  >
+                    <SelectTrigger
                       className={cn(
-                        "flex items-center justify-center gap-2 px-4 h-9 rounded-md text-sm font-medium transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent",
-                        isOverflowActive && "bg-background text-foreground shadow-sm ring-1 ring-border"
+                        "h-9 px-4 gap-2 rounded-md font-medium text-sm transition-colors border-transparent hover:bg-muted data-[state=open]:bg-accent w-auto min-w-25",
+                        isOverflowActive && "bg-background text-foreground shadow-sm ring-1 ring-border border-border"
                       )}
                     >
-                      {isOverflowActive && activeOverflowTool ? (
-                        <>
-                          <activeOverflowTool.icon className="h-4 w-4" />
-                          <span className="inline">{activeOverflowTool.label}</span>
-                        </>
-                      ) : (
-                        <>
+                      <SelectValue placeholder="" className={isOverflowActive ? "" : "hidden"} />
+                      {!isOverflowActive && (
+                        <div className="flex items-center gap-2">
                           <MoreHorizontal className="h-4 w-4" />
-                          <span className="inline">More</span>
-                        </>
+                          <span>More</span>
+                        </div>
                       )}
-                      <div className="ml-1 text-[10px] font-mono opacity-50 bg-primary/10 px-1 rounded">
-                        {overflowTools.length}
-                      </div>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-50">
+                    </SelectTrigger>
+                    <SelectContent align="end" className="w-50">
                       {overflowTools.map((tool) => {
                         const Icon = tool.icon;
                         return (
-                          <DropdownMenuItem
-                            key={tool.id}
-                            onClick={() => setActiveTab(tool.id as NetworkToolTab)}
-                            className="gap-2 cursor-pointer"
-                          >
-                            <Icon className="h-4 w-4 text-muted-foreground" />
-                            {tool.label}
-                            {activeTab === tool.id && (
-                              <Check className="ml-auto h-4 w-4 text-primary" />
-                            )}
-                          </DropdownMenuItem>
+                          <SelectItem key={tool.id} value={tool.id}>
+                            <div className="flex items-center gap-2">
+                              <Icon className="h-4 w-4 text-muted-foreground" />
+                              <span>{tool.label}</span>
+                            </div>
+                          </SelectItem>
                         );
                       })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                    </SelectContent>
+                  </Select>
                 )}
               </TabsList>
             </div>

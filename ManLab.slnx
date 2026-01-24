@@ -5,6 +5,7 @@
     <Project Path="src/ManLab.Agent/ManLab.Agent.csproj" />
     <Project Path="src/ManLab.Build/ManLab.Build.csproj" />
     <Project Path="src/ManLab.Agent.Tests/ManLab.Agent.Tests.csproj" />
+    <Project Path="src/ManLab.Server.Tests/ManLab.Server.Tests.csproj" />
     <Project Path="src/ManLab.ServiceDefaults/ManLab.ServiceDefaults.csproj" />
     <Project Path="src/ManLab.AppHost/ManLab.AppHost.csproj" />
   </Folder>
