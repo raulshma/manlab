@@ -29,9 +29,11 @@ import {
   Signal,
   FileText,
   Activity,
+  PanelLeft,
+  PanelLeftClose,
 } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useNetworkHub } from "@/hooks/useNetworkHub";
 import { PingTool } from "@/components/network/PingTool";
@@ -59,6 +61,7 @@ import { SyslogTool } from "@/components/network/SyslogTool";
 import { PacketCaptureTool } from "@/components/network/PacketCaptureTool";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   isRealtimeEnabled,
   isNotificationsEnabled,
@@ -69,6 +72,7 @@ import {
 } from "@/lib/network-preferences";
 import { NetworkToolsProvider, type NetworkToolTab } from "@/contexts/NetworkToolsContext";
 import { useNetworkSettingsSync } from "@/hooks/useNetworkSettingsSync";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 // Tool Definitions
@@ -179,6 +183,8 @@ export function NetworkScannerPage() {
   const [realtimeEnabled, setRealtimeEnabledState] = useState(isRealtimeEnabled());
   const [notificationsEnabled, setNotificationsEnabledState] = useState(isNotificationsEnabled());
   const [toolQuery, setToolQuery] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const isMobile = useIsMobile();
 
   const filteredTools = useMemo(() => {
     const query = toolQuery.trim().toLowerCase();
@@ -188,20 +194,19 @@ export function NetworkScannerPage() {
     );
   }, [toolQuery]);
 
-    const handleToolQueryChange = useCallback((value: string) => {
-      setToolQuery(value);
-      const query = value.trim().toLowerCase();
-      const nextFiltered = query
-        ? TOOLS.filter((tool) =>
-            tool.label.toLowerCase().includes(query) || tool.id.toLowerCase().includes(query)
-          )
-        : TOOLS;
+  const handleToolQueryChange = useCallback((value: string) => {
+    setToolQuery(value);
+    const query = value.trim().toLowerCase();
+    const nextFiltered = query
+      ? TOOLS.filter((tool) =>
+          tool.label.toLowerCase().includes(query) || tool.id.toLowerCase().includes(query)
+        )
+      : TOOLS;
 
-      if (nextFiltered.length > 0 && !nextFiltered.some((tool) => tool.id === activeTab)) {
-        setActiveTab(nextFiltered[0].id as NetworkToolTab);
-      }
-
-    }, [activeTab]);
+    if (nextFiltered.length > 0 && !nextFiltered.some((tool) => tool.id === activeTab)) {
+      setActiveTab(nextFiltered[0].id as NetworkToolTab);
+    }
+  }, [activeTab]);
 
   // Force reconnect by toggling realtime off and on
   const handleRetryConnection = useCallback(() => {
@@ -238,6 +243,8 @@ export function NetworkScannerPage() {
     );
   }
 
+
+  const sidebarWidth = sidebarCollapsed && !isMobile ? "md:w-14" : "md:w-72";
 
   return (
     <NetworkToolsProvider
@@ -285,12 +292,43 @@ export function NetworkScannerPage() {
         </div>
       </div>
 
-      {/* Main Content with Tabs */}
-      <Card className="border-0 shadow-none sm:border sm:shadow">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as NetworkToolTab)} className="w-full">
-          <CardHeader className="px-0 sm:px-6 pb-2">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative w-full sm:max-w-xs">
+      {/* Main Content with Sidebar */}
+      <div className="flex flex-col md:flex-row border border-border rounded-xl overflow-hidden bg-background">
+        <div
+          className={cn(
+            "flex flex-col border-b border-border bg-sidebar md:border-b-0 md:border-r",
+            sidebarWidth,
+            "w-full md:w-auto"
+          )}
+        >
+          <div className="flex items-center justify-between p-2 border-b border-border">
+            {(!sidebarCollapsed || isMobile) && (
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold px-2">Tools</h2>
+                <span className="text-xs text-muted-foreground">
+                  {filteredTools.length}/{TOOLS.length}
+                </span>
+              </div>
+            )}
+            {!isMobile && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              >
+                {sidebarCollapsed ? (
+                  <PanelLeft className="h-4 w-4" />
+                ) : (
+                  <PanelLeftClose className="h-4 w-4" />
+                )}
+              </Button>
+            )}
+          </div>
+
+          {(!sidebarCollapsed || isMobile) && (
+            <div className="p-2 border-b border-border">
+              <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type="search"
@@ -298,7 +336,7 @@ export function NetworkScannerPage() {
                   onChange={(event) => handleToolQueryChange(event.target.value)}
                   placeholder="Filter tools…"
                   aria-label="Filter network tools"
-                  className="h-9 pl-9 pr-9 text-sm"
+                  className="h-8 pl-9 pr-9 text-sm"
                 />
                 {toolQuery && (
                   <Button
@@ -307,46 +345,67 @@ export function NetworkScannerPage() {
                     size="icon"
                     onClick={() => handleToolQueryChange("")}
                     aria-label="Clear tool filter"
-                    className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
+                    className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-3.5 w-3.5" />
                   </Button>
                 )}
               </div>
-              <div className="text-xs text-muted-foreground">
-                Showing {filteredTools.length} of {TOOLS.length} tools
-              </div>
             </div>
-            
-            {/* Tool Tab Bar */}
-            <div className="w-full overflow-x-auto pb-1 scrollbar-hide">
-              <TabsList className="flex w-max min-w-full justify-start h-auto p-1 bg-muted/50 rounded-lg gap-2">
-                {filteredTools.map((tool) => {
-                  const Icon = tool.icon;
+          )}
+
+          <ScrollArea className="flex-1">
+            <div className={cn("p-2", sidebarCollapsed && !isMobile ? "space-y-1" : "space-y-1")}> 
+              {filteredTools.length === 0 && (!sidebarCollapsed || isMobile) && (
+                <div className="px-3 py-2 text-sm text-muted-foreground">
+                  No tools match “{toolQuery.trim()}”.
+                </div>
+              )}
+              {filteredTools.map((tool) => {
+                const isSelected = tool.id === activeTab;
+                const Icon = tool.icon;
+
+                if (sidebarCollapsed && !isMobile) {
                   return (
-                    <TabsTrigger
+                    <button
                       key={tool.id}
-                      value={tool.id}
+                      onClick={() => setActiveTab(tool.id as NetworkToolTab)}
                       className={cn(
-                        "gap-2 px-4 flex-none data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200",
-                        "hover:bg-muted/60"
+                        "w-full p-2 rounded-md transition-colors flex items-center justify-center",
+                        isSelected ? "bg-accent" : "hover:bg-accent/50"
                       )}
+                      title={tool.label}
                     >
-                      <Icon className="h-4 w-4" />
-                      <span className="inline whitespace-nowrap">{tool.label}</span>
-                    </TabsTrigger>
+                      <Icon className={cn("h-4 w-4", isSelected ? "text-foreground" : "text-muted-foreground")} />
+                    </button>
                   );
-                })}
+                }
 
-                {filteredTools.length === 0 && (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">
-                    No tools match “{toolQuery.trim()}”.
-                  </div>
-                )}
-              </TabsList>
+                return (
+                  <button
+                    key={tool.id}
+                    onClick={() => setActiveTab(tool.id as NetworkToolTab)}
+                    className={cn(
+                      "w-full text-left p-2 rounded-md transition-colors flex items-center gap-2",
+                      isSelected ? "bg-accent text-foreground" : "hover:bg-accent/50 text-muted-foreground"
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="truncate text-sm font-medium">{tool.label}</span>
+                  </button>
+                );
+              })}
             </div>
-          </CardHeader>
+          </ScrollArea>
 
+          {(!sidebarCollapsed || isMobile) && (
+            <div className="p-2 border-t border-border text-xs text-muted-foreground text-center">
+              Showing {filteredTools.length} of {TOOLS.length} tools
+            </div>
+          )}
+        </div>
+
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as NetworkToolTab)} className="w-full">
           <CardContent className="pt-2 px-0 sm:px-6">
             <TabsContent value="ping" className="mt-0 space-y-4">
               <NetworkErrorBoundary fallbackTitle="Ping Tool Error">
@@ -477,7 +536,7 @@ export function NetworkScannerPage() {
             </TabsContent>
           </CardContent>
         </Tabs>
-      </Card>
+      </div>
     </div>
     </NetworkToolsProvider>
   );
