@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.NetworkInformation;
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
+using ManLab.Server.Services.Network;
 using Microsoft.EntityFrameworkCore;
 using Quartz;
 
@@ -14,11 +16,16 @@ public sealed class TrafficMonitorJob : IJob
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TrafficMonitorJob> _logger;
+    private readonly INetworkToolHistoryService _history;
 
-    public TrafficMonitorJob(IServiceScopeFactory scopeFactory, ILogger<TrafficMonitorJob> logger)
+    public TrafficMonitorJob(
+        IServiceScopeFactory scopeFactory,
+        ILogger<TrafficMonitorJob> logger,
+        INetworkToolHistoryService history)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _history = history;
     }
 
     public async Task Execute(IJobExecutionContext context)
@@ -42,8 +49,10 @@ public sealed class TrafficMonitorJob : IJob
             return;
         }
 
+        var sw = Stopwatch.StartNew();
         var now = DateTime.UtcNow;
         var samples = new List<TrafficSample>();
+        string? errorMessage = null;
 
         try
         {
@@ -111,6 +120,7 @@ public sealed class TrafficMonitorJob : IJob
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Traffic monitor sampling failed");
+            errorMessage = ex.Message;
         }
 
         if (samples.Count > 0)
@@ -122,6 +132,38 @@ public sealed class TrafficMonitorJob : IJob
         config.UpdatedAt = DateTime.UtcNow;
 
         await db.SaveChangesAsync(context.CancellationToken).ConfigureAwait(false);
+        sw.Stop();
+
+        var avgRx = samples.Count > 0
+            ? samples.Where(s => s.RxBytesPerSec.HasValue).Select(s => s.RxBytesPerSec!.Value).DefaultIfEmpty(0).Average()
+            : 0;
+        var avgTx = samples.Count > 0
+            ? samples.Where(s => s.TxBytesPerSec.HasValue).Select(s => s.TxBytesPerSec!.Value).DefaultIfEmpty(0).Average()
+            : 0;
+        var maxUtilization = samples.Count > 0
+            ? samples.Where(s => s.UtilizationPercent.HasValue).Select(s => s.UtilizationPercent!.Value).DefaultIfEmpty(0).Max()
+            : 0;
+
+        _ = _history.RecordAsync(
+            toolType: "monitor-traffic",
+            target: string.IsNullOrWhiteSpace(config.InterfaceName) ? "all" : config.InterfaceName,
+            input: new
+            {
+                config.InterfaceName,
+                config.Cron,
+                config.Enabled
+            },
+            result: new
+            {
+                SampleCount = samples.Count,
+                InterfaceCount = samples.Select(s => s.InterfaceName).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                AvgRxBytesPerSec = avgRx,
+                AvgTxBytesPerSec = avgTx,
+                MaxUtilizationPercent = maxUtilization
+            },
+            success: samples.Count > 0,
+            durationMs: (int)sw.ElapsedMilliseconds,
+            error: errorMessage);
     }
 
     private sealed class InterfaceState

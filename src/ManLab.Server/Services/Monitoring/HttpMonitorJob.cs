@@ -3,6 +3,7 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
+using ManLab.Server.Services.Network;
 using Microsoft.EntityFrameworkCore;
 using Quartz;
 
@@ -13,11 +14,16 @@ public sealed class HttpMonitorJob : IJob
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<HttpMonitorJob> _logger;
+    private readonly INetworkToolHistoryService _history;
 
-    public HttpMonitorJob(IServiceScopeFactory scopeFactory, ILogger<HttpMonitorJob> logger)
+    public HttpMonitorJob(
+        IServiceScopeFactory scopeFactory,
+        ILogger<HttpMonitorJob> logger,
+        INetworkToolHistoryService history)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _history = history;
     }
 
     public async Task Execute(IJobExecutionContext context)
@@ -130,5 +136,29 @@ public sealed class HttpMonitorJob : IJob
 
         db.HttpMonitorChecks.Add(check);
         await db.SaveChangesAsync(context.CancellationToken).ConfigureAwait(false);
+
+        _ = _history.RecordAsync(
+            toolType: "monitor-http",
+            target: config.Url,
+            input: new
+            {
+                config.Name,
+                config.Url,
+                config.Method,
+                config.ExpectedStatus,
+                config.BodyContains,
+                config.TimeoutMs,
+                config.Cron
+            },
+            result: new
+            {
+                StatusCode = statusCode,
+                ResponseTimeMs = check.ResponseTimeMs,
+                KeywordMatched = keywordMatched,
+                SslDaysRemaining = sslDaysRemaining
+            },
+            success: success,
+            durationMs: (int)sw.ElapsedMilliseconds,
+            error: errorMessage);
     }
 }

@@ -60,6 +60,23 @@ public sealed class MonitorJobBootstrapper : IHostedService
                 _logger.LogError(ex, "Failed to schedule traffic monitor {MonitorId}", config.Id);
             }
         }
+
+        var scheduledTools = await db.ScheduledNetworkToolConfigs
+            .AsNoTracking()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var config in scheduledTools)
+        {
+            try
+            {
+                await _scheduler.ApplyScheduledToolScheduleAsync(config, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to schedule network tool {ScheduleId}", config.Id);
+            }
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

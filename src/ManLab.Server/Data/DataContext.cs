@@ -52,6 +52,7 @@ public class DataContext : DbContext
     public DbSet<HttpMonitorCheck> HttpMonitorChecks => Set<HttpMonitorCheck>();
     public DbSet<TrafficMonitorConfig> TrafficMonitorConfigs => Set<TrafficMonitorConfig>();
     public DbSet<TrafficSample> TrafficSamples => Set<TrafficSample>();
+    public DbSet<ScheduledNetworkToolConfig> ScheduledNetworkToolConfigs => Set<ScheduledNetworkToolConfig>();
 
     public DbSet<AlertRule> AlertRules => Set<AlertRule>();
     public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
@@ -279,6 +280,35 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.InterfaceName);
             entity.HasIndex(e => new { e.InterfaceName, e.TimestampUtc });
         });
+
+        // Monitoring: Scheduled network tools
+        modelBuilder.Entity<ScheduledNetworkToolConfig>(entity =>
+        {
+            entity.ToTable("ScheduledNetworkToolConfigs");
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.Name)
+                .IsRequired()
+                .HasMaxLength(128);
+
+            entity.Property(e => e.ToolType)
+                .IsRequired()
+                .HasMaxLength(32);
+
+            entity.Property(e => e.Target)
+                .HasMaxLength(256);
+
+            entity.Property(e => e.Cron)
+                .IsRequired()
+                .HasMaxLength(64);
+
+            entity.HasIndex(e => e.Enabled);
+            entity.HasIndex(e => e.UpdatedAt);
+            entity.HasIndex(e => e.ToolType);
+            entity.HasIndex(e => new { e.ToolType, e.Enabled });
+            entity.Property(e => e.ParametersJson).HasColumnType("jsonb");
+        });
+
 
         // Enhancements: Alerting
         modelBuilder.Entity<AlertRule>(entity =>

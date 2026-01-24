@@ -18,6 +18,8 @@ public sealed class MonitorJobScheduler
     public static TriggerKey GetHttpTriggerKey(Guid id) => new($"http-monitor-trigger-{id}", JobGroup);
     public static JobKey GetTrafficJobKey(Guid id) => new($"traffic-monitor-{id}", JobGroup);
     public static TriggerKey GetTrafficTriggerKey(Guid id) => new($"traffic-monitor-trigger-{id}", JobGroup);
+    public static JobKey GetScheduledToolJobKey(Guid id) => new($"scheduled-tool-{id}", JobGroup);
+    public static TriggerKey GetScheduledToolTriggerKey(Guid id) => new($"scheduled-tool-trigger-{id}", JobGroup);
 
     public async Task ApplyHttpMonitorScheduleAsync(HttpMonitorConfig config, CancellationToken ct = default)
     {
@@ -85,6 +87,39 @@ public sealed class MonitorJobScheduler
         await scheduler.ScheduleJob(job, trigger, ct).ConfigureAwait(false);
     }
 
+    public async Task ApplyScheduledToolScheduleAsync(ScheduledNetworkToolConfig config, CancellationToken ct = default)
+    {
+        var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
+        var jobKey = GetScheduledToolJobKey(config.Id);
+        var triggerKey = GetScheduledToolTriggerKey(config.Id);
+
+        if (!config.Enabled)
+        {
+            if (await scheduler.CheckExists(jobKey, ct).ConfigureAwait(false))
+            {
+                await scheduler.DeleteJob(jobKey, ct).ConfigureAwait(false);
+            }
+            return;
+        }
+
+        var job = JobBuilder.Create<ScheduledNetworkToolJob>()
+            .WithIdentity(jobKey)
+            .UsingJobData("scheduleId", config.Id.ToString())
+            .Build();
+
+        var trigger = TriggerBuilder.Create()
+            .WithIdentity(triggerKey)
+            .WithCronSchedule(config.Cron, cron => cron.WithMisfireHandlingInstructionDoNothing())
+            .Build();
+
+        if (await scheduler.CheckExists(jobKey, ct).ConfigureAwait(false))
+        {
+            await scheduler.DeleteJob(jobKey, ct).ConfigureAwait(false);
+        }
+
+        await scheduler.ScheduleJob(job, trigger, ct).ConfigureAwait(false);
+    }
+
     public async Task TriggerHttpMonitorAsync(Guid id, CancellationToken ct = default)
     {
         var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
@@ -97,6 +132,12 @@ public sealed class MonitorJobScheduler
         await scheduler.TriggerJob(GetTrafficJobKey(id), ct).ConfigureAwait(false);
     }
 
+    public async Task TriggerScheduledToolAsync(Guid id, CancellationToken ct = default)
+    {
+        var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
+        await scheduler.TriggerJob(GetScheduledToolJobKey(id), ct).ConfigureAwait(false);
+    }
+
     public async Task RemoveHttpMonitorAsync(Guid id, CancellationToken ct = default)
     {
         var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
@@ -107,5 +148,11 @@ public sealed class MonitorJobScheduler
     {
         var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
         await scheduler.DeleteJob(GetTrafficJobKey(id), ct).ConfigureAwait(false);
+    }
+
+    public async Task RemoveScheduledToolAsync(Guid id, CancellationToken ct = default)
+    {
+        var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
+        await scheduler.DeleteJob(GetScheduledToolJobKey(id), ct).ConfigureAwait(false);
     }
 }

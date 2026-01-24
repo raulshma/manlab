@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Activity, Network, Globe } from "lucide-react";
+import { Activity, Network, Globe, Signal } from "lucide-react";
 import { MonitorJobsPanel } from "../components/monitoring/MonitorJobsPanel";
 import { HttpMonitorsPanel } from "../components/monitoring/HttpMonitorsPanel";
 import { TrafficMonitorPanel } from "../components/monitoring/TrafficMonitorPanel";
+import { EnhancedNetworkTelemetryPanel } from "../components/monitoring/EnhancedNetworkTelemetryPanel";
 
 export function MonitoringPage() {
   const [activeTab, setActiveTab] = useState("jobs");
@@ -26,7 +27,7 @@ export function MonitoringPage() {
       <Card className="border-0 shadow-none sm:border sm:shadow">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <CardHeader className="pb-2">
-            <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3">
+            <TabsList className="grid w-full grid-cols-1 sm:grid-cols-4">
               <TabsTrigger value="jobs" className="gap-2">
                 <Activity className="h-4 w-4" />
                 Jobs
@@ -39,6 +40,10 @@ export function MonitoringPage() {
                 <Network className="h-4 w-4" />
                 Traffic
               </TabsTrigger>
+              <TabsTrigger value="enhanced" className="gap-2">
+                <Signal className="h-4 w-4" />
+                Network Telemetry
+              </TabsTrigger>
             </TabsList>
           </CardHeader>
           <CardContent>
@@ -50,6 +55,9 @@ export function MonitoringPage() {
             </TabsContent>
             <TabsContent value="traffic" className="mt-0">
               <TrafficMonitorPanel />
+            </TabsContent>
+            <TabsContent value="enhanced" className="mt-0">
+              <EnhancedNetworkTelemetryPanel />
             </TabsContent>
           </CardContent>
         </Tabs>

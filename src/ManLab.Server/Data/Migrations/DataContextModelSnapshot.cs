@@ -370,6 +370,110 @@ namespace ManLab.Server.Data.Migrations
                     b.ToTable("GpuSnapshots");
                 });
 
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.HttpMonitorCheck", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("TimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<bool?>("KeywordMatched")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("MonitorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ResponseTimeMs")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("SslDaysRemaining")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("StatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id", "TimestampUtc");
+
+                    b.HasIndex("MonitorId");
+
+                    b.HasIndex("TimestampUtc");
+
+                    b.HasIndex("MonitorId", "TimestampUtc");
+
+                    b.HasIndex("MonitorId", "Success", "TimestampUtc");
+
+                    b.ToTable("HttpMonitorChecks");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.HttpMonitorConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BodyContains")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Cron")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("ExpectedStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastRunAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastSuccessAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Method")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("TimeoutMs")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Enabled");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.HasIndex("Url");
+
+                    b.ToTable("HttpMonitorConfigs");
+                });
+
             modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.LogViewerPolicy", b =>
                 {
                     b.Property<Guid>("Id")
@@ -408,6 +512,62 @@ namespace ManLab.Server.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("LogViewerPolicies");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.ScheduledNetworkToolConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Cron")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastRunAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastSuccessAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ParametersJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Target")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("ToolType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Enabled");
+
+                    b.HasIndex("ToolType");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.HasIndex("ToolType", "Enabled");
+
+                    b.ToTable("ScheduledNetworkToolConfigs", (string)null);
                 });
 
             modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.Script", b =>
@@ -659,6 +819,86 @@ namespace ManLab.Server.Data.Migrations
                     b.ToTable("TerminalSessions");
                 });
 
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.TrafficMonitorConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Cron")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("InterfaceName")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime?>("LastRunAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Enabled");
+
+                    b.HasIndex("InterfaceName");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("TrafficMonitorConfigs");
+                });
+
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.TrafficSample", b =>
+                {
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("TimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InterfaceName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<long?>("RxBytesPerSec")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("RxErrors")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SpeedBps")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("TxBytesPerSec")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("TxErrors")
+                        .HasColumnType("bigint");
+
+                    b.Property<float?>("UtilizationPercent")
+                        .HasColumnType("real");
+
+                    b.HasKey("Id", "TimestampUtc");
+
+                    b.HasIndex("InterfaceName");
+
+                    b.HasIndex("TimestampUtc");
+
+                    b.HasIndex("InterfaceName", "TimestampUtc");
+
+                    b.ToTable("TrafficSamples");
+                });
+
             modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.UpsSnapshot", b =>
                 {
                     b.Property<long>("Id")
@@ -697,196 +937,6 @@ namespace ManLab.Server.Data.Migrations
                     b.HasIndex("NodeId", "Timestamp");
 
                     b.ToTable("UpsSnapshots");
-                });
-
-            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.HttpMonitorConfig", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("BodyContains")
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)");
-
-                    b.Property<string>("Cron")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("Enabled")
-                        .HasColumnType("boolean");
-
-                    b.Property<int?>("ExpectedStatus")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("LastRunAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("LastSuccessAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Method")
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<int>("TimeoutMs")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Url")
-                        .IsRequired()
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Enabled");
-
-                    b.HasIndex("UpdatedAt");
-
-                    b.HasIndex("Url");
-
-                    b.ToTable("HttpMonitorConfigs");
-                });
-
-            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.HttpMonitorCheck", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(2048)
-                        .HasColumnType("character varying(2048)");
-
-                    b.Property<bool?>("KeywordMatched")
-                        .HasColumnType("boolean");
-
-                    b.Property<Guid>("MonitorId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("ResponseTimeMs")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("SslDaysRemaining")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("StatusCode")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("Success")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime>("TimestampUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id", "TimestampUtc");
-
-                    b.HasIndex("MonitorId");
-
-                    b.HasIndex("TimestampUtc");
-
-                    b.HasIndex("MonitorId", "TimestampUtc");
-
-                    b.HasIndex("MonitorId", "Success", "TimestampUtc");
-
-                    b.ToTable("HttpMonitorChecks");
-                });
-
-            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.TrafficMonitorConfig", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Cron")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("Enabled")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("InterfaceName")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<DateTime?>("LastRunAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Enabled");
-
-                    b.HasIndex("InterfaceName");
-
-                    b.HasIndex("UpdatedAt");
-
-                    b.ToTable("TrafficMonitorConfigs");
-                });
-
-            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.TrafficSample", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("InterfaceName")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<long?>("RxBytesPerSec")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("RxErrors")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("SpeedBps")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("TimestampUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<long?>("TxBytesPerSec")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("TxErrors")
-                        .HasColumnType("bigint");
-
-                    b.Property<float?>("UtilizationPercent")
-                        .HasColumnType("real");
-
-                    b.HasKey("Id", "TimestampUtc");
-
-                    b.HasIndex("InterfaceName");
-
-                    b.HasIndex("TimestampUtc");
-
-                    b.HasIndex("InterfaceName", "TimestampUtc");
-
-                    b.ToTable("TrafficSamples");
                 });
 
             modelBuilder.Entity("ManLab.Server.Data.Entities.EnrollmentToken", b =>
@@ -1405,6 +1455,17 @@ namespace ManLab.Server.Data.Migrations
                     b.Navigation("Node");
                 });
 
+            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.HttpMonitorCheck", b =>
+                {
+                    b.HasOne("ManLab.Server.Data.Entities.Enhancements.HttpMonitorConfig", "Monitor")
+                        .WithMany()
+                        .HasForeignKey("MonitorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Monitor");
+                });
+
             modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.LogViewerPolicy", b =>
                 {
                     b.HasOne("ManLab.Server.Data.Entities.Node", "Node")
@@ -1488,17 +1549,6 @@ namespace ManLab.Server.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Node");
-                });
-
-            modelBuilder.Entity("ManLab.Server.Data.Entities.Enhancements.HttpMonitorCheck", b =>
-                {
-                    b.HasOne("ManLab.Server.Data.Entities.Enhancements.HttpMonitorConfig", "Monitor")
-                        .WithMany()
-                        .HasForeignKey("MonitorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Monitor");
                 });
 
             modelBuilder.Entity("ManLab.Server.Data.Entities.NodeSetting", b =>
