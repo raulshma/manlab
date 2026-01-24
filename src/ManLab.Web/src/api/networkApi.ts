@@ -1602,6 +1602,14 @@ export interface HostFoundEvent {
 }
 
 /**
+ * Hosts found during subnet scan (batched) event.
+ */
+export interface HostFoundBatchEvent {
+  scanId: string;
+  hosts: DiscoveredHost[];
+}
+
+/**
  * Subnet scan completed event.
  */
 export interface ScanCompletedEvent {
@@ -1843,6 +1851,10 @@ export interface PacketCaptureRecord {
   sourceMac: string | null;
   destinationMac: string | null;
   info: string | null;
+}
+
+export interface PacketCaptureBatchEvent {
+  records: PacketCaptureRecord[];
 }
 
 export interface PacketCaptureStartRequest {

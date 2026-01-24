@@ -8,11 +8,15 @@ public sealed record PacketCaptureOptions
     public int MaxBufferedPackets { get; init; } = 2000;
     public int SnapLength { get; init; } = 65535;
     public bool Promiscuous { get; init; } = true;
+    public int BroadcastBatchSize { get; init; } = 50;
+    public int BroadcastIntervalMs { get; init; } = 150;
+    public int BroadcastSampleEvery { get; init; } = 1;
 }
 
 public sealed record PacketCaptureStatus
 {
     public bool Enabled { get; init; }
+    public bool PcapAvailable { get; init; }
     public bool IsCapturing { get; init; }
     public string? DeviceName { get; init; }
     public string? Filter { get; init; }

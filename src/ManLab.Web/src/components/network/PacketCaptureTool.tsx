@@ -33,7 +33,12 @@ function formatTimestamp(value: string): string {
 }
 
 export function PacketCaptureTool() {
-  const { isConnected, subscribePacketCapture, unsubscribePacketCapture, subscribeToPacketCapture } = useNetworkHub();
+  const {
+    isConnected,
+    subscribePacketCapture,
+    unsubscribePacketCapture,
+    subscribeToPacketCaptureBatch,
+  } = useNetworkHub();
   const [status, setStatus] = useState<PacketCaptureStatus | null>(null);
   const [devices, setDevices] = useState<PacketCaptureDeviceInfo[]>([]);
   const [packets, setPackets] = useState<PacketCaptureRecord[]>([]);
@@ -71,9 +76,10 @@ export function PacketCaptureTool() {
       // ignore
     });
 
-    const unsubscribe = subscribeToPacketCapture((packet) => {
+    const unsubscribe = subscribeToPacketCaptureBatch((batch) => {
       if (paused) return;
-      setPackets((prev) => [...prev, packet].slice(-MAX_PACKETS));
+      if (!batch || batch.length === 0) return;
+      setPackets((prev) => [...prev, ...batch].slice(-MAX_PACKETS));
     });
 
     return () => {
@@ -82,7 +88,7 @@ export function PacketCaptureTool() {
         // ignore
       });
     };
-  }, [isConnected, paused, subscribePacketCapture, subscribeToPacketCapture, unsubscribePacketCapture]);
+  }, [isConnected, paused, subscribePacketCapture, subscribeToPacketCaptureBatch, unsubscribePacketCapture]);
 
   const handleStart = useCallback(async () => {
     setIsStarting(true);

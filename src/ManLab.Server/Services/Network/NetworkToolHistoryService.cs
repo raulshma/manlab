@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Channels;
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
@@ -24,6 +25,11 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
     private readonly Channel<NetworkToolHistoryEntry> _channel;
     private Task? _writerTask;
     private CancellationTokenSource? _cts;
+    private long _enqueuedCount;
+    private long _writtenCount;
+    private long _droppedCount;
+    private DateTime? _lastErrorUtc;
+    private string? _lastError;
 
     public NetworkToolHistoryService(
         IServiceScopeFactory scopeFactory,
@@ -66,7 +72,12 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
         // Non-blocking write to channel
         if (!_channel.Writer.TryWrite(entry))
         {
+            Interlocked.Increment(ref _droppedCount);
             _logger.LogWarning("Network tool history channel full, dropping entry for {ToolType}", toolType);
+        }
+        else
+        {
+            Interlocked.Increment(ref _enqueuedCount);
         }
 
         return Task.FromResult(entry.Id);
@@ -239,6 +250,24 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
         _logger.LogInformation("Network tool history writer stopped");
     }
 
+    public NetworkToolHistoryStatus GetStatus()
+    {
+        var enqueued = Interlocked.Read(ref _enqueuedCount);
+        var written = Interlocked.Read(ref _writtenCount);
+        var dropped = Interlocked.Read(ref _droppedCount);
+        var pending = Math.Max(0, enqueued - written);
+
+        return new NetworkToolHistoryStatus
+        {
+            EnqueuedCount = enqueued,
+            WrittenCount = written,
+            DroppedCount = dropped,
+            PendingCount = pending,
+            LastErrorUtc = _lastErrorUtc,
+            LastError = _lastError
+        };
+    }
+
     private async Task WriteLoopAsync(CancellationToken ct)
     {
         var batch = new List<NetworkToolHistoryEntry>(50);
@@ -260,7 +289,11 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
 
                     if (batch.Count > 0)
                     {
-                        await FlushBatchAsync(batch);
+                        var flushed = await FlushBatchAsync(batch);
+                        if (flushed)
+                        {
+                            Interlocked.Add(ref _writtenCount, batch.Count);
+                        }
                     }
                 }
             }
@@ -270,7 +303,7 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in network tool history write loop");
+                TrackError(ex, "Error in network tool history write loop");
                 await Task.Delay(1000, ct);
             }
         }
@@ -284,11 +317,15 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
 
         if (batch.Count > 0)
         {
-            await FlushBatchAsync(batch);
+            var flushed = await FlushBatchAsync(batch);
+            if (flushed)
+            {
+                Interlocked.Add(ref _writtenCount, batch.Count);
+            }
         }
     }
 
-    private async Task FlushBatchAsync(List<NetworkToolHistoryEntry> batch)
+    private async Task<bool> FlushBatchAsync(List<NetworkToolHistoryEntry> batch)
     {
         try
         {
@@ -299,11 +336,20 @@ public sealed class NetworkToolHistoryService : INetworkToolHistoryService, IHos
             await db.SaveChangesAsync();
 
             _logger.LogDebug("Flushed {Count} network tool history entries", batch.Count);
+            return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to flush network tool history batch of {Count} entries", batch.Count);
+            TrackError(ex, "Failed to flush network tool history batch of {Count} entries", batch.Count);
+            return false;
         }
+    }
+
+    private void TrackError(Exception ex, string messageTemplate, params object[] args)
+    {
+        _lastErrorUtc = DateTime.UtcNow;
+        _lastError = ex.Message;
+        _logger.LogError(ex, messageTemplate, args);
     }
 
     private static string? SerializeToJson(object? obj)

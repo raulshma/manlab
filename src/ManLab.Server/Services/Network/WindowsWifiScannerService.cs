@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
@@ -210,24 +211,53 @@ public sealed class WindowsWifiScannerService : IWifiScannerService
 
                         // Trigger a scan (optional, may require elevated privileges)
                         WlanScan(clientHandle, ref selectedInterface.InterfaceGuid, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-                        
-                        // Give some time for scan to complete
-                        Thread.Sleep(1000);
 
-                        // Get available networks
-                        IntPtr networkList;
-                        result = WlanGetAvailableNetworkList(
-                            clientHandle,
-                            ref selectedInterface.InterfaceGuid,
-                            0x00000002, // WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_ADHOC_PROFILES
-                            IntPtr.Zero,
-                            out networkList);
+                        // Poll for scan completion with a bounded wait
+                        IntPtr networkList = IntPtr.Zero;
+                        uint networkResult = 0;
+                        var scanWait = Stopwatch.StartNew();
+                        const int maxWaitMs = 2000;
+                        const int pollIntervalMs = 100;
 
-                        if (result != 0)
+                        while (scanWait.ElapsedMilliseconds < maxWaitMs)
                         {
-                            _logger.LogWarning("WlanGetAvailableNetworkList failed with error {ErrorCode}", result);
+                            networkResult = WlanGetAvailableNetworkList(
+                                clientHandle,
+                                ref selectedInterface.InterfaceGuid,
+                                0x00000002, // WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_ADHOC_PROFILES
+                                IntPtr.Zero,
+                                out networkList);
+
+                            if (networkResult == 0 && networkList != IntPtr.Zero)
+                            {
+                                var networkHeader = Marshal.PtrToStructure<WLAN_AVAILABLE_NETWORK_LIST>(networkList);
+                                if (networkHeader.dwNumberOfItems > 0)
+                                {
+                                    break;
+                                }
+
+                                WlanFreeMemory(networkList);
+                                networkList = IntPtr.Zero;
+                            }
+
+                            Thread.Sleep(pollIntervalMs);
                         }
-                        else
+
+                        if (networkList == IntPtr.Zero)
+                        {
+                            networkResult = WlanGetAvailableNetworkList(
+                                clientHandle,
+                                ref selectedInterface.InterfaceGuid,
+                                0x00000002, // WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_ADHOC_PROFILES
+                                IntPtr.Zero,
+                                out networkList);
+                        }
+
+                        if (networkResult != 0)
+                        {
+                            _logger.LogWarning("WlanGetAvailableNetworkList failed with error {ErrorCode}", networkResult);
+                        }
+                        else if (networkList != IntPtr.Zero)
                         {
                             try
                             {

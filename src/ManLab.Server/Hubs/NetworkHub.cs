@@ -170,6 +170,17 @@ public class NetworkHub : Hub
             };
         }
 
+        if (!TryValidateCidr(cidr, out var cidrError))
+        {
+            _rateLimit.EndScan(Context.ConnectionId);
+            return new NetworkScanStartResult
+            {
+                ScanId = scanId,
+                Success = false,
+                ErrorMessage = cidrError
+            };
+        }
+
         // Validate private network
         if (!IsPrivateNetwork(cidr))
         {
@@ -181,6 +192,9 @@ public class NetworkHub : Hub
                 ErrorMessage = "Only private network ranges are allowed"
             };
         }
+
+        concurrencyLimit = Math.Clamp(concurrencyLimit, 10, 200);
+        timeout = Math.Clamp(timeout, 100, 5000);
 
         // Get total hosts to scan
         int totalHosts;
@@ -356,6 +370,10 @@ public class NetworkHub : Hub
 
         // Notify scan started
         var portsToScan = ports ?? GetCommonPorts();
+        if (portsToScan.Length > 1000)
+        {
+            throw new HubException("Maximum 1000 ports allowed per scan");
+        }
         await Clients.Group(GetScanGroup(scanId)).SendAsync("PortScanStarted", new PortScanStartedEvent
         {
             ScanId = scanId,
@@ -687,8 +705,12 @@ public class NetworkHub : Hub
     {
         var startedAt = DateTime.UtcNow;
         var foundHostCount = 0;
-        var foundHosts = new List<DiscoveredHost>();
+        var foundHosts = new Dictionary<string, DiscoveredHost>(StringComparer.OrdinalIgnoreCase);
+        var hostBatch = new List<DiscoveredHost>();
         var lastProgressUpdate = DateTime.UtcNow;
+        var lastBatchFlush = DateTime.UtcNow;
+        const int hostBatchSize = 25;
+        const int hostBatchIntervalMs = 150;
         
         // Record the request for rate limiting
         _rateLimit.RecordRequest(connectionId, "subnet");
@@ -701,18 +723,30 @@ public class NetworkHub : Hub
         {
             await foreach (var host in _scanner.ScanSubnetAsync(cidr, concurrencyLimit, timeout))
             {
-                foundHosts.Add(host);
-                foundHostCount++;
-
-                // Send host found event
-                await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("HostFound", new HostFoundEvent
+                var isNew = !foundHosts.ContainsKey(host.IpAddress);
+                foundHosts[host.IpAddress] = host;
+                if (isNew)
                 {
-                    ScanId = scanId,
-                    Host = host
-                });
+                    foundHostCount++;
+                }
+
+                hostBatch.Add(host);
+
+                var now = DateTime.UtcNow;
+                if (hostBatch.Count >= hostBatchSize || (now - lastBatchFlush).TotalMilliseconds >= hostBatchIntervalMs)
+                {
+                    var batchToSend = hostBatch.ToList();
+                    hostBatch.Clear();
+                    lastBatchFlush = now;
+
+                    await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("HostFoundBatch", new HostFoundBatchEvent
+                    {
+                        ScanId = scanId,
+                        Hosts = batchToSend
+                    });
+                }
 
                 // Send progress updates every 500ms or every 10 hosts found
-                var now = DateTime.UtcNow;
                 if ((now - lastProgressUpdate).TotalMilliseconds >= 500 || foundHostCount % 10 == 0)
                 {
                     // Estimate how many hosts have been scanned based on elapsed time
@@ -733,6 +767,16 @@ public class NetworkHub : Hub
                 }
             }
 
+            if (hostBatch.Count > 0)
+            {
+                await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("HostFoundBatch", new HostFoundBatchEvent
+                {
+                    ScanId = scanId,
+                    Hosts = hostBatch.ToList()
+                });
+                hostBatch.Clear();
+            }
+
             // Send completion event
             await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("ScanCompleted", new ScanCompletedEvent
             {
@@ -740,7 +784,7 @@ public class NetworkHub : Hub
                 Cidr = cidr,
                 TotalHosts = totalHosts,
                 HostsFound = foundHosts.Count,
-                Hosts = foundHosts,
+                Hosts = foundHosts.Values.ToList(),
                 StartedAt = startedAt,
                 CompletedAt = DateTime.UtcNow
             });
@@ -805,6 +849,38 @@ public class NetworkHub : Hub
         if (bytes[0] == 169 && bytes[1] == 254) return true;
 
         return false;
+    }
+
+    private static bool TryValidateCidr(string cidr, out string? errorMessage)
+    {
+        errorMessage = null;
+
+        var parts = cidr.Split('/');
+        if (parts.Length != 2)
+        {
+            errorMessage = "CIDR must be in format IP/prefix (e.g., 192.168.1.0/24)";
+            return false;
+        }
+
+        if (!System.Net.IPAddress.TryParse(parts[0], out var ip))
+        {
+            errorMessage = $"Invalid IP address: {parts[0]}";
+            return false;
+        }
+
+        if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            errorMessage = "Only IPv4 addresses are supported";
+            return false;
+        }
+
+        if (!int.TryParse(parts[1], out var prefix) || prefix < 16 || prefix > 30)
+        {
+            errorMessage = "Prefix length must be between 16 and 30 (e.g., /24 for 254 hosts)";
+            return false;
+        }
+
+        return true;
     }
 
     private static bool IsAllowedHostForPortScan(string host)
@@ -1081,6 +1157,15 @@ public record HostFoundEvent
 {
     public required string ScanId { get; init; }
     public required ManLab.Server.Services.Network.DiscoveredHost Host { get; init; }
+}
+
+/// <summary>
+/// Batched hosts found during subnet scan event.
+/// </summary>
+public record HostFoundBatchEvent
+{
+    public required string ScanId { get; init; }
+    public List<ManLab.Server.Services.Network.DiscoveredHost> Hosts { get; init; } = [];
 }
 
 /// <summary>

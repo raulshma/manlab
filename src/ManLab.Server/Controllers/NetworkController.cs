@@ -33,6 +33,7 @@ public class NetworkController : ControllerBase
     private readonly INetworkTopologyService _topology;
     private readonly INetworkToolHistoryService _history;
     private readonly IArpService? _arpService;
+    private readonly NetworkRateLimitService _rateLimit;
     private readonly ILogger<NetworkController> _logger;
     private readonly IAuditLog _audit;
 
@@ -47,6 +48,7 @@ public class NetworkController : ControllerBase
         INetworkTopologyService topology,
         INetworkToolHistoryService history,
         IArpService? arpService,
+        NetworkRateLimitService rateLimit,
         ILogger<NetworkController> logger,
         IAuditLog audit)
     {
@@ -60,6 +62,7 @@ public class NetworkController : ControllerBase
         _topology = topology;
         _history = history;
         _arpService = arpService;
+        _rateLimit = rateLimit;
         _logger = logger;
         _audit = audit;
     }
@@ -403,6 +406,11 @@ public class NetworkController : ControllerBase
             });
         }
 
+        if (!TryApplyRateLimit("subnet", out var rateLimitResult))
+        {
+            return rateLimitResult!;
+        }
+
         var concurrency = Math.Clamp(request.ConcurrencyLimit ?? 100, 10, 200);
         var timeout = Math.Clamp(request.Timeout ?? 500, 100, 5000);
         var startedAt = DateTime.UtcNow;
@@ -605,6 +613,11 @@ public class NetworkController : ControllerBase
         var maxHops = Math.Clamp(request.MaxHops ?? 30, 1, 64);
         var timeout = Math.Clamp(request.Timeout ?? 1000, 100, 5000);
 
+        if (!TryApplyRateLimit("traceroute", out var rateLimitResult))
+        {
+            return rateLimitResult!;
+        }
+
         try
         {
             var result = await _scanner.TraceRouteAsync(request.Host, maxHops, timeout, ct);
@@ -667,6 +680,11 @@ public class NetworkController : ControllerBase
                 Code = "TOO_MANY_PORTS",
                 Message = "Maximum 1000 ports allowed per scan"
             });
+        }
+
+        if (!TryApplyRateLimit("portscan", out var rateLimitResult))
+        {
+            return rateLimitResult!;
         }
 
         var concurrency = Math.Clamp(request.Concurrency ?? 50, 10, 100);
@@ -1777,6 +1795,11 @@ public class NetworkController : ControllerBase
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
+        if (!TryApplyRateLimit("speedtest", out var rateLimitResult))
+        {
+            return rateLimitResult!;
+        }
+
         try
         {
             var result = await _speedTest.RunAsync(request ?? new SpeedTestRequest(), ct);
@@ -1971,6 +1994,11 @@ public class NetworkController : ControllerBase
     {
         var scanDuration = Math.Clamp(request?.ScanDurationSeconds ?? 5, 1, 30);
 
+        if (!TryApplyRateLimit("discovery", out var rateLimitResult))
+        {
+            return rateLimitResult!;
+        }
+
         try
         {
             var result = await _discovery.DiscoverAllAsync(scanDuration, ct: ct);
@@ -2009,6 +2037,11 @@ public class NetworkController : ControllerBase
         var scanDuration = Math.Clamp(request?.ScanDurationSeconds ?? 5, 1, 30);
         var serviceTypes = request?.ServiceTypes;
 
+        if (!TryApplyRateLimit("discovery", out var rateLimitResult))
+        {
+            return rateLimitResult!;
+        }
+
         try
         {
             var result = await _discovery.DiscoverMdnsAsync(serviceTypes, scanDuration, ct);
@@ -2046,6 +2079,11 @@ public class NetworkController : ControllerBase
     {
         var scanDuration = Math.Clamp(request?.ScanDurationSeconds ?? 5, 1, 30);
         var searchTarget = request?.SearchTarget;
+
+        if (!TryApplyRateLimit("discovery", out var rateLimitResult))
+        {
+            return rateLimitResult!;
+        }
 
         try
         {
@@ -2542,6 +2580,55 @@ public class NetworkController : ControllerBase
 
         normalized = string.Join(":", bytes.Select(b => b.ToString("X2")));
         return true;
+    }
+
+    private bool TryApplyRateLimit(string operation, out ActionResult? result)
+    {
+        var key = GetRateLimitKey();
+        var (isLimited, retryAfter) = _rateLimit.CheckRateLimit(key, operation);
+        if (isLimited)
+        {
+            result = RateLimitExceeded(operation, retryAfter);
+            return false;
+        }
+
+        _rateLimit.RecordRequest(key, operation);
+        result = null;
+        return true;
+    }
+
+    private ActionResult RateLimitExceeded(string operation, int retryAfterSeconds)
+    {
+        if (retryAfterSeconds > 0)
+        {
+            Response.Headers["Retry-After"] = retryAfterSeconds.ToString();
+        }
+
+        return StatusCode(429, new NetworkScanError
+        {
+            Code = "RATE_LIMITED",
+            Message = $"Rate limit exceeded for {operation}",
+            Details = retryAfterSeconds > 0
+                ? $"Retry after {retryAfterSeconds} seconds."
+                : "Please retry later."
+        });
+    }
+
+    private string GetRateLimitKey()
+    {
+        var userId = HttpContext.User?.Identity?.Name;
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            return $"user:{userId}";
+        }
+
+        var remoteIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+        if (!string.IsNullOrWhiteSpace(remoteIp))
+        {
+            return $"ip:{remoteIp}";
+        }
+
+        return $"conn:{HttpContext.Connection.Id}";
     }
 
     #endregion

@@ -10,13 +10,8 @@ namespace ManLab.Server.Services.Network;
 
 public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageStore
 {
-    private static readonly Regex Rfc5424Regex = new(
-        "^<(?<pri>\\d+)>(?<version>\\d+) (?<ts>[^ ]+) (?<host>[^ ]+) (?<app>[^ ]+) (?<proc>[^ ]+) (?<msgid>[^ ]+) (?<msg>.*)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex Rfc3164Regex = new(
-        "^<(?<pri>\\d+)>(?<ts>[A-Z][a-z]{2}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2})\\s+(?<host>[^ ]+)\\s+(?<msg>.*)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private readonly Regex _rfc5424Regex;
+    private readonly Regex _rfc3164Regex;
 
     private readonly IHubContext<NetworkHub> _hubContext;
     private readonly ILogger<SyslogReceiverService> _logger;
@@ -36,6 +31,15 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
         _options = options.Value;
         _hubContext = hubContext;
         _logger = logger;
+        var regexTimeout = TimeSpan.FromMilliseconds(Math.Clamp(_options.RegexTimeoutMs, 50, 2000));
+        _rfc5424Regex = new Regex(
+            "^<(?<pri>\\d+)>(?<version>\\d+) (?<ts>[^ ]+) (?<host>[^ ]+) (?<app>[^ ]+) (?<proc>[^ ]+) (?<msgid>[^ ]+) (?<msg>.*)$",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant,
+            regexTimeout);
+        _rfc3164Regex = new Regex(
+            "^<(?<pri>\\d+)>(?<ts>[A-Z][a-z]{2}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2})\\s+(?<host>[^ ]+)\\s+(?<msg>.*)$",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant,
+            regexTimeout);
         _status = new SyslogStatus
         {
             Enabled = _options.Enabled,
@@ -124,8 +128,17 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
             try
             {
                 var result = await _client.ReceiveAsync(stoppingToken).ConfigureAwait(false);
-                var payload = Encoding.UTF8.GetString(result.Buffer);
-                var message = ParseMessage(payload, result.RemoteEndPoint);
+                var truncated = false;
+                var buffer = result.Buffer;
+                var maxPayload = Math.Clamp(_options.MaxPayloadBytes, 1024, 131072);
+                if (buffer.Length > maxPayload)
+                {
+                    truncated = true;
+                    buffer = buffer.AsSpan(0, maxPayload).ToArray();
+                }
+
+                var payload = Encoding.UTF8.GetString(buffer);
+                var message = ParseMessage(payload, result.RemoteEndPoint, truncated);
 
                 AddMessage(message);
 
@@ -183,7 +196,7 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
         }
     }
 
-    private SyslogMessage ParseMessage(string payload, IPEndPoint source)
+    private SyslogMessage ParseMessage(string payload, IPEndPoint source, bool truncated)
     {
         var receivedAt = DateTime.UtcNow;
         int? facility = null;
@@ -194,27 +207,41 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
         string? msgId = null;
         string message = payload.TrimEnd();
 
-        var match5424 = Rfc5424Regex.Match(payload);
-        if (match5424.Success)
+        try
         {
-            var pri = ParsePri(match5424.Groups["pri"].Value, out facility, out severity);
-            _ = pri;
-            host = match5424.Groups["host"].Value;
-            app = NormalizeNil(match5424.Groups["app"].Value);
-            procId = NormalizeNil(match5424.Groups["proc"].Value);
-            msgId = NormalizeNil(match5424.Groups["msgid"].Value);
-            message = match5424.Groups["msg"].Value.Trim();
-        }
-        else
-        {
-            var match3164 = Rfc3164Regex.Match(payload);
-            if (match3164.Success)
+            var match5424 = _rfc5424Regex.Match(payload);
+            if (match5424.Success)
             {
-                ParsePri(match3164.Groups["pri"].Value, out facility, out severity);
-                host = match3164.Groups["host"].Value;
-                var rawMessage = match3164.Groups["msg"].Value.Trim();
-                ExtractAppInfoFrom3164(rawMessage, out app, out procId, out message);
+                var pri = ParsePri(match5424.Groups["pri"].Value, out facility, out severity);
+                _ = pri;
+                host = match5424.Groups["host"].Value;
+                app = NormalizeNil(match5424.Groups["app"].Value);
+                procId = NormalizeNil(match5424.Groups["proc"].Value);
+                msgId = NormalizeNil(match5424.Groups["msgid"].Value);
+                message = match5424.Groups["msg"].Value.Trim();
             }
+            else
+            {
+                var match3164 = _rfc3164Regex.Match(payload);
+                if (match3164.Success)
+                {
+                    ParsePri(match3164.Groups["pri"].Value, out facility, out severity);
+                    host = match3164.Groups["host"].Value;
+                    var rawMessage = match3164.Groups["msg"].Value.Trim();
+                    ExtractAppInfoFrom3164(rawMessage, out app, out procId, out message);
+                }
+            }
+        }
+        catch (RegexMatchTimeoutException ex)
+        {
+            _logger.LogWarning(ex, "Syslog payload regex timed out");
+            return BuildFallbackMessage(payload, source, receivedAt, truncated, "regex_timeout");
+        }
+
+        if (string.Equals(message, payload.TrimEnd(), StringComparison.Ordinal) &&
+            string.IsNullOrWhiteSpace(host) && string.IsNullOrWhiteSpace(app) && string.IsNullOrWhiteSpace(procId))
+        {
+            return BuildFallbackMessage(payload, source, receivedAt, truncated, "unparsed");
         }
 
         return new SyslogMessage
@@ -228,10 +255,43 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
             ProcId = procId,
             MsgId = msgId,
             Message = message,
-            Raw = payload.TrimEnd(),
+            Raw = BuildSafeRaw(payload, truncated),
             SourceIp = source.Address.ToString(),
             SourcePort = source.Port
         };
+    }
+
+    private SyslogMessage BuildFallbackMessage(
+        string payload,
+        IPEndPoint source,
+        DateTime receivedAt,
+        bool truncated,
+        string reason)
+    {
+        var raw = BuildSafeRaw(payload, truncated);
+        var displayMessage = string.IsNullOrWhiteSpace(raw) ? $"[syslog {reason}]" : raw;
+
+        return new SyslogMessage
+        {
+            Id = Interlocked.Increment(ref _nextId),
+            ReceivedAtUtc = receivedAt,
+            Facility = null,
+            Severity = null,
+            Host = null,
+            AppName = null,
+            ProcId = null,
+            MsgId = null,
+            Message = displayMessage,
+            Raw = raw,
+            SourceIp = source.Address.ToString(),
+            SourcePort = source.Port
+        };
+    }
+
+    private static string BuildSafeRaw(string payload, bool truncated)
+    {
+        var raw = payload.TrimEnd();
+        return truncated ? $"{raw} [truncated]" : raw;
     }
 
     private static void ExtractAppInfoFrom3164(string rawMessage, out string? app, out string? procId, out string message)

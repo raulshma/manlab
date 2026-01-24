@@ -331,6 +331,26 @@ export function SubnetScanTool() {
     subscribeToSubnetScan,
   } = useNetworkHub();
 
+  const mergeHosts = useCallback((incoming: DiscoveredHost[]) => {
+    if (incoming.length === 0) return;
+    setHosts((prev) => {
+      const next = [...prev];
+      const indexByIp = new Map(prev.map((host, index) => [host.ipAddress, index]));
+
+      for (const host of incoming) {
+        const index = indexByIp.get(host.ipAddress);
+        if (index === undefined) {
+          indexByIp.set(host.ipAddress, next.length);
+          next.push(host);
+        } else {
+          next[index] = host;
+        }
+      }
+
+      return next;
+    });
+  }, []);
+
   // Subscribe to scan events
   useEffect(() => {
     if (!isConnected) return;
@@ -379,7 +399,10 @@ export function SubnetScanTool() {
         }
       },
       onHostFound: (event) => {
-        setHosts((prev) => [...prev, event.host]);
+        mergeHosts([event.host]);
+      },
+      onHostFoundBatch: (event) => {
+        mergeHosts(event.hosts);
       },
       onScanCompleted: (event) => {
         setScanState((prev) => ({

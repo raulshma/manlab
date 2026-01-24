@@ -8,6 +8,8 @@ namespace ManLab.Server.Services.Network;
 /// </summary>
 public class NetworkRateLimitOptions
 {
+    public const string SectionName = "NetworkRateLimit";
+
     /// <summary>
     /// Maximum number of concurrent subnet scans per connection.
     /// </summary>
@@ -37,6 +39,11 @@ public class NetworkRateLimitOptions
     /// Maximum requests per minute for device discovery operations.
     /// </summary>
     public int DiscoveryRequestsPerMinute { get; set; } = 10;
+
+    /// <summary>
+    /// Maximum requests per minute for speed test operations.
+    /// </summary>
+    public int SpeedTestRequestsPerMinute { get; set; } = 5;
 }
 
 /// <summary>
@@ -49,10 +56,10 @@ public sealed class NetworkRateLimitService
     private readonly NetworkRateLimitOptions _options;
     private readonly ConcurrentDictionary<string, int> _activeScans = new();
 
-    public NetworkRateLimitService(IMemoryCache cache, NetworkRateLimitOptions? options = null)
+    public NetworkRateLimitService(IMemoryCache cache, Microsoft.Extensions.Options.IOptions<NetworkRateLimitOptions> options)
     {
         _cache = cache;
-        _options = options ?? new NetworkRateLimitOptions();
+        _options = options?.Value ?? new NetworkRateLimitOptions();
     }
 
     /// <summary>
@@ -161,6 +168,7 @@ public sealed class NetworkRateLimitService
         "portscan" => _options.PortScanRequestsPerMinute,
         "subnet" => _options.SubnetScanRequestsPerMinute,
         "discovery" => _options.DiscoveryRequestsPerMinute,
+        "speedtest" => _options.SpeedTestRequestsPerMinute,
         _ => 30 // Default limit
     };
 

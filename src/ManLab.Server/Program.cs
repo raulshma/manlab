@@ -109,6 +109,10 @@ builder.Services.AddOptions<SyslogOptions>()
     .Bind(builder.Configuration.GetSection(SyslogOptions.SectionName));
 builder.Services.AddOptions<PacketCaptureOptions>()
     .Bind(builder.Configuration.GetSection(PacketCaptureOptions.SectionName));
+builder.Services.AddOptions<NetworkRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection("NetworkRateLimit"));
+builder.Services.AddOptions<PublicIpOptions>()
+    .Bind(builder.Configuration.GetSection(PublicIpOptions.SectionName));
 builder.Services.AddOptions<DiscordOptions>()
     .Bind(builder.Configuration.GetSection(DiscordOptions.SectionName))
     .Validate(o => string.IsNullOrWhiteSpace(o.WebhookUrl) || Uri.IsWellFormedUriString(o.WebhookUrl, UriKind.Absolute),

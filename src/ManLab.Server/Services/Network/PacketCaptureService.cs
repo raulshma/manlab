@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using PacketDotNet;
 using SharpPcap;
 using SharpPcap.LibPcap;
+using System.Threading.Channels;
 
 namespace ManLab.Server.Services.Network;
 
@@ -15,16 +16,26 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
 
     private readonly object _gate = new();
     private readonly List<PacketCaptureRecord> _packets = [];
+    private readonly Channel<PacketCaptureRecord> _broadcastChannel = Channel.CreateUnbounded<PacketCaptureRecord>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
     private long _nextId;
     private long _droppedCount;
+    private long _broadcastSampleCounter;
     private string? _error;
     private bool _pcapUnavailable;
     private bool _pcapUnavailableLogged;
+    private string? _pcapUnavailableReason;
     private string? _deviceName;
     private string? _filter;
     private bool _isCapturing;
     private ICaptureDevice? _device;
     private PacketArrivalEventHandler? _handler;
+    private CancellationTokenSource? _broadcastCts;
+    private Task? _broadcastLoop;
 
     public PacketCaptureService(
         IOptions<PacketCaptureOptions> options,
@@ -36,11 +47,39 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
         _logger = logger;
     }
 
-    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (!_options.Enabled)
+        {
+            return Task.CompletedTask;
+        }
+
+        EnsurePcapAvailable();
+
+        _broadcastCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _broadcastLoop = Task.Run(() => BroadcastLoopAsync(_broadcastCts.Token), cancellationToken);
+        return Task.CompletedTask;
+    }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         await StopCaptureAsync(cancellationToken).ConfigureAwait(false);
+
+        if (_broadcastCts is not null)
+        {
+            _broadcastCts.Cancel();
+            if (_broadcastLoop is not null)
+            {
+                try
+                {
+                    await _broadcastLoop.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { }
+            }
+            _broadcastCts.Dispose();
+            _broadcastCts = null;
+            _broadcastLoop = null;
+        }
     }
 
     public PacketCaptureStatus GetStatus()
@@ -50,6 +89,7 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
             return new PacketCaptureStatus
             {
                 Enabled = _options.Enabled,
+                PcapAvailable = !_pcapUnavailable,
                 IsCapturing = _isCapturing,
                 DeviceName = _deviceName,
                 Filter = _filter,
@@ -282,7 +322,8 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
         lock (_gate)
         {
             _pcapUnavailable = true;
-            _error = "Packet capture unavailable. Install Npcap (WinPcap-compatible) and restart the server.";
+            _pcapUnavailableReason = "Packet capture unavailable. Install Npcap (WinPcap-compatible) and restart the server.";
+            _error = _pcapUnavailableReason;
         }
 
         if (_pcapUnavailableLogged)
@@ -292,6 +333,27 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
 
         _pcapUnavailableLogged = true;
         _logger.LogWarning(ex, "Packet capture unavailable: missing native capture library");
+    }
+
+    private void EnsurePcapAvailable()
+    {
+        if (_pcapUnavailable)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = CaptureDeviceList.Instance;
+        }
+        catch (DllNotFoundException ex)
+        {
+            SetPcapUnavailable(ex);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to validate packet capture availability");
+        }
     }
 
     private void HandlePacket(PacketCapture capture)
@@ -314,9 +376,48 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
             }
         }
 
-        _ = _hubContext.Clients
-            .Group(NetworkHub.PacketCaptureGroup)
-            .SendAsync("PacketCaptured", record);
+        var sampleEvery = Math.Max(1, _options.BroadcastSampleEvery);
+        if (sampleEvery == 1 || Interlocked.Increment(ref _broadcastSampleCounter) % sampleEvery == 0)
+        {
+            _broadcastChannel.Writer.TryWrite(record);
+        }
+    }
+
+    private async Task BroadcastLoopAsync(CancellationToken ct)
+    {
+        var batchSize = Math.Clamp(_options.BroadcastBatchSize, 1, 500);
+        var intervalMs = Math.Clamp(_options.BroadcastIntervalMs, 25, 2000);
+        var batch = new List<PacketCaptureRecord>(batchSize);
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(intervalMs));
+
+        while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+        {
+            while (batch.Count < batchSize && _broadcastChannel.Reader.TryRead(out var record))
+            {
+                batch.Add(record);
+            }
+
+            if (batch.Count == 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                await _hubContext.Clients
+                    .Group(NetworkHub.PacketCaptureGroup)
+                    .SendAsync("PacketCapturedBatch", batch, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "Failed to broadcast packet batch");
+            }
+            finally
+            {
+                batch.Clear();
+            }
+        }
     }
 
     private PacketCaptureRecord? BuildRecord(RawCapture capture)

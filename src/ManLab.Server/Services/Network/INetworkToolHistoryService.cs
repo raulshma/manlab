@@ -78,6 +78,24 @@ public interface INetworkToolHistoryService
     /// Updates tags and notes for an existing history entry.
     /// </summary>
     Task<NetworkToolHistoryEntry?> UpdateMetadataAsync(Guid id, IReadOnlyList<string> tags, string? notes);
+
+    /// <summary>
+    /// Gets status metrics for the history writer.
+    /// </summary>
+    NetworkToolHistoryStatus GetStatus();
+}
+
+/// <summary>
+/// Status metrics for the history writer channel.
+/// </summary>
+public sealed record NetworkToolHistoryStatus
+{
+    public long EnqueuedCount { get; init; }
+    public long WrittenCount { get; init; }
+    public long DroppedCount { get; init; }
+    public long PendingCount { get; init; }
+    public DateTime? LastErrorUtc { get; init; }
+    public string? LastError { get; init; }
 }
 
 /// <summary>

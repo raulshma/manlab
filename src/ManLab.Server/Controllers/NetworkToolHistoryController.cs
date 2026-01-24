@@ -38,6 +38,15 @@ public class NetworkToolHistoryController : ControllerBase
     }
 
     /// <summary>
+    /// Gets status metrics for the history writer channel.
+    /// </summary>
+    [HttpGet("status")]
+    public ActionResult<NetworkToolHistoryStatus> GetStatus()
+    {
+        return Ok(_historyService.GetStatus());
+    }
+
+    /// <summary>
     /// Queries network tool history with advanced filtering, sorting, and paging.
     /// </summary>
     [HttpGet("query")]

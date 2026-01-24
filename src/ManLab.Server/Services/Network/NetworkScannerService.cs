@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using DnsClient;
+using Microsoft.Extensions.Options;
 
 namespace ManLab.Server.Services.Network;
 
@@ -25,6 +26,7 @@ public sealed class NetworkScannerService : INetworkScannerService
     private readonly IIpGeolocationService? _geolocationService;
     private readonly LookupClient _dnsClient;
     private readonly HttpClient _httpClient;
+    private readonly PublicIpOptions _publicIpOptions;
 
     /// <summary>
     /// Common ports to scan when no specific ports are provided.
@@ -56,6 +58,7 @@ public sealed class NetworkScannerService : INetworkScannerService
     public NetworkScannerService(
         ILogger<NetworkScannerService> logger,
         IHttpClientFactory httpClientFactory,
+        IOptions<PublicIpOptions> publicIpOptions,
         IArpService? arpService = null,
         IOuiDatabase? ouiDatabase = null,
         IIpGeolocationService? geolocationService = null)
@@ -66,6 +69,7 @@ public sealed class NetworkScannerService : INetworkScannerService
         _geolocationService = geolocationService;
         _httpClient = httpClientFactory.CreateClient();
         _httpClient.Timeout = TimeSpan.FromSeconds(5);
+        _publicIpOptions = publicIpOptions.Value ?? new PublicIpOptions();
         _dnsClient = new LookupClient(new LookupClientOptions
         {
             UseCache = true,
@@ -122,6 +126,7 @@ public sealed class NetworkScannerService : INetworkScannerService
 
         var ipRange = ParseCidr(cidr).ToList();
         var semaphore = new SemaphoreSlim(Math.Min(concurrencyLimit, 256));
+        var enrichmentSemaphore = new SemaphoreSlim(Math.Min(concurrencyLimit, 64));
         var channel = Channel.CreateUnbounded<DiscoveredHost>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -136,6 +141,7 @@ public sealed class NetworkScannerService : INetworkScannerService
             try
             {
                 var tasks = new List<Task>();
+            var enrichmentTasks = new ConcurrentBag<Task>();
                 
                 foreach (var ip in ipRange)
                 {
@@ -158,46 +164,30 @@ public sealed class NetworkScannerService : INetworkScannerService
                                     RoundtripTime = reply.RoundtripTime,
                                     DiscoveredAt = DateTime.UtcNow
                                 };
+                                await channel.Writer.WriteAsync(host, ct);
 
-                                // Try to resolve hostname (best effort)
-                                try
+                                var enrichmentTask = Task.Run(async () =>
                                 {
-                                    var hostEntry = await Dns.GetHostEntryAsync(ip);
-                                    host = host with { Hostname = hostEntry.HostName };
-                                }
-                                catch (SocketException) { /* No DNS entry */ }
-
-                                // MAC Address + Vendor (best effort)
-                                if (_arpService is not null)
-                                {
+                                    await enrichmentSemaphore.WaitAsync(ct);
                                     try
                                     {
-                                        var mac = await _arpService.GetMacAddressAsync(ip, ct);
-                                        if (mac is not null)
+                                        var enriched = await EnrichDiscoveredHostAsync(host, ip, ct);
+                                        if (!AreHostsEquivalent(host, enriched))
                                         {
-                                            host = host with { MacAddress = mac };
-
-                                            if (_ouiDatabase is not null)
-                                            {
-                                                var vendor = _ouiDatabase.LookupVendor(mac);
-                                                host = host with { Vendor = vendor };
-                                            }
+                                            await channel.Writer.WriteAsync(enriched, ct);
                                         }
                                     }
-                                    catch (Exception ex)
+                                    catch (Exception ex) when (ex is not OperationCanceledException)
                                     {
-                                        _logger.LogDebug(ex, "Failed to get MAC/vendor for {IP}", ip);
+                                        _logger.LogDebug(ex, "Failed to enrich host {IP}", ip);
                                     }
-                                }
+                                    finally
+                                    {
+                                        enrichmentSemaphore.Release();
+                                    }
+                                }, ct);
 
-                                // Device type inference (best effort)
-                                var deviceType = InferDeviceType(host.Vendor, host.Hostname);
-                                if (!string.IsNullOrWhiteSpace(deviceType))
-                                {
-                                    host = host with { DeviceType = deviceType };
-                                }
-
-                                await channel.Writer.WriteAsync(host, ct);
+                                enrichmentTasks.Add(enrichmentTask);
                             }
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -214,6 +204,11 @@ public sealed class NetworkScannerService : INetworkScannerService
                 }
 
                 await Task.WhenAll(tasks);
+
+                if (!enrichmentTasks.IsEmpty)
+                {
+                    await Task.WhenAll(enrichmentTasks);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -235,6 +230,61 @@ public sealed class NetworkScannerService : INetworkScannerService
         _logger.LogInformation("Subnet scan of {Cidr} completed", cidr);
     }
 
+    private async Task<DiscoveredHost> EnrichDiscoveredHostAsync(DiscoveredHost host, IPAddress ip, CancellationToken ct)
+    {
+        var enriched = host;
+
+        // Try to resolve hostname (best effort)
+        try
+        {
+            var hostEntry = await Dns.GetHostEntryAsync(ip);
+            enriched = enriched with { Hostname = hostEntry.HostName };
+        }
+        catch (SocketException) { /* No DNS entry */ }
+        catch (ArgumentException) { /* Invalid address */ }
+
+        // MAC Address + Vendor (best effort)
+        if (_arpService is not null)
+        {
+            try
+            {
+                var mac = await _arpService.GetMacAddressAsync(ip, ct);
+                if (mac is not null)
+                {
+                    enriched = enriched with { MacAddress = mac };
+
+                    if (_ouiDatabase is not null)
+                    {
+                        var vendor = _ouiDatabase.LookupVendor(mac);
+                        enriched = enriched with { Vendor = vendor };
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to get MAC/vendor for {IP}", ip);
+            }
+        }
+
+        // Device type inference (best effort)
+        var deviceType = InferDeviceType(enriched.Vendor, enriched.Hostname);
+        if (!string.IsNullOrWhiteSpace(deviceType))
+        {
+            enriched = enriched with { DeviceType = deviceType };
+        }
+
+        return enriched;
+    }
+
+    private static bool AreHostsEquivalent(DiscoveredHost left, DiscoveredHost right)
+    {
+        return string.Equals(left.IpAddress, right.IpAddress, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(left.Hostname, right.Hostname, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(left.MacAddress, right.MacAddress, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(left.Vendor, right.Vendor, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(left.DeviceType, right.DeviceType, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <inheritdoc />
     public async Task<TracerouteResult> TraceRouteAsync(
         string hostname,
@@ -250,9 +300,8 @@ public sealed class NetworkScannerService : INetworkScannerService
 
         var stopwatch = Stopwatch.StartNew();
         var hops = new List<TracerouteHop>();
-        var buffer = new byte[32];
         string? resolvedAddress = null;
-        var geoCache = new Dictionary<string, GeoLocationResult?>(StringComparer.OrdinalIgnoreCase);
+        var geoCache = new ConcurrentDictionary<string, Task<GeoLocationResult?>>(StringComparer.OrdinalIgnoreCase);
         var geoLookupAvailable = _geolocationService is not null;
 
         // Resolve hostname first
@@ -271,8 +320,6 @@ public sealed class NetworkScannerService : INetworkScannerService
 
         _logger.LogInformation("Starting traceroute to {Hostname}", hostname);
 
-        using var ping = new Ping();
-
         async Task<GeoLocationResult?> GetGeoAsync(IPAddress? address)
         {
             if (_geolocationService is null || address is null || IsUnspecifiedAddress(address))
@@ -281,67 +328,158 @@ public sealed class NetworkScannerService : INetworkScannerService
             }
 
             var ipString = address.ToString();
-            if (geoCache.TryGetValue(ipString, out var cached))
-            {
-                return cached;
-            }
+            var task = geoCache.GetOrAdd(ipString, _ => LookupGeoAsync(ipString, ct));
+            return await task;
+        }
 
+        async Task<GeoLocationResult?> LookupGeoAsync(string ipString, CancellationToken token)
+        {
             try
             {
-                var result = await _geolocationService.LookupAsync(ipString, ct);
-                geoCache[ipString] = result;
-                return result;
+                return await _geolocationService!.LookupAsync(ipString, token);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogDebug(ex, "Failed geolocation lookup for {Ip}", ipString);
-                geoCache[ipString] = null;
                 return null;
             }
         }
 
-        for (int ttl = 1; ttl <= maxHops; ttl++)
+        async Task<string?> ResolveHostnameAsync(IPAddress? address)
         {
-            ct.ThrowIfCancellationRequested();
+            if (address is null || IsUnspecifiedAddress(address))
+            {
+                return null;
+            }
 
-            var options = new PingOptions(ttl, dontFragment: true);
-            
             try
             {
+                var hostEntry = await Dns.GetHostEntryAsync(address);
+                return hostEntry.HostName;
+            }
+            catch (SocketException) { return null; }
+            catch (ArgumentException) { return null; }
+        }
+
+        async Task<TracerouteHop> ProbeHopAsync(int ttl)
+        {
+            ct.ThrowIfCancellationRequested();
+            var options = new PingOptions(ttl, dontFragment: true);
+            var buffer = new byte[32];
+
+            try
+            {
+                using var ping = new Ping();
                 var pingSw = Stopwatch.StartNew();
                 var reply = await ping.SendPingAsync(hostname, timeout, buffer, options);
                 pingSw.Stop();
-                
-                string? hopHostname = null;
-                if (reply.Address is not null && !IsUnspecifiedAddress(reply.Address))
-                {
-                    try
-                    {
-                        var hostEntry = await Dns.GetHostEntryAsync(reply.Address);
-                        hopHostname = hostEntry.HostName;
-                    }
-                    catch (SocketException) { /* No reverse DNS */ }
-                    catch (ArgumentException) { /* Unspecified/invalid address */ }
-                }
 
                 var rtt = reply.RoundtripTime;
                 if (rtt == 0 && (reply.Status == IPStatus.Success || reply.Status == IPStatus.TtlExpired))
                 {
-                    // Fallback to stopwatch if Ping reports 0ms but was successful
-                    // This often happens on fast networks or Windows TtlExpired
                     rtt = pingSw.ElapsedMilliseconds;
-                    if (rtt == 0) rtt = 1; // Ensure at least 1ms if successful
+                    if (rtt == 0) rtt = 1;
                 }
 
-                var geo = await GetGeoAsync(reply.Address);
-
-                var hop = new TracerouteHop
+                return new TracerouteHop
                 {
                     HopNumber = ttl,
                     Address = reply.Address?.ToString(),
-                    Hostname = hopHostname,
                     RoundtripTime = rtt,
-                    Status = reply.Status,
+                    Status = reply.Status
+                };
+            }
+            catch (PingException ex)
+            {
+                _logger.LogDebug(ex, "Ping exception at hop {Hop}", ttl);
+                return new TracerouteHop
+                {
+                    HopNumber = ttl,
+                    Status = IPStatus.Unknown
+                };
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "Traceroute probe failed at hop {Hop}", ttl);
+                return new TracerouteHop
+                {
+                    HopNumber = ttl,
+                    Status = IPStatus.Unknown
+                };
+            }
+        }
+        var maxParallel = Math.Clamp(Environment.ProcessorCount, 2, 6);
+        var nextTtl = 1;
+        int? stopAtTtl = null;
+
+        while (nextTtl <= maxHops)
+        {
+            ct.ThrowIfCancellationRequested();
+            var batchSize = Math.Min(maxParallel, maxHops - nextTtl + 1);
+            var batchTtls = Enumerable.Range(nextTtl, batchSize).ToArray();
+
+            var batchResults = await Task.WhenAll(batchTtls.Select(ProbeHopAsync));
+            foreach (var hop in batchResults.OrderBy(h => h.HopNumber))
+            {
+                if (stopAtTtl.HasValue && hop.HopNumber > stopAtTtl.Value)
+                {
+                    continue;
+                }
+
+                hops.Add(hop);
+
+                if (onHop is not null)
+                {
+                    await onHop(hop, hop.HopNumber);
+                }
+
+                if (!stopAtTtl.HasValue)
+                {
+                    if (hop.Status == IPStatus.Success)
+                    {
+                        stopAtTtl = hop.HopNumber;
+                        _logger.LogInformation("Traceroute to {Hostname} completed in {Hops} hops", hostname, hop.HopNumber);
+                    }
+                    else if (hop.Status != IPStatus.TtlExpired && hop.Status != IPStatus.TimedOut)
+                    {
+                        stopAtTtl = hop.HopNumber;
+                        _logger.LogWarning("Traceroute to {Hostname} stopped at hop {Hop} with status {Status}",
+                            hostname, hop.HopNumber, hop.Status);
+                    }
+                }
+            }
+
+            nextTtl += batchSize;
+            if (stopAtTtl.HasValue && nextTtl > stopAtTtl.Value)
+            {
+                break;
+            }
+        }
+
+        var lookupSemaphore = new SemaphoreSlim(8);
+        var enriched = await Task.WhenAll(hops.Select(async hop =>
+        {
+            if (string.IsNullOrWhiteSpace(hop.Address) || hop.Status == IPStatus.TimedOut)
+            {
+                return hop;
+            }
+
+            if (!IPAddress.TryParse(hop.Address, out var hopIp))
+            {
+                return hop;
+            }
+
+            await lookupSemaphore.WaitAsync(ct);
+            try
+            {
+                var hostnameTask = ResolveHostnameAsync(hopIp);
+                var geoTask = GetGeoAsync(hopIp);
+                await Task.WhenAll(hostnameTask, geoTask);
+
+                var geo = geoTask.Result;
+                return hop with
+                {
+                    Hostname = hostnameTask.Result,
                     CountryCode = geo?.CountryCode,
                     Country = geo?.Country,
                     State = geo?.State,
@@ -351,44 +489,14 @@ public sealed class NetworkScannerService : INetworkScannerService
                     Asn = geo?.Asn,
                     Isp = geo?.Isp
                 };
-                hops.Add(hop);
-
-                if (onHop is not null)
-                {
-                    await onHop(hop, ttl);
-                }
-
-                // Destination reached
-                if (reply.Status == IPStatus.Success)
-                {
-                    _logger.LogInformation("Traceroute to {Hostname} completed in {Hops} hops", hostname, ttl);
-                    break;
-                }
-
-                // Continue only on TtlExpired or TimedOut
-                if (reply.Status != IPStatus.TtlExpired && reply.Status != IPStatus.TimedOut)
-                {
-                    _logger.LogWarning("Traceroute to {Hostname} stopped at hop {Hop} with status {Status}", 
-                        hostname, ttl, reply.Status);
-                    break;
-                }
             }
-            catch (PingException ex)
+            finally
             {
-                _logger.LogDebug(ex, "Ping exception at hop {Hop}", ttl);
-                var hop = new TracerouteHop
-                {
-                    HopNumber = ttl,
-                    Status = IPStatus.Unknown
-                };
-                hops.Add(hop);
-
-                if (onHop is not null)
-                {
-                    await onHop(hop, ttl);
-                }
+                lookupSemaphore.Release();
             }
-        }
+        }));
+
+        hops = enriched.OrderBy(h => h.HopNumber).ToList();
 
         stopwatch.Stop();
 
@@ -872,7 +980,8 @@ public sealed class NetworkScannerService : INetworkScannerService
             new[]
             {
                 new PublicIpEndpoint("ipify", new Uri("https://api.ipify.org?format=json")),
-                new PublicIpEndpoint("ifconfig", new Uri("https://ifconfig.co/json"))
+                new PublicIpEndpoint("ifconfig", new Uri("https://ifconfig.co/json")),
+                new PublicIpEndpoint("ipinfo", new Uri("https://ipinfo.io/json"))
             },
             ct).ConfigureAwait(false);
 
@@ -880,7 +989,8 @@ public sealed class NetworkScannerService : INetworkScannerService
             new[]
             {
                 new PublicIpEndpoint("ipify", new Uri("https://api64.ipify.org?format=json")),
-                new PublicIpEndpoint("ifconfig", new Uri("https://ifconfig.co/json"))
+                new PublicIpEndpoint("ifconfig", new Uri("https://ifconfig.co/json")),
+                new PublicIpEndpoint("icanhazip", new Uri("https://ipv6.icanhazip.com"))
             },
             ct).ConfigureAwait(false);
 
@@ -1332,7 +1442,11 @@ public sealed class NetworkScannerService : INetworkScannerService
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Headers.UserAgent.ParseAdd("ManLab/1.0");
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var timeoutSeconds = Math.Clamp(_publicIpOptions.TimeoutSeconds, 2, 30);
+        cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token)
             .ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
@@ -1340,7 +1454,7 @@ public sealed class NetworkScannerService : INetworkScannerService
             return null;
         }
 
-        var payload = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var payload = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(payload))
         {
             return null;

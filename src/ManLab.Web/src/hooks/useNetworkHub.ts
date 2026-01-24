@@ -24,6 +24,7 @@ import type {
   ScanStartedEvent,
   ScanProgressEvent,
   HostFoundEvent,
+  HostFoundBatchEvent,
   ScanCompletedEvent,
   ScanFailedEvent,
   TracerouteStartedEvent,
@@ -48,6 +49,7 @@ import type {
   SpeedTestFailedEvent,
   SyslogMessage,
   PacketCaptureRecord,
+  PacketCaptureBatchEvent,
 } from "../api/networkApi";
 
 // ============================================================================
@@ -350,6 +352,7 @@ export interface SubnetScanHandlers {
   onScanStarted?: (event: ScanStartedEvent) => void;
   onScanProgress?: (event: ScanProgressEvent) => void;
   onHostFound?: (event: HostFoundEvent) => void;
+  onHostFoundBatch?: (event: HostFoundBatchEvent) => void;
   onScanCompleted?: (event: ScanCompletedEvent) => void;
   onScanFailed?: (event: ScanFailedEvent) => void;
 }
@@ -451,6 +454,7 @@ export interface UseNetworkHubReturn {
   subscribeToSpeedTest: (handlers: SpeedTestHandlers) => () => void;
   subscribeToSyslog: (handler: (message: SyslogMessage) => void) => () => void;
   subscribeToPacketCapture: (handler: (record: PacketCaptureRecord) => void) => () => void;
+  subscribeToPacketCaptureBatch: (handler: (records: PacketCaptureRecord[]) => void) => () => void;
 }
 
 // ============================================================================
@@ -693,6 +697,23 @@ export function useNetworkHub(
       if (handlers.onHostFound) {
         conn.on("HostFound", handlers.onHostFound);
       }
+      conn.on("HostFoundBatch", (event) => {
+        const payload = (event ?? {}) as HostFoundBatchEvent;
+        const hosts = Array.isArray(payload.hosts) ? payload.hosts : [];
+        if (handlers.onHostFoundBatch) {
+          handlers.onHostFoundBatch({
+            scanId: payload.scanId ?? "",
+            hosts,
+          });
+          return;
+        }
+
+        if (handlers.onHostFound) {
+          hosts.forEach((host) =>
+            handlers.onHostFound?.({ scanId: payload.scanId ?? "", host })
+          );
+        }
+      });
       if (handlers.onScanCompleted) {
         conn.on("ScanCompleted", (event) =>
           handlers.onScanCompleted?.(normalizeScanCompleted(event))
@@ -708,6 +729,7 @@ export function useNetworkHub(
         if (handlers.onScanStarted) conn.off("ScanStarted");
         if (handlers.onScanProgress) conn.off("ScanProgress");
         if (handlers.onHostFound) conn.off("HostFound");
+        conn.off("HostFoundBatch");
         if (handlers.onScanCompleted) conn.off("ScanCompleted");
         if (handlers.onScanFailed) conn.off("ScanFailed");
       };
@@ -913,9 +935,47 @@ export function useNetworkHub(
       if (!connectionRef.current) return () => {};
       const conn = connectionRef.current;
       conn.on("PacketCaptured", handler);
+      conn.on("PacketCapturedBatch", (event) => {
+        const payload = event as PacketCaptureBatchEvent | PacketCaptureRecord[];
+        const records = Array.isArray((payload as PacketCaptureBatchEvent)?.records)
+          ? (payload as PacketCaptureBatchEvent).records
+          : Array.isArray(payload)
+            ? (payload as PacketCaptureRecord[])
+            : [];
+
+        records.forEach((record) => handler(record));
+      });
 
       return () => {
         conn.off("PacketCaptured", handler);
+        conn.off("PacketCapturedBatch");
+      };
+    },
+    []
+  );
+
+  const subscribeToPacketCaptureBatch = useCallback(
+    (handler: (records: PacketCaptureRecord[]) => void) => {
+      if (!connectionRef.current) return () => {};
+      const conn = connectionRef.current;
+
+      conn.on("PacketCapturedBatch", (event) => {
+        const payload = event as PacketCaptureBatchEvent | PacketCaptureRecord[];
+        const records = Array.isArray((payload as PacketCaptureBatchEvent)?.records)
+          ? (payload as PacketCaptureBatchEvent).records
+          : Array.isArray(payload)
+            ? (payload as PacketCaptureRecord[])
+            : [];
+        if (records.length > 0) {
+          handler(records);
+        }
+      });
+
+      conn.on("PacketCaptured", (record) => handler([record as PacketCaptureRecord]));
+
+      return () => {
+        conn.off("PacketCapturedBatch");
+        conn.off("PacketCaptured");
       };
     },
     []
@@ -953,5 +1013,6 @@ export function useNetworkHub(
     subscribeToSpeedTest,
     subscribeToSyslog,
     subscribeToPacketCapture,
+    subscribeToPacketCaptureBatch,
   };
 }

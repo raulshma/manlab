@@ -9,6 +9,8 @@ public sealed record SyslogOptions
     public bool Enabled { get; init; } = true;
     public int Port { get; init; } = 514;
     public int MaxBufferedMessages { get; init; } = 2000;
+    public int MaxPayloadBytes { get; init; } = 16384;
+    public int RegexTimeoutMs { get; init; } = 200;
 }
 
 public sealed record SyslogStatus
