@@ -835,7 +835,12 @@ export function useNetworkHub(
         conn.on("SpeedTestStarted", handlers.onSpeedTestStarted);
       }
       if (handlers.onSpeedTestProgress) {
-        conn.on("SpeedTestProgress", handlers.onSpeedTestProgress);
+        conn.on("SpeedTestProgress", (event) =>
+          handlers.onSpeedTestProgress?.(event)
+        );
+        conn.on("speedtestprogress", (event) =>
+          handlers.onSpeedTestProgress?.(event)
+        );
       }
       if (handlers.onSpeedTestCompleted) {
         conn.on("SpeedTestCompleted", handlers.onSpeedTestCompleted);

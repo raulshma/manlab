@@ -192,7 +192,7 @@ export function NetworkScannerPage() {
       <Card className="border-0 shadow-none sm:border sm:shadow">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <CardHeader className="px-0 sm:px-6 pb-2">
-            <TabsList className="flex w-full overflow-x-auto justify-start h-auto p-1 scrollbar-hide snap-x bg-muted/50 rounded-lg">
+            <TabsList className="flex w-full overflow-x-auto justify-start h-auto p-1 snap-x bg-muted/50 rounded-lg">
               <TabsTrigger value="ping" className="gap-2 min-w-fit px-4 sm:px-6 flex-1 shrink-0 snap-center data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200">
                 <Radio className="h-4 w-4" />
                 <span className="inline">Ping</span>

@@ -348,7 +348,7 @@ export function NodesPage() {
       {/* Main Content - Node Details or Map */}
       <div
         className={cn(
-          "flex-1 overflow-hidden bg-background transition-all duration-300 md:translate-x-0 relative",
+          "flex-1 overflow-y-auto overflow-x-hidden bg-background transition-all duration-300 md:translate-x-0 relative",
           // Mobile: slide in when details shown
           isMobile && showDetails ? "translate-x-0" : isMobile ? "translate-x-full fixed inset-0 z-30" : ""
         )}
