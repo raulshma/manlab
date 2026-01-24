@@ -102,7 +102,7 @@ const SpeedGauge = ({ value, max = 100, label, color = "text-primary" }: { value
           <span className="text-sm text-muted-foreground font-medium">Mbps</span>
         </div>
       </div>
-      <div className="mt-[-40px] font-medium text-muted-foreground uppercase tracking-widest text-xs">
+      <div className="-mt-10 font-medium text-muted-foreground uppercase tracking-widest text-xs">
         {label}
       </div>
     </div>
@@ -111,7 +111,7 @@ const SpeedGauge = ({ value, max = 100, label, color = "text-primary" }: { value
 
 const LiveChart = ({ data, color }: { data: { value: number }[]; color: string }) => {
   return (
-    <div className="h-[60px] w-full mt-2">
+    <div className="h-15 w-full mt-2">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data}>
           <defs>
@@ -308,7 +308,7 @@ export function SpeedTestTool() {
       </AnimatePresence>
 
       {/* Main Stage */}
-      <div className="relative min-h-[400px] flex flex-col items-center justify-center">
+      <div className="relative min-h-100 flex flex-col items-center justify-center">
          <AnimatePresence mode="wait">
             
             {/* IDLE STATE */}

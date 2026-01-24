@@ -258,7 +258,7 @@ function LatencyChart({ hops }: LatencyChartProps) {
   if (data.length < 2) return null;
 
   return (
-    <div className="h-[200px] w-full mt-6 mb-8">
+    <div className="h-50 w-full mt-6 mb-8">
       <div className="flex items-center gap-2 mb-4">
         <Activity className="h-4 w-4 text-primary" />
         <h3 className="text-sm font-medium">Latency Timeline</h3>
@@ -341,7 +341,7 @@ function HopTimelineItem({
       {/* Connector Line */}
       {!isLast && (
         <div 
-          className="absolute left-[11px] top-8 bottom-[-16px] w-[2px] bg-border" 
+          className="absolute left-2.75 top-8 -bottom-4 w-0.5 bg-border" 
           aria-hidden="true"
         />
       )}
@@ -378,7 +378,7 @@ function HopTimelineItem({
                {isTimeout ? "Request timed out" : hop.address}
             </span>
             {hop.hostname && hop.hostname !== hop.address && (
-              <span className="text-xs text-muted-foreground truncate hidden sm:inline-block max-w-[200px]">
+              <span className="text-xs text-muted-foreground truncate hidden sm:inline-block max-w-50">
                 {hop.hostname}
               </span>
             )}
@@ -710,7 +710,13 @@ export function TracerouteTool() {
                 >
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" size="icon" onClick={handleExportText} className="rounded-full">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={handleExportText}
+                        className="rounded-full"
+                        aria-label="Export traceroute as TXT"
+                      >
                         <Download className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
@@ -718,7 +724,13 @@ export function TracerouteTool() {
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" size="icon" onClick={handleExportCSV} className="rounded-full">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={handleExportCSV}
+                        className="rounded-full"
+                        aria-label="Export traceroute as CSV"
+                      >
                         <Share2 className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
@@ -726,7 +738,13 @@ export function TracerouteTool() {
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="outline" size="icon" onClick={handleClear} className="rounded-full hover:bg-destructive/10 hover:text-destructive">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={handleClear}
+                        className="rounded-full hover:bg-destructive/10 hover:text-destructive"
+                        aria-label="Clear traceroute results"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
@@ -791,7 +809,7 @@ export function TracerouteTool() {
               <Button
                 onClick={handleTraceroute}
                 disabled={isLoading || !host}
-                className="h-11 min-w-[120px] shadow-md transition-all hover:scale-105 active:scale-95"
+                className="h-11 min-w-30 shadow-md transition-all hover:scale-105 active:scale-95"
                 size="lg"
               >
                 {isLoading ? (
@@ -943,13 +961,19 @@ export function TracerouteTool() {
                        <CardContent className="text-sm space-y-3">
                           <div className="flex justify-between border-b pb-2">
                             <span className="text-muted-foreground">Hostname</span>
-                            <span className="font-mono text-right truncate max-w-[150px]">{result.hostname}</span>
+                            <span className="font-mono text-right truncate max-w-37.5">{result.hostname}</span>
                           </div>
                           <div className="flex justify-between items-center border-b pb-2">
                             <span className="text-muted-foreground">IP Address</span>
                             <div className="flex items-center gap-2">
                               <code className="bg-muted px-1.5 py-0.5 rounded font-mono text-xs">{result.resolvedAddress}</code>
-                              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copyToClipboard(result.resolvedAddress!)}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-5 w-5"
+                                onClick={() => copyToClipboard(result.resolvedAddress!)}
+                                aria-label="Copy resolved IP"
+                              >
                                 <Copy className="h-3 w-3" />
                               </Button>
                             </div>
@@ -964,7 +988,7 @@ export function TracerouteTool() {
 
                    {/* History List */}
                    {history.length > 0 && (
-                     <Card className="max-h-[500px] overflow-hidden flex flex-col">
+                     <Card className="max-h-125 overflow-hidden flex flex-col">
                        <CardHeader className="pb-3">
                           <CardTitle className="text-sm font-medium flex items-center gap-2">
                              <Clock className="h-4 w-4" />
@@ -982,7 +1006,7 @@ export function TracerouteTool() {
                                className="p-3 border-b last:border-0 hover:bg-muted/50 cursor-pointer transition-colors"
                              >
                                 <div className="flex justify-between items-start mb-1">
-                                   <span className="font-medium text-sm truncate max-w-[120px]">{entry.result.hostname}</span>
+                                   <span className="font-medium text-sm truncate max-w-30">{entry.result.hostname}</span>
                                    <span className="text-[10px] text-muted-foreground">{formatTime(entry.timestamp)}</span>
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">

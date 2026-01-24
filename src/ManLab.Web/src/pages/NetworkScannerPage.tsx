@@ -4,7 +4,7 @@
  * Provides tab-based navigation between different scanning tools.
  */
 
-import { useEffect, useState, useCallback, useRef, useLayoutEffect } from "react";
+import { useEffect, useState, useCallback, useRef, useLayoutEffect, useMemo } from "react";
 import {
   Network,
   Radio,
@@ -25,6 +25,7 @@ import {
   LocateFixed,
   MoreHorizontal,
   Check,
+  X,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -48,6 +49,7 @@ import { NetworkToolHistoryPanel } from "@/components/network/NetworkToolHistory
 import { NetworkErrorBoundary } from "@/components/network/NetworkErrorBoundary";
 import { NetworkToolHistoryProvider } from "@/contexts/NetworkToolHistoryContext";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -83,6 +85,8 @@ const TOOLS = [
   { id: "geodb", label: "GeoIP", icon: Database },
   { id: "history", label: "History", icon: History },
 ] as const;
+
+const ACTIVE_TAB_KEY = "manlab:network:active-tab";
 
 // Connection status indicator with enhanced retry functionality
 function ConnectionIndicator({ 
@@ -127,8 +131,8 @@ function ConnectionIndicator({
   const hasError = status === "Error" || status === "Disconnected";
 
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <div className={`h-2.5 w-2.5 rounded-full ${getStatusColor()}`} />
+    <div className="flex items-center gap-2 text-sm" role="status" aria-live="polite" aria-atomic="true">
+      <div className={`h-2.5 w-2.5 rounded-full ${getStatusColor()}`} aria-hidden="true" />
       <span className={hasError ? "text-destructive" : "text-muted-foreground"}>
         {getStatusText()}
         {error && hasError && (
@@ -149,18 +153,35 @@ function ConnectionIndicator({
 }
 
 export function NetworkScannerPage() {
-  const [activeTab, setActiveTab] = useState<NetworkToolTab>("ping");
+  const getStoredTab = (): NetworkToolTab => {
+    if (typeof window === "undefined") return "ping";
+    const stored = localStorage.getItem(ACTIVE_TAB_KEY);
+    if (stored && TOOLS.some((tool) => tool.id === stored)) {
+      return stored as NetworkToolTab;
+    }
+    return "ping";
+  };
+
+  const [activeTab, setActiveTab] = useState<NetworkToolTab>(() => getStoredTab());
   const { status, error } = useNetworkHub();
   const [realtimeEnabled, setRealtimeEnabledState] = useState(isRealtimeEnabled());
   const [notificationsEnabled, setNotificationsEnabledState] = useState(isNotificationsEnabled());
+  const [toolQuery, setToolQuery] = useState("");
+
+  const filteredTools = useMemo(() => {
+    const query = toolQuery.trim().toLowerCase();
+    if (!query) return TOOLS;
+    return TOOLS.filter((tool) =>
+      tool.label.toLowerCase().includes(query) || tool.id.toLowerCase().includes(query)
+    );
+  }, [toolQuery]);
 
   // Responsive Tabs Logic
   const [visibleCount, setVisibleCount] = useState<number>(TOOLS.length);
   const containerRef = useRef<HTMLDivElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
-    const calculateVisibleTabs = () => {
+  const calculateVisibleTabs = useCallback(() => {
       if (!containerRef.current || !ghostRef.current) return;
 
       const containerWidth = containerRef.current.clientWidth;
@@ -191,20 +212,40 @@ export function NetworkScannerPage() {
       
       // Ensure at least one tab is visible if possible, though unlikely to fail
       setVisibleCount(Math.max(1, count));
-    };
+    }, []);
 
-    calculateVisibleTabs();
-    
+    const handleToolQueryChange = useCallback((value: string) => {
+      setToolQuery(value);
+      const query = value.trim().toLowerCase();
+      const nextFiltered = query
+        ? TOOLS.filter((tool) =>
+            tool.label.toLowerCase().includes(query) || tool.id.toLowerCase().includes(query)
+          )
+        : TOOLS;
+
+      if (nextFiltered.length > 0 && !nextFiltered.some((tool) => tool.id === activeTab)) {
+        setActiveTab(nextFiltered[0].id as NetworkToolTab);
+      }
+
+      window.requestAnimationFrame(calculateVisibleTabs);
+    }, [activeTab, calculateVisibleTabs]);
+
+  useLayoutEffect(() => {
+    const frame = window.requestAnimationFrame(calculateVisibleTabs);
+
     const observer = new ResizeObserver(calculateVisibleTabs);
     if (containerRef.current) {
-        observer.observe(containerRef.current);
+      observer.observe(containerRef.current);
     }
-    
-    return () => observer.disconnect();
-  }, []);
 
-  const visibleTools = TOOLS.slice(0, visibleCount);
-  const overflowTools = TOOLS.slice(visibleCount);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [calculateVisibleTabs]);
+
+  const visibleTools = filteredTools.slice(0, visibleCount);
+  const overflowTools = filteredTools.slice(visibleCount);
   const isOverflowActive = overflowTools.some(t => t.id === activeTab);
   const activeOverflowTool = overflowTools.find(t => t.id === activeTab);
 
@@ -222,6 +263,12 @@ export function NetworkScannerPage() {
       unsubscribeNotifications();
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(ACTIVE_TAB_KEY, activeTab);
+  }, [activeTab]);
+
 
   return (
     <NetworkToolsProvider
@@ -273,6 +320,34 @@ export function NetworkScannerPage() {
       <Card className="border-0 shadow-none sm:border sm:shadow">
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as NetworkToolTab)} className="w-full">
           <CardHeader className="px-0 sm:px-6 pb-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={toolQuery}
+                  onChange={(event) => handleToolQueryChange(event.target.value)}
+                  placeholder="Filter tools…"
+                  aria-label="Filter network tools"
+                  className="h-9 pl-9 pr-9 text-sm"
+                />
+                {toolQuery && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleToolQueryChange("")}
+                    aria-label="Clear tool filter"
+                    className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Showing {filteredTools.length} of {TOOLS.length} tools
+              </div>
+            </div>
             
             {/* Ghost List for Measurement (Invisible & Off-screen) */}
             <div 
@@ -281,7 +356,7 @@ export function NetworkScannerPage() {
                 aria-hidden="true"
                 style={{ transform: 'translateY(200%)' }} // Extra safety to force it out of view
             >
-                 {TOOLS.map((tool) => {
+                 {filteredTools.map((tool) => {
                     const Icon = tool.icon;
                     return (
                         <div key={tool.id} className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-transparent">
@@ -294,65 +369,71 @@ export function NetworkScannerPage() {
 
             {/* Real Tab List */}
             <div ref={containerRef} className="w-full overflow-hidden">
-                <TabsList className="flex w-full justify-start h-auto p-1 bg-muted/50 rounded-lg gap-2">
+              <TabsList className="flex w-full justify-start h-auto p-1 bg-muted/50 rounded-lg gap-2">
                 {visibleTools.map((tool) => {
-                    const Icon = tool.icon;
-                    return (
-                        <TabsTrigger 
-                            key={tool.id} 
-                            value={tool.id} 
-                            className="gap-2 px-4 flex-none data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200"
-                        >
-                            <Icon className="h-4 w-4" />
-                            <span className="inline">{tool.label}</span>
-                        </TabsTrigger>
-                    );
+                  const Icon = tool.icon;
+                  return (
+                    <TabsTrigger
+                      key={tool.id}
+                      value={tool.id}
+                      className="gap-2 px-4 flex-none data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all duration-200"
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span className="inline">{tool.label}</span>
+                    </TabsTrigger>
+                  );
                 })}
-                
-                {overflowTools.length > 0 && (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger
-                            className={cn(
-                                "flex items-center justify-center gap-2 px-4 h-9 rounded-md text-sm font-medium transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent",
-                                isOverflowActive && "bg-background text-foreground shadow-sm ring-1 ring-border"
-                            )}
-                        >
-                                {isOverflowActive && activeOverflowTool ? (
-                                    <>
-                                        <activeOverflowTool.icon className="h-4 w-4" />
-                                        <span className="inline">{activeOverflowTool.label}</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <MoreHorizontal className="h-4 w-4" />
-                                        <span className="inline">More</span>
-                                    </>
-                                )}
-                                <div className="ml-1 text-[10px] font-mono opacity-50 bg-primary/10 px-1 rounded">
-                                    {overflowTools.length}
-                                </div>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-[200px]">
-                            {overflowTools.map((tool) => {
-                                const Icon = tool.icon;
-                                return (
-                                    <DropdownMenuItem
-                                        key={tool.id}
-                                        onClick={() => setActiveTab(tool.id as NetworkToolTab)}
-                                        className="gap-2 cursor-pointer"
-                                    >
-                                        <Icon className="h-4 w-4 text-muted-foreground" />
-                                        {tool.label}
-                                        {activeTab === tool.id && (
-                                            <Check className="ml-auto h-4 w-4 text-primary" />
-                                        )}
-                                    </DropdownMenuItem>
-                                );
-                            })}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+
+                {filteredTools.length === 0 && (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">
+                    No tools match “{toolQuery.trim()}”.
+                  </div>
                 )}
-                </TabsList>
+
+                {overflowTools.length > 0 && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      className={cn(
+                        "flex items-center justify-center gap-2 px-4 h-9 rounded-md text-sm font-medium transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent",
+                        isOverflowActive && "bg-background text-foreground shadow-sm ring-1 ring-border"
+                      )}
+                    >
+                      {isOverflowActive && activeOverflowTool ? (
+                        <>
+                          <activeOverflowTool.icon className="h-4 w-4" />
+                          <span className="inline">{activeOverflowTool.label}</span>
+                        </>
+                      ) : (
+                        <>
+                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="inline">More</span>
+                        </>
+                      )}
+                      <div className="ml-1 text-[10px] font-mono opacity-50 bg-primary/10 px-1 rounded">
+                        {overflowTools.length}
+                      </div>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-50">
+                      {overflowTools.map((tool) => {
+                        const Icon = tool.icon;
+                        return (
+                          <DropdownMenuItem
+                            key={tool.id}
+                            onClick={() => setActiveTab(tool.id as NetworkToolTab)}
+                            className="gap-2 cursor-pointer"
+                          >
+                            <Icon className="h-4 w-4 text-muted-foreground" />
+                            {tool.label}
+                            {activeTab === tool.id && (
+                              <Check className="ml-auto h-4 w-4 text-primary" />
+                            )}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </TabsList>
             </div>
           </CardHeader>
 

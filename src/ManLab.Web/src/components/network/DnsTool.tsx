@@ -208,7 +208,7 @@ export function DnsTool() {
           {whoisResult && (
             <div className="space-y-2">
               <div className="text-sm font-medium">WHOIS ({whoisResult.server ?? "unknown"})</div>
-              <pre className="max-h-80 overflow-auto rounded-lg bg-muted/50 p-3 text-xs leading-relaxed whitespace-pre-wrap break-words">
+              <pre className="max-h-80 overflow-auto rounded-lg bg-muted/50 p-3 text-xs leading-relaxed whitespace-pre-wrap wrap-break-word">
                 {whoisResult.response}
               </pre>
             </div>

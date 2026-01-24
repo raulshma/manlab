@@ -390,6 +390,7 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                 className="h-8 w-8"
                 onClick={zoomIn}
                 title="Zoom in"
+                aria-label="Zoom in"
               >
                 <ZoomIn className="h-4 w-4" />
               </Button>
@@ -399,6 +400,7 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                 className="h-8 w-8"
                 onClick={zoomOut}
                 title="Zoom out"
+                aria-label="Zoom out"
               >
                 <ZoomOut className="h-4 w-4" />
               </Button>
@@ -408,6 +410,7 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                 className="h-8 w-8"
                 onClick={resetZoom}
                 title="Fit to view"
+                aria-label="Fit graph to view"
               >
                 <Maximize2 className="h-4 w-4" />
               </Button>
@@ -418,6 +421,7 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                 className="h-8 w-8"
                 onClick={exportToPng}
                 title="Export as PNG"
+                aria-label="Export network map as PNG"
               >
                 <Download className="h-4 w-4" />
               </Button>
@@ -507,6 +511,7 @@ export function NetworkMapView({ hosts, onHostSelect }: NetworkMapViewProps) {
                           setSelectedNode(null);
                           onHostSelect?.(null);
                         }}
+                        aria-label="Close host details"
                       >
                         <X className="h-3 w-3" />
                       </Button>

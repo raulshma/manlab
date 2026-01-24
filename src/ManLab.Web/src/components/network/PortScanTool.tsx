@@ -991,7 +991,10 @@ export function PortScanTool() {
                           
                           {result && (
                             <DropdownMenu>
-                              <DropdownMenuTrigger className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-9 w-9 p-0")}>
+                              <DropdownMenuTrigger
+                                className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-9 w-9 p-0")}
+                                aria-label="Export scan results"
+                              >
                                 <Download className="h-4 w-4" />
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
@@ -1047,7 +1050,12 @@ export function PortScanTool() {
                                <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Resolved IP</p>
                                <p className="font-mono text-sm">{result.resolvedAddress}</p>
                             </div>
-                            <Button variant="ghost" size="icon" onClick={() => copyToClipboard(result.resolvedAddress!)}>
+                         <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => copyToClipboard(result.resolvedAddress!)}
+                          aria-label="Copy resolved IP"
+                         >
                                <Copy className="h-4 w-4" />
                             </Button>
                          </CardContent>

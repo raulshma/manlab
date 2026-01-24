@@ -216,6 +216,7 @@ function HistoryRow({ entry, onDelete }: HistoryRowProps) {
               size="icon" 
               className="h-8 w-8"
               onClick={() => setIsOpen(!isOpen)}
+              aria-label={isOpen ? "Collapse details" : "Expand details"}
             >
               {isOpen ? (
                 <ChevronUp className="h-4 w-4" />
@@ -230,6 +231,7 @@ function HistoryRow({ entry, onDelete }: HistoryRowProps) {
                   size="icon"
                   className="h-8 w-8 text-destructive hover:text-destructive"
                   onClick={() => onDelete(entry.id)}
+                  aria-label="Delete history entry"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -347,6 +349,7 @@ export function NetworkToolHistoryPanel() {
                     size="icon"
                     onClick={refresh}
                     disabled={isLoading}
+                    aria-label="Refresh history"
                   >
                     <RefreshCw
                       className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
