@@ -748,10 +748,6 @@ export function TracerouteTool() {
       {/* Header & Input Section */}
       <div className="grid gap-6">
         <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-light tracking-tight flex items-center gap-2">
-              <Route className="h-6 w-6 text-primary" />
-              Traceroute
-            </h2>
             <div className="flex gap-2">
               {(result || displayHops.length > 0) && (
                 <motion.div 

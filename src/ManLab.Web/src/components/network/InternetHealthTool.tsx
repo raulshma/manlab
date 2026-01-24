@@ -4,7 +4,6 @@ import {
   Globe,
   Wifi,
   AlertTriangle,
-  Signal,
   Clock,
   ListChecks,
   RefreshCcw,
@@ -262,10 +261,6 @@ export function InternetHealthTool() {
     <div className="space-y-6 max-w-6xl mx-auto">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <Signal className="h-6 w-6 text-primary" />
-            Internet Health
-          </h2>
           <p className="text-muted-foreground mt-1">
             Continuous connectivity checks, DNS latency, and public IP change tracking.
           </p>

@@ -631,18 +631,6 @@ export function PortScanTool() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto p-1">
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
-        <div>
-           <h2 className="text-3xl font-bold tracking-tight bg-linear-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-             Port Scanner
-           </h2>
-           <p className="text-muted-foreground mt-1 text-lg">
-             Identify open ports and running services on any target.
-           </p>
-        </div>
-      </div>
-
       {/* Main Input Card */}
       <Card className="border-0 shadow-lg bg-card/60 backdrop-blur-xl ring-1 ring-border/50 overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-primary/50 via-primary to-primary/50 opacity-20" />

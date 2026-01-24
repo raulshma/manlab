@@ -151,7 +151,6 @@ export function WakeOnLanTool() {
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">Wake-on-LAN</h2>
         <p className="text-muted-foreground mt-1">
           Send magic packets to wake compatible devices on your network.
         </p>

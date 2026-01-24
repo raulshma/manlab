@@ -80,7 +80,6 @@ export function PublicIpTool() {
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">Public IP</h2>
         <p className="text-muted-foreground mt-1">
           Discover the server&apos;s external IPv4 and IPv6 addresses.
         </p>

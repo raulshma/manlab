@@ -94,7 +94,6 @@ export function SubnetCalculatorTool() {
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">Subnet Calculator</h2>
         <p className="text-muted-foreground mt-1">
           Convert CIDR notation into usable IP ranges and masks.
         </p>

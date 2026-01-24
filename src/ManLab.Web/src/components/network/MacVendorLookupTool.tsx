@@ -63,7 +63,6 @@ export function MacVendorLookupTool() {
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight">MAC Vendor Lookup</h2>
         <p className="text-muted-foreground mt-1">
           Identify device manufacturers by MAC address prefixes.
         </p>

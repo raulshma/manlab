@@ -169,13 +169,6 @@ export function ArpTableTool() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight">ARP Table</h2>
-        <p className="text-muted-foreground mt-1">
-          View and manage IP-to-MAC mappings on the server.
-        </p>
-      </div>
-
       <Card>
         <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <CardTitle className="flex items-center gap-2">

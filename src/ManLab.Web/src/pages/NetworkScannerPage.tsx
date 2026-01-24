@@ -285,7 +285,7 @@ export function NetworkScannerPage() {
     );
   }
 
-  const sidebarWidth = sidebarCollapsed && !isMobile ? "md:w-14" : "md:w-72";
+  const sidebarWidth = sidebarCollapsed && !isMobile ? "md:w-14" : "md:w-48";
 
   return (
     <NetworkToolsProvider
