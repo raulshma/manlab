@@ -97,10 +97,7 @@ builder.Services.AddSingleton<LocalAgentInstallationService>();
 builder.Services.AddScoped<ManLab.Server.Services.CredentialEncryptionService>();
 
 builder.Services.AddHttpClient();
-builder.Services.AddQuartz(options =>
-{
-    options.UseMicrosoftDependencyInjectionJobFactory();
-});
+builder.Services.AddQuartz();
 builder.Services.AddQuartzHostedService(options =>
 {
     options.WaitForJobsToComplete = true;
