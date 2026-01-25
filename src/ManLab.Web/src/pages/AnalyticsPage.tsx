@@ -6,6 +6,7 @@ import {
   AreaChart,
   Bar,
   BarChart,
+  Brush,
   CartesianGrid,
   Cell,
   Pie,
@@ -23,17 +24,17 @@ import {
   LayoutDashboard,
   MemoryStick,
   Network,
+  SlidersHorizontal,
   Server,
   Zap,
   Clock,
 } from "lucide-react";
 
-import type { Node, NetworkTelemetryPoint, PingTelemetryPoint, Telemetry } from "@/types";
+import type { Node, Telemetry, TelemetryHistoryPoint } from "@/types";
 import {
   fetchNodeTelemetry,
+  fetchNodeTelemetryHistory,
   fetchNodes,
-  fetchNodeNetworkTelemetry,
-  fetchNodePingTelemetry,
 } from "@/api";
 import { mapWithConcurrency } from "@/lib/async";
 
@@ -98,34 +99,62 @@ function formatShortTime(ts: string): string {
 }
 
 type TelemetryMetric =
-  | "cpuUsage"
-  | "ramUsage"
-  | "diskUsage"
+  | "cpu"
+  | "ram"
+  | "disk"
   | "temperature"
-  | "netRxBytesPerSec"
-  | "netTxBytesPerSec"
-  | "pingRttMs"
-  | "pingPacketLossPercent";
+  | "netRx"
+  | "netTx"
+  | "pingRtt"
+  | "pingLoss";
+
+type TelemetryStat = "avg" | "p95" | "max";
 
 type FleetLatestTelemetry = Record<string, Telemetry | null>;
 
 const TIME_RANGES = {
-  "1h": { label: "1 Hour", count: 360 }, // 10s interval * 360 = 3600s = 1h
-  "3h": { label: "3 Hours", count: 1080 },
-  "6h": { label: "6 Hours", count: 2160 },
-  "12h": { label: "12 Hours", count: 4320 },
-  "24h": { label: "24 Hours", count: 8640 },
-  "1w": { label: "1 Week", count: 60480 },
-  "1m": { label: "1 Month", count: 259200 },
+  "1h": { label: "1 Hour", ms: 60 * 60 * 1000 },
+  "3h": { label: "3 Hours", ms: 3 * 60 * 60 * 1000 },
+  "6h": { label: "6 Hours", ms: 6 * 60 * 60 * 1000 },
+  "12h": { label: "12 Hours", ms: 12 * 60 * 60 * 1000 },
+  "24h": { label: "24 Hours", ms: 24 * 60 * 60 * 1000 },
+  "7d": { label: "7 Days", ms: 7 * 24 * 60 * 60 * 1000 },
+  "30d": { label: "30 Days", ms: 30 * 24 * 60 * 60 * 1000 },
+  "90d": { label: "90 Days", ms: 90 * 24 * 60 * 60 * 1000 },
+  "365d": { label: "1 Year", ms: 365 * 24 * 60 * 60 * 1000 },
 } as const;
 
 type TimeRangeKey = keyof typeof TIME_RANGES;
 
-type TelemetryComparePoint = Telemetry | NetworkTelemetryPoint | PingTelemetryPoint;
+type TelemetryComparePoint = TelemetryHistoryPoint;
 
-function getMetricValue(point: TelemetryComparePoint, metric: TelemetryMetric): number | null {
-  const raw = (point as unknown as Record<string, unknown>)[metric];
+function getMetricValue(point: TelemetryComparePoint, metric: TelemetryMetric, stat: TelemetryStat): number | null {
+  const key =
+    metric === "cpu" ? `cpu${stat === "avg" ? "Avg" : stat === "p95" ? "P95" : "Max"}` :
+    metric === "ram" ? `ram${stat === "avg" ? "Avg" : stat === "p95" ? "P95" : "Max"}` :
+    metric === "disk" ? `disk${stat === "avg" ? "Avg" : stat === "p95" ? "P95" : "Max"}` :
+    metric === "temperature" ? `temp${stat === "avg" ? "Avg" : stat === "p95" ? "P95" : "Max"}` :
+    metric === "netRx" ? `netRx${stat === "avg" ? "Avg" : stat === "p95" ? "P95" : "Max"}` :
+    metric === "netTx" ? `netTx${stat === "avg" ? "Avg" : stat === "p95" ? "P95" : "Max"}` :
+    metric === "pingRtt" ? `pingRtt${stat === "avg" ? "Avg" : stat === "p95" ? "P95" : "Max"}` :
+    `pingLoss${stat === "avg" ? "Avg" : stat === "p95" ? "P95" : "Max"}`;
+
+  const raw = (point as unknown as Record<string, unknown>)[key];
   return typeof raw === "number" ? raw : null;
+}
+
+function formatBytesPerSec(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(2)} MB/s`;
+  if (value >= 1024) return `${(value / 1024).toFixed(2)} KB/s`;
+  return `${value.toFixed(0)} B/s`;
+}
+
+function percentile(values: number[], p: number): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.max(0, Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1));
+  return sorted[idx] ?? null;
 }
 
 async function fetchFleetLatestTelemetry(nodes: Node[]): Promise<FleetLatestTelemetry> {
@@ -306,7 +335,8 @@ function NodeMultiSelect({
 
 function mergeTelemetrySeries(
   seriesByNode: Record<string, TelemetryComparePoint[]>,
-  metric: TelemetryMetric
+  metric: TelemetryMetric,
+  stat: TelemetryStat
 ): Array<Record<string, number | string | null>> {
   // Build a union timeline.
   interface MergedTelemetryRow extends Record<string, number | string | null> {
@@ -319,7 +349,7 @@ function mergeTelemetrySeries(
     for (const point of series) {
       const ts = point.timestamp;
       const row: MergedTelemetryRow = map.get(ts) ?? { timestamp: ts };
-      row[nodeId] = getMetricValue(point, metric);
+      row[nodeId] = getMetricValue(point, metric, stat);
       map.set(ts, row);
     }
   }
@@ -336,15 +366,25 @@ export function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState<"fleet" | "node" | "compare">("fleet");
   const [selectedNodeId, setSelectedNodeId] = useState<string>("");
   const [compareNodeIds, setCompareNodeIds] = useState<string[]>([]);
-  const [compareMetric, setCompareMetric] = useState<TelemetryMetric>("cpuUsage");
+  const [compareMetric, setCompareMetric] = useState<TelemetryMetric>("cpu");
+  const [compareStat, setCompareStat] = useState<TelemetryStat>("avg");
+  const [compareResolution, setCompareResolution] = useState<"auto" | "raw" | "hour" | "day">("auto");
+  const [brushRange, setBrushRange] = useState<{ startIndex?: number; endIndex?: number } | null>(null);
   
   const [timeRange, setTimeRange] = useState<TimeRangeKey>(() => {
-    return (localStorage.getItem("analytics-time-range") as TimeRangeKey) || "1h";
+    const stored = localStorage.getItem("analytics-time-range") as TimeRangeKey | null;
+    return stored && TIME_RANGES[stored] ? stored : "1h";
   });
 
   const handleTimeRangeChange = (v: TimeRangeKey) => {
     setTimeRange(v);
     localStorage.setItem("analytics-time-range", v);
+    setBrushRange(null);
+  };
+
+  const handleCompareNodesChange = (next: string[]) => {
+    setCompareNodeIds(next);
+    setBrushRange(null);
   };
 
   const { data: nodes, isLoading: nodesLoading, isError: nodesError } = useQuery({
@@ -441,31 +481,50 @@ export function AnalyticsPage() {
     return items;
   }, [fleetStats]);
 
+  const compareRange = useMemo(() => {
+    const end = new Date();
+    const start = new Date(end.getTime() - TIME_RANGES[timeRange].ms);
+    return {
+      start,
+      end,
+      fromUtc: start.toISOString(),
+      toUtc: end.toISOString(),
+    };
+  }, [timeRange]);
+
   const compareTelemetryQueries = useQuery({
-    queryKey: ["compareTelemetry", compareNodeIds, compareMetric, timeRange],
+    queryKey: ["compareTelemetry", compareNodeIds, compareMetric, compareStat, timeRange, compareResolution],
     enabled: compareNodeIds.length > 0,
     queryFn: async () => {
       const series = await mapWithConcurrency(
         compareNodeIds,
         async (nodeId) => {
-          let data: TelemetryComparePoint[] = [];
-          const count = TIME_RANGES[timeRange].count;
-          if (["cpuUsage", "ramUsage", "diskUsage", "temperature"].includes(compareMetric)) {
-            data = await fetchNodeTelemetry(nodeId, count);
-          } else if (["netRxBytesPerSec", "netTxBytesPerSec"].includes(compareMetric)) {
-            data = await fetchNodeNetworkTelemetry(nodeId, count);
-          } else if (["pingRttMs", "pingPacketLossPercent"].includes(compareMetric)) {
-            data = await fetchNodePingTelemetry(nodeId, count);
-          }
-          // Reversed by API (desc). We want oldest->newest.
-          return [nodeId, [...data].reverse()] as const;
+          const history = await fetchNodeTelemetryHistory(nodeId, {
+            fromUtc: compareRange.fromUtc,
+            toUtc: compareRange.toUtc,
+            resolution: compareResolution,
+          });
+          return {
+            nodeId,
+            points: history.points,
+            granularity: history.granularity,
+            bucketSeconds: history.bucketSeconds,
+          } as const;
         },
         { concurrency: 4 }
       );
 
-      const byNode = Object.fromEntries(series) as Record<string, TelemetryComparePoint[]>;
-      const merged = mergeTelemetrySeries(byNode, compareMetric);
-      return { byNode, merged };
+      const byNode = Object.fromEntries(
+        series.map((item) => [item.nodeId, item.points])
+      ) as Record<string, TelemetryComparePoint[]>;
+      const merged = mergeTelemetrySeries(byNode, compareMetric, compareStat);
+      const meta = series[0];
+      return {
+        byNode,
+        merged,
+        granularity: meta?.granularity ?? compareResolution,
+        bucketSeconds: meta?.bucketSeconds ?? 0,
+      };
     },
     staleTime: 5_000,
     refetchInterval: 20_000,
@@ -496,13 +555,100 @@ export function AnalyticsPage() {
   }, [compareNodeIds, effectiveNodes]);
 
   const compareMetricLabel = 
-    compareMetric === "cpuUsage" ? "CPU" : 
-    compareMetric === "ramUsage" ? "RAM" : 
-    compareMetric === "diskUsage" ? "Disk" :
+    compareMetric === "cpu" ? "CPU" : 
+    compareMetric === "ram" ? "RAM" : 
+    compareMetric === "disk" ? "Disk" :
     compareMetric === "temperature" ? "Temperature" :
-    compareMetric === "netRxBytesPerSec" ? "Network Download" :
-    compareMetric === "netTxBytesPerSec" ? "Network Upload" :
-    compareMetric === "pingRttMs" ? "Ping Latency" : "Ping Packet Loss";
+    compareMetric === "netRx" ? "Network Download" :
+    compareMetric === "netTx" ? "Network Upload" :
+    compareMetric === "pingRtt" ? "Ping Latency" : "Ping Packet Loss";
+
+  const compareRangeLabel = useMemo(() => {
+    return `${format(compareRange.start, "PPp")} → ${format(compareRange.end, "PPp")}`;
+  }, [compareRange]);
+
+  const axisTimeFormat = useMemo(() => {
+    const spanMs = compareRange.end.getTime() - compareRange.start.getTime();
+    return spanMs > 36 * 60 * 60 * 1000 ? "MMM d" : "HH:mm";
+  }, [compareRange]);
+
+  const formatCompareValue = (value: number | null | undefined): string => {
+    if (value === null || value === undefined || Number.isNaN(value)) return "—";
+    if (["cpu", "ram", "disk", "pingLoss"].includes(compareMetric)) return percent(value);
+    if (compareMetric === "temperature") return `${value.toFixed(1)}°C`;
+    if (compareMetric === "pingRtt") return `${value.toFixed(0)} ms`;
+    if (compareMetric === "netRx" || compareMetric === "netTx") return formatBytesPerSec(value);
+    return value.toFixed(2);
+  };
+
+  const compareInsights = useMemo(() => {
+    const byNode = compareTelemetryQueries.data?.byNode ?? {};
+    return compareNodeIds.map((nodeId) => {
+      const series = byNode[nodeId] ?? [];
+      const values = series
+        .map((point) => getMetricValue(point, compareMetric, compareStat))
+        .filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
+
+      const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+      const p95 = values.length ? percentile(values, 0.95) : null;
+      const min = values.length ? Math.min(...values) : null;
+      const max = values.length ? Math.max(...values) : null;
+      const trend = values.length > 1 ? values[values.length - 1] - values[0] : null;
+
+      return {
+        nodeId,
+        hostname: effectiveNodes.find((n) => n.id === nodeId)?.hostname ?? nodeId,
+        avg,
+        p95,
+        min,
+        max,
+        trend,
+      };
+    });
+  }, [compareTelemetryQueries.data, compareNodeIds, compareMetric, compareStat, effectiveNodes]);
+
+  const exportTelemetry = (type: "csv" | "json") => {
+    const merged = compareTelemetryQueries.data?.merged ?? [];
+    if (!merged.length) return;
+
+    const nodeLabels = compareNodeIds.map((id) => compareChartConfig[id]?.label ?? id);
+    const filename = `telemetry-${compareMetric}-${compareStat}-${timeRange}.${type}`;
+
+    if (type === "json") {
+      const payload = {
+        metric: compareMetric,
+        statistic: compareStat,
+        range: compareRange,
+        resolution: compareTelemetryQueries.data?.granularity ?? compareResolution,
+        nodes: compareNodeIds.map((id, idx) => ({ id, label: nodeLabels[idx] })),
+        data: merged,
+      };
+      const json = JSON.stringify(payload, null, 2);
+      downloadBlob(json, filename, "application/json");
+      return;
+    }
+
+    const header = ["timestamp", ...nodeLabels];
+    const rows = merged.map((row) => {
+      const values = compareNodeIds.map((id) => {
+        const raw = row[id];
+        return typeof raw === "number" ? raw.toString() : "";
+      });
+      return [row.timestamp, ...values].join(",");
+    });
+    const csv = [header.join(","), ...rows].join("\n");
+    downloadBlob(csv, filename, "text/csv");
+  };
+
+  const downloadBlob = (content: string, filename: string, type: string) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   const fleetBarConfig: ChartConfig = {
     cpu: { label: "CPU", color: "var(--chart-1)" },
@@ -522,9 +668,9 @@ export function AnalyticsPage() {
 
   const isValidMetric = (v: string): v is TelemetryMetric =>
     [
-      "cpuUsage", "ramUsage", "diskUsage", "temperature",
-      "netRxBytesPerSec", "netTxBytesPerSec",
-      "pingRttMs", "pingPacketLossPercent"
+      "cpu", "ram", "disk", "temperature",
+      "netRx", "netTx",
+      "pingRtt", "pingLoss"
     ].includes(v);
 
   const isStatusPayload = (x: unknown): x is { name: string; value: number } => {
@@ -863,36 +1009,83 @@ export function AnalyticsPage() {
                          <label className="text-sm font-medium">Metric</label>
                          <Select
                            value={compareMetric}
-                           onValueChange={(v) => setCompareMetric(isValidMetric(v ?? "") ? (v as TelemetryMetric) : "cpuUsage")}
+                          onValueChange={(v) => {
+                            setCompareMetric(isValidMetric(v ?? "") ? (v as TelemetryMetric) : "cpu");
+                            setBrushRange(null);
+                          }}
                          >
                            <SelectTrigger className="h-10">
                               <SelectValue />
                            </SelectTrigger>
                            <SelectContent>
-                              <SelectItem value="cpuUsage">
+                            <SelectItem value="cpu">
                                  <div className="flex items-center gap-2"><Cpu className="h-4 w-4 text-muted-foreground" /> CPU Usage</div>
                               </SelectItem>
-                              <SelectItem value="ramUsage">
+                            <SelectItem value="ram">
                                  <div className="flex items-center gap-2"><MemoryStick className="h-4 w-4 text-muted-foreground" /> RAM Usage</div>
                               </SelectItem>
-                              <SelectItem value="diskUsage">
+                            <SelectItem value="disk">
                                  <div className="flex items-center gap-2"><HardDrive className="h-4 w-4 text-muted-foreground" /> Disk Usage</div>
                               </SelectItem>
                               <SelectItem value="temperature">
                                  <div className="flex items-center gap-2"><Zap className="h-4 w-4 text-muted-foreground" /> Temperature</div>
                               </SelectItem>
-                              <SelectItem value="netRxBytesPerSec">
+                            <SelectItem value="netRx">
                                  <div className="flex items-center gap-2"><Network className="h-4 w-4 text-muted-foreground" /> Network Download</div>
                               </SelectItem>
-                              <SelectItem value="netTxBytesPerSec">
+                            <SelectItem value="netTx">
                                  <div className="flex items-center gap-2"><Network className="h-4 w-4 text-muted-foreground" /> Network Upload</div>
                               </SelectItem>
-                              <SelectItem value="pingRttMs">
+                            <SelectItem value="pingRtt">
                                  <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-muted-foreground" /> Ping Latency</div>
                               </SelectItem>
+                            <SelectItem value="pingLoss">
+                              <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-muted-foreground" /> Ping Packet Loss</div>
+                            </SelectItem>
                            </SelectContent>
                          </Select>
                       </div>
+
+                       <div className="space-y-2">
+                         <label className="text-sm font-medium">Statistic</label>
+                         <Select value={compareStat} onValueChange={(v) => {
+                            setCompareStat(v as TelemetryStat);
+                            setBrushRange(null);
+                          }}>
+                          <SelectTrigger className="h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="avg">
+                              <div className="flex items-center gap-2"><SlidersHorizontal className="h-4 w-4 text-muted-foreground" /> Average</div>
+                            </SelectItem>
+                            <SelectItem value="p95">
+                              <div className="flex items-center gap-2"><SlidersHorizontal className="h-4 w-4 text-muted-foreground" /> P95</div>
+                            </SelectItem>
+                            <SelectItem value="max">
+                              <div className="flex items-center gap-2"><SlidersHorizontal className="h-4 w-4 text-muted-foreground" /> Max</div>
+                            </SelectItem>
+                          </SelectContent>
+                         </Select>
+                       </div>
+
+                       <div className="space-y-2">
+                         <label className="text-sm font-medium">Resolution</label>
+                         <Select value={compareResolution} onValueChange={(v) => {
+                            setCompareResolution(v as "auto" | "raw" | "hour" | "day");
+                            setBrushRange(null);
+                          }}>
+                          <SelectTrigger className="h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">Auto (Smart)</SelectItem>
+                            <SelectItem value="raw">Raw (High Fidelity)</SelectItem>
+                            <SelectItem value="hour">Hourly</SelectItem>
+                            <SelectItem value="day">Daily</SelectItem>
+                          </SelectContent>
+                         </Select>
+                       </div>
 
                       <div className="space-y-2">
                          <label className="text-sm font-medium">Time Range</label>
@@ -918,7 +1111,7 @@ export function AnalyticsPage() {
                          <NodeMultiSelect 
                            nodes={effectiveNodes} 
                            selectedIds={compareNodeIds} 
-                           onChange={setCompareNodeIds} 
+                           onChange={handleCompareNodesChange} 
                         />
                       </div>
                    </CardContent>
@@ -930,24 +1123,43 @@ export function AnalyticsPage() {
                       <div className="flex items-center justify-between">
                          <div>
                             <CardTitle className="flex items-center gap-2">
-                               {compareMetric === 'cpuUsage' ? <Cpu className="h-5 w-5 text-primary" /> : 
-                                compareMetric === 'ramUsage' ? <MemoryStick className="h-5 w-5 text-primary" /> : 
-                                <HardDrive className="h-5 w-5 text-primary" />}
+                               {compareMetric === "cpu" ? <Cpu className="h-5 w-5 text-primary" /> : 
+                                compareMetric === "ram" ? <MemoryStick className="h-5 w-5 text-primary" /> : 
+                                compareMetric === "disk" ? <HardDrive className="h-5 w-5 text-primary" /> :
+                                compareMetric === "temperature" ? <Zap className="h-5 w-5 text-primary" /> :
+                                compareMetric === "pingRtt" || compareMetric === "pingLoss" ? <Activity className="h-5 w-5 text-primary" /> :
+                                <Network className="h-5 w-5 text-primary" />}
                                {compareMetricLabel} Comparison
                             </CardTitle>
-                            <CardDescription>Historical performance trend over the last hour.</CardDescription>
+                            <CardDescription>
+                              {compareRangeLabel} • {compareTelemetryQueries.data?.granularity ?? compareResolution} rollups
+                            </CardDescription>
                          </div>
-                         <Badge variant="outline" className="font-mono text-xs">Last 60pts</Badge>
+                         <div className="flex items-center gap-2">
+                           <Badge variant="outline" className="font-mono text-xs">
+                             {compareTelemetryQueries.data?.bucketSeconds
+                               ? `${Math.round(compareTelemetryQueries.data.bucketSeconds / 60)}m buckets`
+                               : "Raw samples"}
+                           </Badge>
+                           <Button variant="outline" size="sm" onClick={() => exportTelemetry("csv")}>
+                             Export CSV
+                           </Button>
+                           <Button variant="outline" size="sm" onClick={() => exportTelemetry("json")}>
+                             Export JSON
+                           </Button>
+                         </div>
                       </div>
                    </CardHeader>
                    <CardContent className="flex-1 min-h-75">
                      {compareNodeIds.length === 0 ? (
                        <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-4 min-h-75">
                           <BarChart3 className="h-12 w-12 opacity-20" />
-                          <p>Select at least 2 nodes to compare performance metrics.</p>
+                          <p>Select nodes to compare performance metrics.</p>
                        </div>
                      ) : compareTelemetryQueries.isError ? (
                        <div className="h-full flex items-center justify-center text-destructive">Failed to load comparison data.</div>
+                     ) : (compareTelemetryQueries.data?.merged?.length ?? 0) === 0 ? (
+                       <div className="h-full flex items-center justify-center text-muted-foreground">No telemetry history found for the selected range.</div>
                      ) : (
                        <ChartContainer id="compare" config={compareChartConfig} className="h-full w-full min-h-100">
                          <AreaChart data={compareTelemetryQueries.data?.merged ?? []} margin={{ left: 0, right: 0, top: 20, bottom: 0 }}>
@@ -968,7 +1180,14 @@ export function AnalyticsPage() {
                              dataKey="timestamp"
                              tickLine={false}
                              axisLine={false}
-                             tickFormatter={(v) => (typeof v === "string" ? formatShortTime(v) : String(v))}
+                             tickFormatter={(v) => {
+                               if (typeof v !== "string") return String(v);
+                               try {
+                                 return format(new Date(v), axisTimeFormat);
+                               } catch {
+                                 return v;
+                               }
+                             }}
                              minTickGap={30}
                              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                            />
@@ -977,12 +1196,7 @@ export function AnalyticsPage() {
                               axisLine={false} 
                               domain={[0, "auto"]} 
                               tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-                              tickFormatter={(val) => {
-                                  if (compareMetric.includes("Usage") || compareMetric.includes("Loss")) return `${val}%`;
-                                  if (compareMetric === "pingRttMs") return `${val}ms`;
-                                  if (compareMetric.includes("Bytes")) return val > 1024*1024 ? `${(val/1024/1024).toFixed(0)}M` : `${(val/1024).toFixed(0)}K`;
-                                  return `${val}`;
-                              }}
+                              tickFormatter={(val) => formatCompareValue(Number(val))}
                            />
                            <ChartTooltip
                              content={
@@ -991,19 +1205,29 @@ export function AnalyticsPage() {
                                   labelFormatter={(v) => { try { if (typeof v === "string") return format(new Date(v), "PPp"); return String(v); } catch { return String(v); } }}
                                  formatter={(value, name) => {
                                      const val = Number(value);
-                                     if (compareMetric.includes("Usage") || compareMetric.includes("Loss")) return [percent(val), name];
-                                     if (compareMetric === "pingRttMs") return [`${val.toFixed(0)} ms`, name];
-                                     if (compareMetric === "temperature") return [`${val.toFixed(1)}°C`, name];
-                                     if (compareMetric.includes("Bytes")) {
-                                        if (val > 1024 * 1024) return [`${(val / 1024 / 1024).toFixed(2)} MB/s`, name];
-                                        return [`${(val / 1024).toFixed(2)} KB/s`, name];
-                                     }
-                                     return [`${val}`, name];
+                                     return [formatCompareValue(val), name];
                                  }}
                                />
                              }
                            />
                            <ChartLegend content={<ChartLegendContent />} />
+
+                           <Brush
+                             dataKey="timestamp"
+                             height={30}
+                             stroke="var(--muted-foreground)"
+                             startIndex={brushRange?.startIndex}
+                             endIndex={brushRange?.endIndex}
+                             onChange={(range) => setBrushRange(range)}
+                             tickFormatter={(v) => {
+                               if (typeof v !== "string") return String(v);
+                               try {
+                                 return format(new Date(v), axisTimeFormat);
+                               } catch {
+                                 return v;
+                               }
+                             }}
+                           />
 
                            {compareNodeIds.slice(0, 5).map((nodeId) => (
                              <Area
@@ -1024,6 +1248,50 @@ export function AnalyticsPage() {
                    </CardContent>
                 </Card>
              </div>
+
+             <Card className="border shadow-sm">
+               <CardHeader className="bg-muted/30 border-b">
+                 <CardTitle className="text-base">Derived Insights</CardTitle>
+                 <CardDescription>P95, trend, and range summaries for the selected metric.</CardDescription>
+               </CardHeader>
+               <CardContent className="p-0">
+                 <div className="overflow-x-auto">
+                   <Table>
+                     <TableHeader className="bg-muted/10">
+                       <TableRow className="hover:bg-transparent">
+                         <TableHead>Node</TableHead>
+                         <TableHead className="text-right">Avg</TableHead>
+                         <TableHead className="text-right">P95</TableHead>
+                         <TableHead className="text-right">Min</TableHead>
+                         <TableHead className="text-right">Max</TableHead>
+                         <TableHead className="text-right">Trend</TableHead>
+                       </TableRow>
+                     </TableHeader>
+                     <TableBody>
+                       {compareInsights.map((row) => (
+                         <TableRow key={row.nodeId}>
+                           <TableCell className="font-medium">{row.hostname}</TableCell>
+                           <TableCell className="text-right font-mono tabular-nums">{formatCompareValue(row.avg)}</TableCell>
+                           <TableCell className="text-right font-mono tabular-nums">{formatCompareValue(row.p95)}</TableCell>
+                           <TableCell className="text-right font-mono tabular-nums">{formatCompareValue(row.min)}</TableCell>
+                           <TableCell className="text-right font-mono tabular-nums">{formatCompareValue(row.max)}</TableCell>
+                           <TableCell className="text-right font-mono tabular-nums">
+                             {row.trend === null ? "—" : (
+                               <span className={cn(
+                                 "text-xs px-1.5 py-0.5 rounded-full",
+                                 row.trend > 0 ? "bg-rose-500/10 text-rose-500" : row.trend < 0 ? "bg-emerald-500/10 text-emerald-500" : "bg-zinc-500/10 text-zinc-500"
+                               )}>
+                                 {row.trend > 0 ? "↑" : row.trend < 0 ? "↓" : "→"} {formatCompareValue(Math.abs(row.trend))}
+                               </span>
+                             )}
+                           </TableCell>
+                         </TableRow>
+                       ))}
+                     </TableBody>
+                   </Table>
+                 </div>
+               </CardContent>
+             </Card>
           </TabsContent>
         </Tabs>
       </div>

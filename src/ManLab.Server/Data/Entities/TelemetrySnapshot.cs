@@ -72,6 +72,9 @@ public class TelemetrySnapshot
     /// <summary>APM telemetry as JSON (nullable if not available).</summary>
     public string? ApmJson { get; set; }
 
+    /// <summary>Top process telemetry as JSON (nullable if not available).</summary>
+    public string? ProcessTelemetryJson { get; set; }
+
     // Navigation property
     [ForeignKey(nameof(NodeId))]
     public Node Node { get; set; } = null!;

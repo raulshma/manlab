@@ -6,6 +6,7 @@
 import type {
   Node,
   Telemetry,
+  TelemetryHistoryResponse,
   Command,
   NodeSetting,
   ServiceMonitorConfig,
@@ -58,6 +59,7 @@ import type {
   TrafficMonitorConfig,
   TrafficSample,
   MonitorJobSummary,
+  ProcessTelemetry,
 } from "./types";
 
 const API_BASE = "/api";
@@ -232,6 +234,35 @@ export async function fetchNodeTelemetry(
 }
 
 /**
+ * Fetches telemetry history over a time range with rollups.
+ */
+export async function fetchNodeTelemetryHistory(
+  id: string,
+  params: {
+    fromUtc: string;
+    toUtc: string;
+    resolution?: "auto" | "raw" | "hour" | "day";
+  }
+): Promise<TelemetryHistoryResponse> {
+  const qs = new URLSearchParams({
+    fromUtc: params.fromUtc,
+    toUtc: params.toUtc,
+  });
+  if (params.resolution) {
+    qs.set("resolution", params.resolution);
+  }
+
+  const response = await fetch(
+    `${API_BASE}/devices/${id}/telemetry/history?${qs.toString()}`
+  );
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch telemetry history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
  * Fetches network telemetry history for a node.
  */
 export async function fetchNodeNetworkTelemetry(
@@ -382,6 +413,22 @@ export async function fetchApmTelemetry(
   if (!response.ok) {
     if (response.status === 404) return null;
     throw new Error(`Failed to fetch APM telemetry: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Fetches the latest process telemetry for a node.
+ */
+export async function fetchProcessTelemetry(
+  nodeId: string
+): Promise<ProcessTelemetry[] | null> {
+  const response = await fetch(
+    `${API_BASE}/devices/${nodeId}/telemetry/processes`
+  );
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    throw new Error(`Failed to fetch process telemetry: ${response.statusText}`);
   }
   return response.json();
 }

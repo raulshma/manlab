@@ -204,6 +204,191 @@ public class DevicesController : ControllerBase
     }
 
     /// <summary>
+    /// Gets telemetry history for a specific node over a time range with rollups.
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/history")]
+    [ResponseCache(Duration = 5, VaryByQueryKeys = ["fromUtc", "toUtc", "resolution"])]
+    public async Task<ActionResult<TelemetryHistoryResponse>> GetTelemetryHistory(
+        Guid id,
+        [FromQuery] DateTime? fromUtc,
+        [FromQuery] DateTime? toUtc,
+        [FromQuery] string? resolution = "auto")
+    {
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var now = DateTime.UtcNow;
+        var from = NormalizeUtc(fromUtc ?? now.AddHours(-1));
+        var to = NormalizeUtc(toUtc ?? now);
+
+        if (to <= from)
+        {
+            return BadRequest("toUtc must be after fromUtc");
+        }
+
+        var span = to - from;
+        var desired = (resolution ?? "auto").Trim().ToLowerInvariant();
+        var resolved = desired switch
+        {
+            "raw" => "raw",
+            "hour" => "hour",
+            "day" => "day",
+            _ => span.TotalDays <= 7 ? "raw" : span.TotalDays <= 30 ? "hour" : "day"
+        };
+
+        if (resolved == "raw")
+        {
+            var raw = await _dbContext.TelemetrySnapshots
+                .AsNoTracking()
+                .Where(t => t.NodeId == id && t.Timestamp >= from && t.Timestamp <= to)
+                .OrderBy(t => t.Timestamp)
+                .Select(t => new TelemetryHistoryPoint
+                {
+                    Timestamp = t.Timestamp,
+                    SampleCount = 1,
+
+                    CpuAvg = t.CpuUsage,
+                    CpuMin = t.CpuUsage,
+                    CpuMax = t.CpuUsage,
+                    CpuP95 = t.CpuUsage,
+
+                    RamAvg = t.RamUsage,
+                    RamMin = t.RamUsage,
+                    RamMax = t.RamUsage,
+                    RamP95 = t.RamUsage,
+
+                    DiskAvg = t.DiskUsage,
+                    DiskMin = t.DiskUsage,
+                    DiskMax = t.DiskUsage,
+                    DiskP95 = t.DiskUsage,
+
+                    TempAvg = t.Temperature,
+                    TempMin = t.Temperature,
+                    TempMax = t.Temperature,
+                    TempP95 = t.Temperature,
+
+                    NetRxAvg = t.NetRxBytesPerSec,
+                    NetRxMax = t.NetRxBytesPerSec,
+                    NetRxP95 = t.NetRxBytesPerSec,
+
+                    NetTxAvg = t.NetTxBytesPerSec,
+                    NetTxMax = t.NetTxBytesPerSec,
+                    NetTxP95 = t.NetTxBytesPerSec,
+
+                    PingRttAvg = t.PingRttMs,
+                    PingRttMax = t.PingRttMs,
+                    PingRttP95 = t.PingRttMs,
+
+                    PingLossAvg = t.PingPacketLossPercent,
+                    PingLossMax = t.PingPacketLossPercent,
+                    PingLossP95 = t.PingPacketLossPercent
+                })
+                .ToListAsync();
+
+            return Ok(new TelemetryHistoryResponse
+            {
+                FromUtc = from,
+                ToUtc = to,
+                Granularity = "raw",
+                BucketSeconds = 0,
+                Points = raw
+            });
+        }
+
+        var granularity = resolved == "day"
+            ? TelemetryRollupGranularity.Day
+            : TelemetryRollupGranularity.Hour;
+        var bucketSeconds = resolved == "day" ? 86400 : 3600;
+
+        var rollups = await _dbContext.TelemetryRollups
+            .AsNoTracking()
+            .Where(r => r.NodeId == id && r.Granularity == granularity && r.BucketStartUtc >= from && r.BucketStartUtc <= to)
+            .OrderBy(r => r.BucketStartUtc)
+            .Select(r => new TelemetryHistoryPoint
+            {
+                Timestamp = r.BucketStartUtc,
+                SampleCount = r.SampleCount,
+                CpuAvg = r.CpuAvg,
+                CpuMin = r.CpuMin,
+                CpuMax = r.CpuMax,
+                CpuP95 = r.CpuP95,
+                RamAvg = r.RamAvg,
+                RamMin = r.RamMin,
+                RamMax = r.RamMax,
+                RamP95 = r.RamP95,
+                DiskAvg = r.DiskAvg,
+                DiskMin = r.DiskMin,
+                DiskMax = r.DiskMax,
+                DiskP95 = r.DiskP95,
+                TempAvg = r.TempAvg,
+                TempMin = r.TempMin,
+                TempMax = r.TempMax,
+                TempP95 = r.TempP95,
+                NetRxAvg = r.NetRxAvg,
+                NetRxMax = r.NetRxMax,
+                NetRxP95 = r.NetRxP95,
+                NetTxAvg = r.NetTxAvg,
+                NetTxMax = r.NetTxMax,
+                NetTxP95 = r.NetTxP95,
+                PingRttAvg = r.PingRttAvg,
+                PingRttMax = r.PingRttMax,
+                PingRttP95 = r.PingRttP95,
+                PingLossAvg = r.PingLossAvg,
+                PingLossMax = r.PingLossMax,
+                PingLossP95 = r.PingLossP95
+            })
+            .ToListAsync();
+
+        return Ok(new TelemetryHistoryResponse
+        {
+            FromUtc = from,
+            ToUtc = to,
+            Granularity = resolved,
+            BucketSeconds = bucketSeconds,
+            Points = rollups
+        });
+    }
+
+    /// <summary>
+    /// Gets the latest top-process telemetry for a node (if available).
+    /// </summary>
+    [HttpGet("{id:guid}/telemetry/processes")]
+    [ResponseCache(Duration = 5)]
+    public async Task<ActionResult<IEnumerable<ProcessTelemetry>>> GetProcessTelemetry(Guid id)
+    {
+        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
+        if (!nodeExists)
+        {
+            return NotFound();
+        }
+
+        var latest = await _dbContext.TelemetrySnapshots
+            .AsNoTracking()
+            .Where(t => t.NodeId == id && t.ProcessTelemetryJson != null)
+            .OrderByDescending(t => t.Timestamp)
+            .Select(t => t.ProcessTelemetryJson)
+            .FirstOrDefaultAsync();
+
+        if (latest is null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            var items = JsonSerializer.Deserialize<List<ProcessTelemetry>>(latest);
+            return Ok(items ?? []);
+        }
+        catch
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
     /// Gets service status snapshot history for a specific node.
     /// </summary>
     [HttpGet("{id:guid}/service-status")]
@@ -935,6 +1120,21 @@ public class DevicesController : ControllerBase
         _logger.WolPacketSent(id, node.MacAddress);
 
         return Accepted(new { message = "Wake-on-LAN packet sent" });
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        if (value.Kind == DateTimeKind.Utc)
+        {
+            return value;
+        }
+
+        if (value.Kind == DateTimeKind.Local)
+        {
+            return value.ToUniversalTime();
+        }
+
+        return DateTime.SpecifyKind(value, DateTimeKind.Utc);
     }
 }
 

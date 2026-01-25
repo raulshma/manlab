@@ -52,6 +52,16 @@ export interface TelemetryUpdate {
 }
 
 /**
+ * Lightweight process telemetry snapshot.
+ */
+export interface ProcessTelemetry {
+  processId: number;
+  processName: string | null;
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+}
+
+/**
  * Node status change event from SignalR.
  */
 export interface NodeStatusChange {
@@ -590,6 +600,61 @@ export interface AgentResourceUsage {
   memoryBytes: number | null;
   gcHeapBytes: number | null;
   threadCount: number | null;
+}
+
+/**
+ * Telemetry rollup history point.
+ */
+export interface TelemetryHistoryPoint {
+  timestamp: string;
+  sampleCount: number;
+
+  cpuAvg: number | null;
+  cpuMin: number | null;
+  cpuMax: number | null;
+  cpuP95: number | null;
+
+  ramAvg: number | null;
+  ramMin: number | null;
+  ramMax: number | null;
+  ramP95: number | null;
+
+  diskAvg: number | null;
+  diskMin: number | null;
+  diskMax: number | null;
+  diskP95: number | null;
+
+  tempAvg: number | null;
+  tempMin: number | null;
+  tempMax: number | null;
+  tempP95: number | null;
+
+  netRxAvg: number | null;
+  netRxMax: number | null;
+  netRxP95: number | null;
+
+  netTxAvg: number | null;
+  netTxMax: number | null;
+  netTxP95: number | null;
+
+  pingRttAvg: number | null;
+  pingRttMax: number | null;
+  pingRttP95: number | null;
+
+  pingLossAvg: number | null;
+  pingLossMax: number | null;
+  pingLossP95: number | null;
+}
+
+/**
+ * Telemetry history response.
+ */
+export interface TelemetryHistoryResponse {
+  fromUtc: string;
+  toUtc: string;
+  granularity: "raw" | "hour" | "day";
+  bucketSeconds: number;
+  points: TelemetryHistoryPoint[];
 }
 
 /**

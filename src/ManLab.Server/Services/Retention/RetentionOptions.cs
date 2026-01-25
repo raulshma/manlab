@@ -10,7 +10,17 @@ public sealed class RetentionOptions
     /// <summary>
     /// How long to keep high-frequency telemetry snapshots.
     /// </summary>
-    public int TelemetrySnapshotDays { get; set; } = 30;
+    public int TelemetrySnapshotDays { get; set; } = 7;
+
+    /// <summary>
+    /// How long to keep hourly telemetry rollups.
+    /// </summary>
+    public int TelemetryRollupHourlyDays { get; set; } = 30;
+
+    /// <summary>
+    /// How long to keep daily telemetry rollups.
+    /// </summary>
+    public int TelemetryRollupDailyDays { get; set; } = 365;
 
     /// <summary>
     /// How long to keep service status snapshots.

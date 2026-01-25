@@ -352,6 +352,10 @@ public class AgentHub : Hub
                 : null,
             ApmJson = data.Apm != null 
                 ? System.Text.Json.JsonSerializer.Serialize(data.Apm) 
+                : null,
+
+            ProcessTelemetryJson = data.TopProcesses is { Count: > 0 }
+                ? System.Text.Json.JsonSerializer.Serialize(data.TopProcesses)
                 : null
         };
 

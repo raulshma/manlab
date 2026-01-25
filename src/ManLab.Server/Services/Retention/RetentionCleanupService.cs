@@ -73,6 +73,8 @@ public sealed class RetentionCleanupService : BackgroundService
         var now = DateTime.UtcNow;
 
         var telemetryCutoff = now.AddDays(-Math.Max(1, opts.TelemetrySnapshotDays));
+        var hourlyRollupCutoff = now.AddDays(-Math.Max(1, opts.TelemetryRollupHourlyDays));
+        var dailyRollupCutoff = now.AddDays(-Math.Max(1, opts.TelemetryRollupDailyDays));
         var serviceCutoff = now.AddDays(-Math.Max(1, opts.ServiceStatusSnapshotDays));
         var smartCutoff = now.AddDays(-Math.Max(1, opts.SmartDriveSnapshotDays));
         var gpuCutoff = now.AddDays(-Math.Max(1, opts.GpuSnapshotDays));
@@ -81,6 +83,14 @@ public sealed class RetentionCleanupService : BackgroundService
         // Use ExecuteDelete for efficient server-side deletes.
         var telemetryDeleted = await db.TelemetrySnapshots
             .Where(t => t.Timestamp < telemetryCutoff)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        var hourlyDeleted = await db.TelemetryRollups
+            .Where(r => r.Granularity == Data.Enums.TelemetryRollupGranularity.Hour && r.BucketStartUtc < hourlyRollupCutoff)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        var dailyDeleted = await db.TelemetryRollups
+            .Where(r => r.Granularity == Data.Enums.TelemetryRollupGranularity.Day && r.BucketStartUtc < dailyRollupCutoff)
             .ExecuteDeleteAsync(cancellationToken);
 
         var serviceDeleted = await db.ServiceStatusSnapshots
@@ -99,11 +109,13 @@ public sealed class RetentionCleanupService : BackgroundService
             .Where(s => s.Timestamp < upsCutoff)
             .ExecuteDeleteAsync(cancellationToken);
 
-        if (telemetryDeleted + serviceDeleted + smartDeleted + gpuDeleted + upsDeleted > 0)
+        if (telemetryDeleted + hourlyDeleted + dailyDeleted + serviceDeleted + smartDeleted + gpuDeleted + upsDeleted > 0)
         {
             _logger.LogInformation(
-                "Retention cleanup deleted rows: Telemetry={Telemetry} Service={Service} SMART={Smart} GPU={Gpu} UPS={Ups}",
+            "Retention cleanup deleted rows: Telemetry={Telemetry} HourlyRollups={Hourly} DailyRollups={Daily} Service={Service} SMART={Smart} GPU={Gpu} UPS={Ups}",
                 telemetryDeleted,
+            hourlyDeleted,
+            dailyDeleted,
                 serviceDeleted,
                 smartDeleted,
                 gpuDeleted,

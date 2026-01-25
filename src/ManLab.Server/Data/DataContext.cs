@@ -20,6 +20,9 @@ public class DataContext : DbContext
     /// <summary>Telemetry snapshots from agent nodes.</summary>
     public DbSet<TelemetrySnapshot> TelemetrySnapshots => Set<TelemetrySnapshot>();
 
+    /// <summary>Aggregated telemetry rollups.</summary>
+    public DbSet<TelemetryRollup> TelemetryRollups => Set<TelemetryRollup>();
+
     /// <summary>Command queue for async task tracking.</summary>
     public DbSet<CommandQueueItem> CommandQueue => Set<CommandQueueItem>();
 
@@ -92,6 +95,14 @@ public class DataContext : DbContext
                 .HasForeignKey(e => e.NodeId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+            // TelemetryRollup configuration
+            modelBuilder.Entity<TelemetryRollup>(entity =>
+            {
+                entity.HasIndex(e => e.NodeId);
+                entity.HasIndex(e => e.BucketStartUtc);
+                entity.HasIndex(e => new { e.NodeId, e.Granularity, e.BucketStartUtc }).IsUnique();
+            });
 
         // CommandQueueItem configuration
         modelBuilder.Entity<CommandQueueItem>(entity =>

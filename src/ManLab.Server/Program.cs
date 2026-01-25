@@ -198,6 +198,11 @@ builder.Services.AddOptions<RetentionOptions>()
     .Bind(builder.Configuration.GetSection(RetentionOptions.SectionName));
 builder.Services.AddHostedService<RetentionCleanupService>();
 
+// Telemetry rollup aggregation
+builder.Services.AddOptions<TelemetryRollupOptions>()
+    .Bind(builder.Configuration.GetSection(TelemetryRollupOptions.SectionName));
+builder.Services.AddHostedService<TelemetryRollupService>();
+
 // Configure Entity Framework Core with PostgreSQL via Aspire integration.
 // The connection name ("manlab") must match the database resource name in the AppHost.
 var connectionString =

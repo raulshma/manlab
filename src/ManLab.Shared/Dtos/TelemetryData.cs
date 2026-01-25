@@ -67,6 +67,29 @@ public class TelemetryData
 
     /// <summary>Agent process thread count (null if unavailable).</summary>
     public int? AgentThreadCount { get; set; }
+
+    /// <summary>
+    /// Top process snapshot (limited list) for high-fidelity diagnostics.
+    /// </summary>
+    public List<ProcessTelemetry>? TopProcesses { get; set; }
+}
+
+/// <summary>
+/// Lightweight process telemetry snapshot.
+/// </summary>
+public sealed class ProcessTelemetry
+{
+    /// <summary>Process ID.</summary>
+    public int ProcessId { get; set; }
+
+    /// <summary>Process name (may be null if unavailable).</summary>
+    public string? ProcessName { get; set; }
+
+    /// <summary>CPU usage percentage (0-100, null if unavailable).</summary>
+    public float? CpuPercent { get; set; }
+
+    /// <summary>Working set memory in bytes (null if unavailable).</summary>
+    public long? MemoryBytes { get; set; }
 }
 
 /// <summary>

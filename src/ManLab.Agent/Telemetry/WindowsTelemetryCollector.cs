@@ -21,6 +21,7 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
     private readonly EnhancedNetworkTelemetryCollector _enhancedNetworkCollector;
     private readonly EnhancedGpuTelemetryCollector _enhancedGpuCollector;
     private readonly ApplicationPerformanceCollector _apmCollector;
+    private readonly ProcessTelemetryCollector _processCollector;
     
     // Previous CPU times for calculating usage
     private long _prevIdleTime;
@@ -53,6 +54,7 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
         _enhancedNetworkCollector = new EnhancedNetworkTelemetryCollector(_logger, _config);
         _enhancedGpuCollector = new EnhancedGpuTelemetryCollector(_logger, _config);
         _apmCollector = new ApplicationPerformanceCollector(_logger, _config);
+        _processCollector = new ProcessTelemetryCollector(_logger);
     }
 
     public TelemetryData Collect()
@@ -78,6 +80,7 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
             data.Network = _enhancedNetworkCollector.Collect();
             data.EnhancedGpus = _enhancedGpuCollector.Collect();
             data.Apm = _apmCollector.Collect();
+            data.TopProcesses = _processCollector.Collect();
         }
         catch (Exception ex)
         {

@@ -542,7 +542,6 @@ export function NetworkToolHistoryPanel() {
 
   useEffect(() => {
     if (query.search !== searchInput) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearchInput(query.search);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
