@@ -89,6 +89,40 @@ function New-UrlWithQuery {
     return "$BaseUrl?" + ($pairs -join "&")
 }
 
+function Show-LocalAgentVersions {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseServerUrl,
+        [string]$Channel
+    )
+
+    try {
+        $catalogUrl = New-UrlWithQuery -BaseUrl "$BaseServerUrl/api/binaries/agent/release-catalog" -Query @{ channel = $Channel }
+        $raw = (Invoke-WebRequest -UseBasicParsing -Uri $catalogUrl).Content
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            Write-Warn "Unable to query local agent versions (empty response)."
+            return
+        }
+
+        $catalog = $raw | ConvertFrom-Json
+        $local = $catalog.local
+        $channelLabel = if ($catalog.channel) { [string]$catalog.channel } else { "" }
+
+        if (-not $local -or $local.Count -eq 0) {
+            Write-Info "No local agent versions staged for channel '$channelLabel'."
+            return
+        }
+
+        Write-Info "Local agent versions available (channel: $channelLabel):"
+        foreach ($item in $local) {
+            $rids = if ($item.rids) { ($item.rids -join ', ') } else { "" }
+            $stamp = if ($item.binaryLastWriteTimeUtc) { try { [DateTime]::Parse([string]$item.binaryLastWriteTimeUtc).ToString('u') } catch { [string]$item.binaryLastWriteTimeUtc } } else { "unknown" }
+            Write-Info "  - $($item.version) [$rids] (last updated: $stamp)"
+        }
+    } catch {
+        Write-Warn "Unable to query local agent versions: $_"
+    }
+}
+
 function Try-DownloadAgentFromGitHub {
     param(
         [Parameter(Mandatory = $true)][string]$Rid,
@@ -288,6 +322,8 @@ Write-Info "Installing ManLab Agent"
 Write-Info "  Server: $Server"
 Write-Info "  RID:    $rid"
 Write-Info "  Dir:    $InstallDir"
+
+Show-LocalAgentVersions -BaseServerUrl $Server -Channel $AgentChannel
 
 if ((Test-Path $exePath) -and -not $Force) {
     throw "Already installed. Use -Force"

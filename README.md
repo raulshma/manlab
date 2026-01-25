@@ -123,6 +123,7 @@ Default dev config is:
 The server exposes a small “binary distribution” API used by the installer scripts:
 
 - `GET /api/binaries/agent` (lists available RIDs)
+- `GET /api/binaries/agent/release-catalog` (lists locally staged versions + optional GitHub tags)
 - `GET /api/binaries/agent/{rid}` (downloads `manlab-agent` / `manlab-agent.exe`)
 
 Binaries are served from the server’s distribution root:

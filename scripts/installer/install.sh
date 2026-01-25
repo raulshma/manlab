@@ -47,6 +47,8 @@ INSTALLATION OPTIONS:
     --token <token>         Authentication token
     --install-dir <dir>     Installation directory (default: /opt/manlab-agent)
     --rid <rid>             Runtime identifier (auto-detected if not specified)
+    --agent-channel <ch>    Local distribution channel (e.g. stable, beta)
+    --agent-version <v>     Local distribution version folder (e.g. v1.2.3). Omit for staged
     --force                 Overwrite existing installation
     --run-as-root           Run agent as root instead of dedicated user
 
@@ -127,6 +129,8 @@ SERVER=""
 TOKEN=""
 INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 RID=""
+AGENT_CHANNEL=""
+AGENT_VERSION=""
 FORCE=0
 UNINSTALL=0
 PREVIEW_UNINSTALL=0
@@ -152,6 +156,10 @@ parse_args() {
                 INSTALL_DIR="$2"; shift 2 ;;
             --rid)
                 RID="$2"; shift 2 ;;
+            --agent-channel)
+                AGENT_CHANNEL="$2"; shift 2 ;;
+            --agent-version)
+                AGENT_VERSION="$2"; shift 2 ;;
             --force)
                 FORCE=1; shift ;;
             --run-as-root)
@@ -230,6 +238,8 @@ do_install() {
     log_info "  Install dir: $INSTALL_DIR"
     log_info "  OS:          $os_kind"
     log_info "  Run as:      $([ $RUN_AS_ROOT -eq 1 ] && echo 'root' || echo 'dedicated user')"
+
+    show_local_agent_versions "$SERVER" "$AGENT_CHANNEL"
     
     # Interactive confirmation
     if [[ "$INTERACTIVE" -eq 1 ]]; then
@@ -256,14 +266,14 @@ do_install() {
     
     # Download agent binary
     local bin_path="${INSTALL_DIR}/${BIN_NAME}"
-    if ! download_agent_binary "$SERVER" "$RID" "$bin_path" "$CHECKSUM"; then
+    if ! download_agent_binary "$SERVER" "$RID" "$bin_path" "$CHECKSUM" "$AGENT_CHANNEL" "$AGENT_VERSION"; then
         log_error "Failed to download agent binary"
         exit 1
     fi
     
     # Download or create appsettings.json
     local appsettings_path="${INSTALL_DIR}/appsettings.json"
-    download_appsettings "$SERVER" "$RID" "$appsettings_path" || true
+    download_appsettings "$SERVER" "$RID" "$appsettings_path" "$AGENT_CHANNEL" "$AGENT_VERSION" || true
     
     # Load config file if specified
     if [[ -n "$CONFIG_FILE" ]]; then
@@ -289,12 +299,20 @@ do_install() {
     if [[ "$RUN_AS_ROOT" -eq 0 && "$os_kind" == "linux" ]] && id "$AGENT_USER" &>/dev/null; then
         chown -R "$AGENT_USER:$AGENT_USER" "$INSTALL_DIR" 2>/dev/null || true
     fi
+
+    # Persisted agent version override (optional)
+    local effective_agent_version=""
+    if [[ -n "$AGENT_VERSION" && ! "$AGENT_VERSION" =~ ^[Ss][Tt][Aa][Gg][Ee][Dd]$ ]]; then
+        effective_agent_version="$AGENT_VERSION"
+    elif [[ -n "$GITHUB_VERSION" ]]; then
+        effective_agent_version="$GITHUB_VERSION"
+    fi
     
     # Install service based on init system
     case "$os_kind" in
         linux)
             if systemd_available; then
-                systemd_install "$INSTALL_DIR" "$BIN_NAME" "$hub_url" "$TOKEN" "$RUN_AS_ROOT"
+                systemd_install "$INSTALL_DIR" "$BIN_NAME" "$hub_url" "$TOKEN" "$RUN_AS_ROOT" "$effective_agent_version"
             else
                 log_error "systemd not available - cannot install service"
                 exit 1
@@ -302,7 +320,7 @@ do_install() {
             ;;
         darwin)
             if launchd_available; then
-                launchd_install "$INSTALL_DIR" "$BIN_NAME" "$hub_url" "$TOKEN" "$RUN_AS_ROOT"
+                launchd_install "$INSTALL_DIR" "$BIN_NAME" "$hub_url" "$TOKEN" "$RUN_AS_ROOT" "$effective_agent_version"
             else
                 log_error "launchd not available - cannot install service"
                 exit 1

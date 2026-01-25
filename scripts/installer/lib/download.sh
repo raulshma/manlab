@@ -84,6 +84,7 @@ try_download_from_github() {
 download_agent_binary() {
     local server_url="$1" rid="$2" out_file="$3"
     local checksum="${4:-}"
+    local channel="${5:-}" version="${6:-}"
     
     # Try GitHub first if enabled
     if try_download_from_github "$server_url" "$rid" "$out_file"; then
@@ -92,6 +93,15 @@ download_agent_binary() {
     
     # Fall back to server
     local bin_url="${server_url}/api/binaries/agent/${rid}"
+    local sep="?"
+    if [[ -n "$channel" ]]; then
+        bin_url="${bin_url}${sep}channel=${channel}"
+        sep="&"
+    fi
+    if [[ -n "$version" ]]; then
+        bin_url="${bin_url}${sep}version=${version}"
+        sep="&"
+    fi
     log_info "Downloading agent from server: $bin_url"
     
     if ! download_file "$bin_url" "$out_file" "agent binary"; then
@@ -114,7 +124,17 @@ download_agent_binary() {
 
 download_appsettings() {
     local server_url="$1" rid="$2" out_file="$3"
+    local channel="${4:-}" version="${5:-}"
     local url="${server_url}/api/binaries/agent/${rid}/appsettings.json"
+    local sep="?"
+    if [[ -n "$channel" ]]; then
+        url="${url}${sep}channel=${channel}"
+        sep="&"
+    fi
+    if [[ -n "$version" ]]; then
+        url="${url}${sep}version=${version}"
+        sep="&"
+    fi
     
     log_info "Downloading appsettings.json..."
     if download_file "$url" "$out_file" "appsettings.json"; then

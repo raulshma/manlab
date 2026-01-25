@@ -14,6 +14,10 @@ By default, installers download the agent from the **ManLab Server Binary API**:
 
 - `GET /api/binaries/agent/{rid}`
 
+Installers will also query the local **release catalog** and print any locally staged versions:
+
+- `GET /api/binaries/agent/release-catalog`
+
 Optionally, installers can **prefer GitHub Releases** (download an archive and extract the agent binary). This is useful when:
 
 - you want installs to pull the *official* release assets from GitHub, or
@@ -108,6 +112,15 @@ Uninstall / cleanup (removes systemd unit, env file, and install directory):
 
 - `sudo ./scripts/install.sh --uninstall`
 
+#### Local distribution channels / versions
+
+If you stage multiple local versions under the server distribution root, you can target them via:
+
+- `--agent-channel <channel>` (default: server's configured channel, usually `stable`)
+- `--agent-version <version>` (e.g., `v1.2.3`; omit for the implicit `staged` build)
+
+The installer prints the locally available versions (and supported RIDs) before download.
+
 #### Forcing GitHub Releases (manual install)
 
 You can force the installer to prefer GitHub releases:
@@ -174,6 +187,15 @@ After install:
 Uninstall user mode installation:
 
 - `./scripts/install.ps1 -Uninstall -UserMode`
+
+#### Local distribution channels / versions
+
+If you stage multiple local versions under the server distribution root, you can target them via:
+
+- `-AgentChannel <channel>` (default: server's configured channel, usually `stable`)
+- `-AgentVersion <version>` (e.g., `v1.2.3`; omit for the implicit `staged` build)
+
+The installer prints the locally available versions (and supported RIDs) before download.
 
 ### Web UI Installation
 

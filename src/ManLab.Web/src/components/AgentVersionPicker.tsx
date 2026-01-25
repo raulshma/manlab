@@ -61,10 +61,12 @@ export function AgentVersionPicker({ channel, value, onChange }: AgentVersionPic
     staleTime: 60_000,
   });
 
-  const localVersions = useMemo(() => {
+  const localItems = useMemo(() => {
     if (!data) return [];
-    return (data.local ?? []).map((l) => l.version);
+    return data.local ?? [];
   }, [data]);
+
+  const localVersions = useMemo(() => localItems.map((l) => l.version), [localItems]);
 
   const githubTags = useMemo(() => {
     if (!data) return [];
@@ -153,6 +155,13 @@ export function AgentVersionPicker({ channel, value, onChange }: AgentVersionPic
 
   const versionOptions = value.source === "github" ? githubTags : localVersions;
 
+  const formatLocalTimestamp = (value: string | null) => {
+    if (!value) return "unknown";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString();
+  };
+
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -198,15 +207,49 @@ export function AgentVersionPicker({ channel, value, onChange }: AgentVersionPic
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {versionOptions.map((v) => (
-                <SelectItem key={v} value={v}>
-                  {v}
-                </SelectItem>
-              ))}
+              {value.source === "github"
+                ? versionOptions.map((v) => (
+                    <SelectItem key={v} value={v}>
+                      {v}
+                    </SelectItem>
+                  ))
+                : localItems.map((item) => (
+                    <SelectItem key={item.version} value={item.version}>
+                      <div className="flex flex-col">
+                        <span>{item.version}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {item.rids.length > 0 ? `rids: ${item.rids.join(", ")}` : "rids: n/a"}
+                          {" · "}
+                          updated: {formatLocalTimestamp(item.binaryLastWriteTimeUtc)}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
             </SelectContent>
           </Select>
         </div>
       </div>
+
+      {localItems.length > 0 ? (
+        <div className="rounded-md border bg-muted/30 p-2 text-[11px] text-muted-foreground">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Local builds available
+          </div>
+          <div className="mt-1 space-y-1">
+            {localItems.map((item) => (
+              <div key={item.version} className="flex flex-wrap gap-1">
+                <span className="font-mono text-foreground">{item.version}</span>
+                <span>•</span>
+                <span>
+                  {item.rids.length > 0 ? item.rids.join(", ") : "no rids"}
+                </span>
+                <span>•</span>
+                <span>updated {formatLocalTimestamp(item.binaryLastWriteTimeUtc)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {value.source === "github" && data.gitHub.enabled && data.gitHub.error ? (
         <Alert variant="destructive">

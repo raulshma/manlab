@@ -84,6 +84,7 @@ systemd_create_env() {
     local env_file="$1"
     local hub_url="$2"
     local auth_token="${3:-}"
+    local agent_version="${4:-}"
     
     log_info "Creating environment file: $env_file"
     
@@ -96,6 +97,9 @@ systemd_create_env() {
         echo "MANLAB_SERVER_URL=$hub_url"
         if [[ -n "$auth_token" ]]; then
             echo "MANLAB_AUTH_TOKEN=$auth_token"
+        fi
+        if [[ -n "$agent_version" ]]; then
+            echo "MANLAB_AGENT_VERSION=$agent_version"
         fi
     } > "$env_file"
     
@@ -208,14 +212,15 @@ systemd_install() {
     local hub_url="$3"
     local auth_token="${4:-}"
     local run_as_root="${5:-0}"
-    local service_name="${6:-$SERVICE_NAME}"
+    local agent_version="${6:-}"
+    local service_name="${7:-$SERVICE_NAME}"
     
     local env_file="/etc/${service_name}.env"
     
     log_info "Installing systemd service: $service_name"
     
     # Create env file
-    systemd_create_env "$env_file" "$hub_url" "$auth_token"
+    systemd_create_env "$env_file" "$hub_url" "$auth_token" "$agent_version"
     
     # Create unit file
     systemd_create_unit "$service_name" "$install_dir" "$bin_name" "$run_as_root" "$env_file"

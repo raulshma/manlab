@@ -19,6 +19,8 @@ param(
     [string]$InstallDir,
     [string]$TaskName,
     [string]$Rid,
+    [string]$AgentChannel,
+    [string]$AgentVersion,
     [switch]$Force,
     [switch]$Uninstall,
     [switch]$UninstallAll,
@@ -141,6 +143,58 @@ if ($Uninstall) {
 
 #region Install
 
+function New-UrlWithQuery {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseUrl,
+        [hashtable]$Query
+    )
+
+    if (-not $Query -or $Query.Count -eq 0) { return $BaseUrl }
+
+    $pairs = @()
+    foreach ($k in $Query.Keys) {
+        $v = $Query[$k]
+        if ([string]::IsNullOrWhiteSpace([string]$v)) { continue }
+        $pairs += ("{0}={1}" -f [Uri]::EscapeDataString([string]$k), [Uri]::EscapeDataString([string]$v))
+    }
+    if ($pairs.Count -eq 0) { return $BaseUrl }
+    return "$BaseUrl?" + ($pairs -join "&")
+}
+
+function Show-LocalAgentVersions {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseServerUrl,
+        [string]$Channel
+    )
+
+    try {
+        $catalogUrl = New-UrlWithQuery -BaseUrl "$BaseServerUrl/api/binaries/agent/release-catalog" -Query @{ channel = $Channel }
+        $raw = (Invoke-WebRequest -UseBasicParsing -Uri $catalogUrl).Content
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            Write-Warn "Unable to query local agent versions (empty response)."
+            return
+        }
+
+        $catalog = $raw | ConvertFrom-Json
+        $local = $catalog.local
+        $channelLabel = if ($catalog.channel) { [string]$catalog.channel } else { "" }
+
+        if (-not $local -or $local.Count -eq 0) {
+            Write-Info "No local agent versions staged for channel '$channelLabel'."
+            return
+        }
+
+        Write-Info "Local agent versions available (channel: $channelLabel):"
+        foreach ($item in $local) {
+            $rids = if ($item.rids) { ($item.rids -join ', ') } else { "" }
+            $stamp = if ($item.binaryLastWriteTimeUtc) { try { [DateTime]::Parse([string]$item.binaryLastWriteTimeUtc).ToString('u') } catch { [string]$item.binaryLastWriteTimeUtc } } else { "unknown" }
+            Write-Info "  - $($item.version) [$rids] (last updated: $stamp)"
+        }
+    } catch {
+        Write-Warn "Unable to query local agent versions: $_"
+    }
+}
+
 # Validate
 if (-not $UserMode) { Assert-Admin }
 
@@ -173,6 +227,8 @@ Write-Info "  RID:     $Rid"
 Write-Info "  Dir:     $InstallDir"
 Write-Info "  Mode:    $(if ($UserMode) { 'User' } else { 'System' })"
 
+Show-LocalAgentVersions -BaseServerUrl $Server -Channel $AgentChannel
+
 # Interactive confirmation
 if ($Interactive) {
     $confirm = Read-Host "Proceed with installation? [Y/n]"
@@ -193,7 +249,7 @@ if (-not (Test-Path $InstallDir)) {
 }
 
 # Download binary
-$binUrl = "$Server/api/binaries/agent/$Rid"
+$binUrl = New-UrlWithQuery -BaseUrl "$Server/api/binaries/agent/$Rid" -Query @{ channel = $AgentChannel; version = $AgentVersion }
 Write-Info "Downloading agent binary..."
 if (-not (Get-FileWithProgress -Url $binUrl -OutFile $exePath -Description "agent binary")) {
     throw "Failed to download agent binary"
@@ -208,7 +264,7 @@ if ($VerifyChecksum -and $Checksum) {
 
 # Download/update appsettings.json
 try {
-    $appSettingsUrl = "$Server/api/binaries/agent/$Rid/appsettings.json"
+    $appSettingsUrl = New-UrlWithQuery -BaseUrl "$Server/api/binaries/agent/$Rid/appsettings.json" -Query @{ channel = $AgentChannel; version = $AgentVersion }
     if (-not (Test-Path $appSettingsPath) -or $Force) {
         Get-FileWithProgress -Url $appSettingsUrl -OutFile $appSettingsPath -Description "appsettings.json" | Out-Null
     }
@@ -242,6 +298,17 @@ $runnerConfig = @{
     HeartbeatIntervalSeconds = $HeartbeatIntervalSeconds
     MaxReconnectDelaySeconds = $MaxReconnectDelaySeconds
 }
+
+$effectiveAgentVersion = $null
+if (-not [string]::IsNullOrWhiteSpace($AgentVersion) -and $AgentVersion -ne 'staged') {
+    $effectiveAgentVersion = $AgentVersion
+} elseif (-not [string]::IsNullOrWhiteSpace($GitHubVersion)) {
+    $effectiveAgentVersion = $GitHubVersion
+}
+
+if ($effectiveAgentVersion) {
+    $runnerConfig['AgentVersion'] = $effectiveAgentVersion
+}
 $runnerConfig | ConvertTo-Json -Depth 5 | Set-Content -Path $configPath -Encoding UTF8
 
 # Write runner script
@@ -251,6 +318,7 @@ $configPath = Join-Path $PSScriptRoot 'agent-config.json'
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 $env:MANLAB_SERVER_URL = $config.ServerUrl
 if ($config.AuthToken) { $env:MANLAB_AUTH_TOKEN = $config.AuthToken }
+if ($config.AgentVersion) { $env:MANLAB_AGENT_VERSION = $config.AgentVersion }
 $exe = Join-Path $PSScriptRoot 'manlab-agent.exe'
 if (-not $logPath) { $logPath = Join-Path $PSScriptRoot 'agent.log' }
 "[$(Get-Date -Format o)] Starting ManLab Agent" | Add-Content $logPath

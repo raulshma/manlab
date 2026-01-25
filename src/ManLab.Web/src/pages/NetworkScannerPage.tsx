@@ -299,12 +299,6 @@ export function NetworkScannerPage() {
       {/* Page Header - Sticky to Top on Desktop only */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between shrink-0 bg-background z-20 md:sticky top-0 py-2 border-b md:border-b-0">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-3">
-            <div className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-lg bg-primary/10">
-              <Network className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
-            </div>
-            Network Tools
-          </h1>
           <p className="text-muted-foreground mt-1">
             Scan, discover, and analyze your network infrastructure
           </p>

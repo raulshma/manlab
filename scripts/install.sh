@@ -145,6 +145,72 @@ download_from_github() {
     return 0
 }
 
+show_local_agent_versions() {
+    local server_url="$1" channel="$2"
+    local catalog_url="${server_url}/api/binaries/agent/release-catalog"
+    if [[ -n "$channel" ]]; then
+        catalog_url="${catalog_url}?channel=${channel}"
+    fi
+
+    local json=""
+    if command -v curl &>/dev/null; then
+        json=$(curl -fsSL "$catalog_url" --connect-timeout 10 2>/dev/null || true)
+    elif command -v wget &>/dev/null; then
+        json=$(wget -qO- "$catalog_url" --timeout=10 2>/dev/null || true)
+    fi
+
+    if [[ -z "$json" ]]; then
+        log_warn "Unable to query local agent versions (no response)."
+        return 0
+    fi
+
+    if command -v python3 &>/dev/null; then
+        local output
+        output=$(python3 - "$json" <<'PY'
+import json,sys,datetime
+data=json.loads(sys.argv[1])
+local=data.get("local") or []
+channel=data.get("channel") or ""
+if not local:
+    print(f"No local agent versions staged for channel '{channel}'.")
+    sys.exit(0)
+print(f"Local agent versions available (channel: {channel}):")
+for item in local:
+    version=item.get("version", "")
+    rids=item.get("rids") or []
+    ts=item.get("binaryLastWriteTimeUtc")
+    stamp="unknown"
+    if ts:
+        try:
+            stamp=datetime.datetime.fromisoformat(ts.replace("Z","+00:00")).strftime("%Y-%m-%d %H:%M:%SZ")
+        except Exception:
+            stamp=ts
+    print(f"  - {version} [{', '.join(rids)}] (last updated: {stamp})")
+PY
+)
+        while IFS= read -r line; do log_info "$line"; done <<<"$output"
+        return 0
+    fi
+
+    if command -v jq &>/dev/null; then
+        local channel_label
+        channel_label=$(echo "$json" | jq -r '.channel // ""' 2>/dev/null || echo "")
+        local local_count
+        local_count=$(echo "$json" | jq -r '.local | length' 2>/dev/null || echo "0")
+        if [[ "$local_count" == "0" ]]; then
+            log_info "No local agent versions staged for channel '$channel_label'."
+            return 0
+        fi
+        log_info "Local agent versions available (channel: $channel_label):"
+        echo "$json" | jq -r '.local[] | "  - \(.version) [\(.rids | join(", "))] (last updated: \(.binaryLastWriteTimeUtc // "unknown"))"' 2>/dev/null | while read -r line; do
+            log_info "$line"
+        done
+        return 0
+    fi
+
+    log_info "Local agent versions available at: $catalog_url"
+}
+
 # Parse arguments
 SERVER="" TOKEN="" INSTALL_DIR="/opt/manlab-agent" FORCE=0 UNINSTALL=0 RUN_AS_ROOT=0
 ENABLE_LOG_VIEWER=0 ENABLE_SCRIPTS=0 ENABLE_TERMINAL=0 ENABLE_FILE_BROWSER=0
@@ -251,6 +317,8 @@ log_info "Installing ManLab Agent"
 log_info "  Server: $SERVER"
 log_info "  RID:    $RID"
 log_info "  Dir:    $INSTALL_DIR"
+
+show_local_agent_versions "$SERVER" "$AGENT_CHANNEL"
 
 log_info "Fetching agent configuration from server..."
 

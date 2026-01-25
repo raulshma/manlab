@@ -17,8 +17,9 @@ launchd_available() {
 
 launchd_create_plist() {
     local install_dir="$1" bin_name="$2" hub_url="$3"
-    local auth_token="${4:-}" run_as_user="${5:-}"
-    local plist_name="${6:-$LAUNCHD_PLIST_NAME}"
+    local auth_token="${4:-}" agent_version="${5:-}"
+    local run_as_user="${6:-}"
+    local plist_name="${7:-$LAUNCHD_PLIST_NAME}"
     local plist_file="${LAUNCHD_DAEMONS_DIR}/${plist_name}.plist"
     
     log_info "Creating launchd plist: $plist_file"
@@ -37,6 +38,7 @@ launchd_create_plist() {
         <key>MANLAB_SERVER_URL</key><string>${hub_url}</string>
 EOF
     [[ -n "$auth_token" ]] && echo "        <key>MANLAB_AUTH_TOKEN</key><string>${auth_token}</string>" >> "$plist_file"
+    [[ -n "$agent_version" ]] && echo "        <key>MANLAB_AGENT_VERSION</key><string>${agent_version}</string>" >> "$plist_file"
     echo "    </dict>" >> "$plist_file"
     [[ -n "$run_as_user" ]] && echo "    <key>UserName</key><string>${run_as_user}</string>" >> "$plist_file"
     cat >> "$plist_file" <<EOF
@@ -78,10 +80,10 @@ launchd_status() {
 
 launchd_install() {
     local install_dir="$1" bin_name="$2" hub_url="$3"
-    local auth_token="${4:-}" run_as_root="${5:-0}"
+    local auth_token="${4:-}" run_as_root="${5:-0}" agent_version="${6:-}"
     local run_as_user=""
     [[ "$run_as_root" -eq 0 ]] && create_system_user "$AGENT_USER" && run_as_user="$AGENT_USER"
-    launchd_create_plist "$install_dir" "$bin_name" "$hub_url" "$auth_token" "$run_as_user"
+    launchd_create_plist "$install_dir" "$bin_name" "$hub_url" "$auth_token" "$agent_version" "$run_as_user"
     launchd_load_service
     log_info "Launchd service installed. Logs: ${LAUNCHD_LOG_DIR}/manlab-agent.log"
 }
