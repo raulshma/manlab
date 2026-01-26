@@ -520,25 +520,49 @@ internal sealed class EnhancedNetworkTelemetryCollector
     internal sealed class LatencyWindow
     {
         private readonly int _size;
-        private readonly Queue<(bool Success, long? RttMs)> _samples = new();
+        private readonly bool[] _success;
+        private readonly bool[] _hasRtt;
+        private readonly long[] _rtt;
+        private int _count;
+        private int _index;
 
         public LatencyWindow(int size)
         {
             _size = Math.Max(1, size);
+            _success = new bool[_size];
+            _hasRtt = new bool[_size];
+            _rtt = new long[_size];
         }
 
         public void AddSample(bool success, long? rttMs)
         {
-            _samples.Enqueue((success, rttMs));
-            while (_samples.Count > _size)
+            _success[_index] = success;
+            if (rttMs.HasValue)
             {
-                _samples.Dequeue();
+                _hasRtt[_index] = true;
+                _rtt[_index] = rttMs.Value;
+            }
+            else
+            {
+                _hasRtt[_index] = false;
+                _rtt[_index] = 0;
+            }
+
+            _index++;
+            if (_index >= _size)
+            {
+                _index = 0;
+            }
+
+            if (_count < _size)
+            {
+                _count++;
             }
         }
 
         public LatencyStats GetStats()
         {
-            var total = 0;
+            var total = _count;
             var failed = 0;
             var successCount = 0;
             long? last = null;
@@ -546,23 +570,29 @@ internal sealed class EnhancedNetworkTelemetryCollector
             long max = long.MinValue;
             double sum = 0;
 
-            foreach (var sample in _samples)
+            if (_count > 0)
             {
-                total++;
-                if (!sample.Success)
+                var start = _count == _size ? _index : 0;
+                for (var i = 0; i < _count; i++)
                 {
-                    failed++;
-                    continue;
-                }
+                    var idx = start + i;
+                    if (idx >= _size) idx -= _size;
 
-                if (sample.RttMs.HasValue)
-                {
-                    var rtt = sample.RttMs.Value;
-                    last = rtt;
-                    if (rtt < min) min = rtt;
-                    if (rtt > max) max = rtt;
-                    sum += rtt;
-                    successCount++;
+                    if (!_success[idx])
+                    {
+                        failed++;
+                        continue;
+                    }
+
+                    if (_hasRtt[idx])
+                    {
+                        var rtt = _rtt[idx];
+                        last = rtt;
+                        if (rtt < min) min = rtt;
+                        if (rtt > max) max = rtt;
+                        sum += rtt;
+                        successCount++;
+                    }
                 }
             }
 
@@ -582,11 +612,15 @@ internal sealed class EnhancedNetworkTelemetryCollector
                 if (successCount > 1)
                 {
                     double jitterSum = 0;
-                    foreach (var sample in _samples)
+                    var start = _count == _size ? _index : 0;
+                    for (var i = 0; i < _count; i++)
                     {
-                        if (sample.Success && sample.RttMs.HasValue)
+                        var idx = start + i;
+                        if (idx >= _size) idx -= _size;
+
+                        if (_success[idx] && _hasRtt[idx])
                         {
-                            jitterSum += Math.Abs(sample.RttMs.Value - avg);
+                            jitterSum += Math.Abs(_rtt[idx] - avg);
                         }
                     }
 
@@ -598,7 +632,7 @@ internal sealed class EnhancedNetworkTelemetryCollector
         }
     }
 
-    internal sealed class LatencyStats
+    internal struct LatencyStats
     {
         public float? LastRtt { get; set; }
         public float? MinRtt { get; set; }

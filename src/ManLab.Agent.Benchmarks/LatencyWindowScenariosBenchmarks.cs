@@ -17,15 +17,15 @@ public class LatencyWindowScenariosBenchmarks
     }
 
     [Benchmark]
-    public EnhancedNetworkTelemetryCollector.LatencyStats GetStats_Small()
+    public void GetStats_Small()
         => _windowSmall.GetStats();
 
     [Benchmark]
-    public EnhancedNetworkTelemetryCollector.LatencyStats GetStats_Medium()
+    public void GetStats_Medium()
         => _windowMedium.GetStats();
 
     [Benchmark]
-    public EnhancedNetworkTelemetryCollector.LatencyStats GetStats_Large()
+    public void GetStats_Large()
         => _windowLarge.GetStats();
 
     [Benchmark]

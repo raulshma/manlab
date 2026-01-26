@@ -19,7 +19,7 @@ public class LatencyWindowBenchmarks
     }
 
     [Benchmark]
-    public EnhancedNetworkTelemetryCollector.LatencyStats GetStats()
+    public void GetStats()
         => _window.GetStats();
 
     [Benchmark]
