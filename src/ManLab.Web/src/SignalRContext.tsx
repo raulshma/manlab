@@ -40,6 +40,38 @@ export interface CommandOutputEntry {
   timestamp: string;
 }
 
+const COMMAND_OUTPUT_STORAGE_KEY = "manlab:command_output_logs";
+
+const loadCommandOutputLogs = (): Map<string, CommandOutputEntry[]> => {
+  try {
+    const raw = localStorage.getItem(COMMAND_OUTPUT_STORAGE_KEY);
+    if (!raw) return new Map();
+
+    const parsed = JSON.parse(raw) as Record<string, CommandOutputEntry[]>;
+    if (!parsed || typeof parsed !== "object") return new Map();
+
+    const entries = Object.entries(parsed).filter(
+      ([key, value]) => typeof key === "string" && Array.isArray(value)
+    );
+
+    return new Map(entries);
+  } catch {
+    return new Map();
+  }
+};
+
+const persistCommandOutputLogs = (map: Map<string, CommandOutputEntry[]>) => {
+  try {
+    const asObject = Object.fromEntries(map.entries());
+    localStorage.setItem(COMMAND_OUTPUT_STORAGE_KEY, JSON.stringify(asObject));
+  } catch {
+    // Best-effort persistence only.
+  }
+};
+
+const concatCommandLogs = (entries: CommandOutputEntry[]) =>
+  entries.map((entry) => entry.logs).join("");
+
 /**
  * Connection state for the SignalR context.
  */
@@ -61,6 +93,13 @@ interface SignalRContextValue {
   agentBackoffStatus: Map<string, AgentBackoffStatus>;
   /** Map of commandId -> accumulated output logs */
   commandOutputLogs: Map<string, CommandOutputEntry[]>;
+  /** Merge server-side command output snapshot (fills gaps during reload). */
+  syncCommandOutputSnapshot: (
+    commandId: string,
+    nodeId: string,
+    status: string,
+    outputLog: string | null
+  ) => void;
   subscribeToLocalAgentLogs: (
     callback: (log: LocalAgentLogEntry) => void
   ) => () => void;
@@ -116,7 +155,7 @@ export function SignalRProvider({
     new Map()
   );
   const [commandOutputLogs, setCommandOutputLogs] = useState<Map<string, CommandOutputEntry[]>>(
-    new Map()
+    () => loadCommandOutputLogs()
   );
   const queryClient = useQueryClient();
 
@@ -409,6 +448,70 @@ export function SignalRProvider({
     });
   }, []);
 
+  // Merge server snapshot to avoid missing output during reloads
+  const syncCommandOutputSnapshot = useCallback(
+    (commandId: string, nodeId: string, status: string, outputLog: string | null) => {
+      setCommandOutputLogs((prev) => {
+        const newMap = new Map(prev);
+        const existing = newMap.get(commandId) ?? [];
+        const snapshot = outputLog ?? "";
+        const existingCombined = concatCommandLogs(existing);
+        const now = new Date().toISOString();
+
+        const pushStatusOnly = () => {
+          const lastStatus = existing[existing.length - 1]?.status;
+          if (lastStatus !== status) {
+            newMap.set(commandId, [
+              ...existing,
+              { commandId, nodeId, status, logs: "", timestamp: now },
+            ]);
+          } else {
+            newMap.set(commandId, existing);
+          }
+        };
+
+        if (!snapshot) {
+          if (existing.length === 0) {
+            newMap.set(commandId, [
+              { commandId, nodeId, status, logs: "", timestamp: now },
+            ]);
+          } else {
+            pushStatusOnly();
+          }
+          return newMap;
+        }
+
+        if (snapshot.startsWith(existingCombined)) {
+          const missing = snapshot.slice(existingCombined.length);
+          if (missing.length > 0) {
+            newMap.set(commandId, [
+              ...existing,
+              { commandId, nodeId, status, logs: missing, timestamp: now },
+            ]);
+          } else {
+            pushStatusOnly();
+          }
+          return newMap;
+        }
+
+        if (existingCombined.startsWith(snapshot)) {
+          pushStatusOnly();
+          return newMap;
+        }
+
+        newMap.set(commandId, [
+          { commandId, nodeId, status, logs: snapshot, timestamp: now },
+        ]);
+        return newMap;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    persistCommandOutputLogs(commandOutputLogs);
+  }, [commandOutputLogs]);
+
   // Use ref to track if we've started connecting (to avoid synchronous setState in effect)
   const isConnectingRef = useRef(false);
 
@@ -603,6 +706,7 @@ export function SignalRProvider({
         localAgentLogs,
         agentBackoffStatus,
         commandOutputLogs,
+        syncCommandOutputSnapshot,
         subscribeToLocalAgentLogs,
         subscribeToCommandOutput,
         unsubscribeFromCommandOutput,

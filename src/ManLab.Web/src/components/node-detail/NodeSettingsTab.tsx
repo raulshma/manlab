@@ -14,6 +14,7 @@ import {
   deleteNode,
   fetchAuditEvents,
   fetchOnboardingMachineForNode,
+  fetchNodeCommands,
   fetchSuggestedServerBaseUrl,
   uninstallAgent,
 } from "../../api";
@@ -212,9 +213,16 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
   });
 
   // Live command output state
-  const [activeCommandId, setActiveCommandId] = useState<string | null>(null);
+  const activeCommandStorageKey = `manlab:node:${nodeId}:active_command`;
+  const [activeCommandId, setActiveCommandId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(activeCommandStorageKey);
+    } catch {
+      return null;
+    }
+  });
   const logContainerRef = useRef<HTMLDivElement>(null);
-  const { commandOutputLogs, subscribeToCommandOutput, unsubscribeFromCommandOutput, clearCommandOutputLogs } = useSignalR();
+  const { commandOutputLogs, subscribeToCommandOutput, unsubscribeFromCommandOutput, clearCommandOutputLogs, syncCommandOutputSnapshot } = useSignalR();
 
   // Get logs for the active command
   const activeLogs = useMemo(
@@ -243,6 +251,60 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
       };
     }
   }, [activeCommandId, subscribeToCommandOutput, unsubscribeFromCommandOutput]);
+
+  // Hydrate output logs from server snapshots to avoid missing chunks during reloads
+  useEffect(() => {
+    if (!activeCommandId) return;
+
+    let isCancelled = false;
+    let intervalId: number | null = null;
+
+    const hydrate = async () => {
+      try {
+        const commands = await fetchNodeCommands(nodeId, 50);
+        const command = commands.find((c) => c.id === activeCommandId);
+        if (!command || isCancelled) return;
+
+        syncCommandOutputSnapshot(
+          activeCommandId,
+          nodeId,
+          command.status,
+          command.outputLog ?? null
+        );
+
+        if (["Completed", "Failed", "Cancelled"].includes(command.status)) {
+          if (intervalId !== null) {
+            window.clearInterval(intervalId);
+            intervalId = null;
+          }
+        }
+      } catch {
+        // Best-effort sync only.
+      }
+    };
+
+    hydrate();
+    intervalId = window.setInterval(hydrate, 2000);
+
+    return () => {
+      isCancelled = true;
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [activeCommandId, nodeId, syncCommandOutputSnapshot]);
+
+  useEffect(() => {
+    try {
+      if (activeCommandId) {
+        localStorage.setItem(activeCommandStorageKey, activeCommandId);
+      } else {
+        localStorage.removeItem(activeCommandStorageKey);
+      }
+    } catch {
+      // Best-effort persistence only.
+    }
+  }, [activeCommandId, activeCommandStorageKey]);
 
   // Handle triggering system update with live logs
   const handleTriggerUpdate = async () => {

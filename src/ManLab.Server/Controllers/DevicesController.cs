@@ -56,21 +56,25 @@ public class DevicesController : ControllerBase
         var nodes = await _dbContext.Nodes
             .AsNoTracking()
             .OrderByDescending(n => n.LastSeen)
-            .Select(n => new NodeDto
-            {
-                Id = n.Id,
-                Hostname = n.Hostname,
-                IpAddress = n.IpAddress,
-                OS = n.OS,
-                AgentVersion = n.AgentVersion,
-                MacAddress = n.MacAddress,
-                LastSeen = n.LastSeen,
-                Status = n.Status.ToString(),
-                CreatedAt = n.CreatedAt
-            })
             .ToListAsync();
 
-        return Ok(nodes);
+        var dtos = nodes.Select(n => new NodeDto
+        {
+            Id = n.Id,
+            Hostname = n.Hostname,
+            IpAddress = n.IpAddress,
+            OS = n.OS,
+            AgentVersion = n.AgentVersion,
+            MacAddress = n.MacAddress,
+            LastSeen = n.LastSeen,
+            Status = n.Status.ToString(),
+            CreatedAt = n.CreatedAt,
+            Capabilities = !string.IsNullOrEmpty(n.CapabilitiesJson)
+                ? JsonSerializer.Deserialize(n.CapabilitiesJson, ManLabJsonContext.Default.AgentCapabilities)
+                : null
+        });
+
+        return Ok(dtos);
     }
 
     /// <summary>
@@ -100,7 +104,10 @@ public class DevicesController : ControllerBase
             MacAddress = node.MacAddress,
             LastSeen = node.LastSeen,
             Status = node.Status.ToString(),
-            CreatedAt = node.CreatedAt
+            CreatedAt = node.CreatedAt,
+            Capabilities = !string.IsNullOrEmpty(node.CapabilitiesJson)
+                ? JsonSerializer.Deserialize(node.CapabilitiesJson, ManLabJsonContext.Default.AgentCapabilities)
+                : null
         });
     }
 
@@ -1222,6 +1229,7 @@ public record NodeDto
     public DateTime LastSeen { get; init; }
     public string Status { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; }
+    public AgentCapabilities? Capabilities { get; init; }
 }
 
 /// <summary>

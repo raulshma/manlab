@@ -293,6 +293,8 @@ export function DockerStudioPage() {
   const [composeProfiles, setComposeProfiles] = useState("");
 
   const activeNodeId = selectedNodeId ?? nodes?.[0]?.id ?? null;
+  const activeNode = nodes?.find((n) => n.id === activeNodeId);
+  const isDockerAvailable = activeNode?.capabilities?.tools.docker ?? false;
 
   const { data: commands, refetch: refetchCommands } = useQuery({
     queryKey: ["commands", activeNodeId],
@@ -771,6 +773,18 @@ export function DockerStudioPage() {
             </div>
           </header>
 
+          {!isDockerAvailable ? (
+            <div className="flex flex-col items-center justify-center p-12 text-center border rounded-lg bg-card/50 border-dashed">
+              <Boxes className="size-12 text-muted-foreground mb-4" />
+              <h2 className="text-xl font-semibold mb-2">Docker Not Available</h2>
+              <p className="text-muted-foreground max-w-md">
+                The selected node ({activeNode?.hostname}) does not have Docker installed or the agent cannot detect it.
+                Please install Docker or select a different node.
+              </p>
+            </div>
+          ) : (
+            <>
+
           <div className="grid gap-4 md:grid-cols-3">
             <Card>
               <CardHeader className="pb-2">
@@ -794,6 +808,7 @@ export function DockerStudioPage() {
               <CardContent className="text-xs text-muted-foreground">Recently stopped containers.</CardContent>
             </Card>
           </div>
+
 
           <Tabs defaultValue="containers" className="space-y-4">
             <TabsList>
@@ -1638,6 +1653,8 @@ export function DockerStudioPage() {
               </div>
             </CardContent>
           </Card>
+          </>
+          )}
         </div>
       </div>
       <AlertDialog open={removeTargets.length > 0} onOpenChange={(open) => !open && setRemoveTargets([])}>

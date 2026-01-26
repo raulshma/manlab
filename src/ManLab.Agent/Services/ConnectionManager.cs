@@ -1203,7 +1203,8 @@ public sealed class ConnectionManager : IAsyncDisposable
                     Smartctl = HasToolOnPath("smartctl"),
                     NvidiaSmi = HasToolOnPath("nvidia-smi"),
                     Upsc = HasToolOnPath("upsc"),
-                    Apcaccess = HasToolOnPath("apcaccess")
+                    Apcaccess = HasToolOnPath("apcaccess"),
+                    Docker = HasToolOnPath("docker")
                 },
                 Features = new AgentFeatureCapabilities
                 {

@@ -21,10 +21,31 @@ export interface Node {
   lastSeen: string;
   status: NodeStatus;
   createdAt: string;
-  // Error state fields
   errorCode: number | null;
   errorMessage: string | null;
   errorAt: string | null;
+  capabilities: AgentCapabilities | null;
+}
+
+export interface AgentCapabilities {
+  tools: AgentToolCapabilities;
+  features: AgentFeatureCapabilities;
+  notes: string | null;
+}
+
+export interface AgentToolCapabilities {
+  smartctl: boolean;
+  nvidiaSmi: boolean;
+  upsc: boolean;
+  apcaccess: boolean;
+  docker: boolean;
+}
+
+export interface AgentFeatureCapabilities {
+  logViewer: boolean;
+  scripts: boolean;
+  terminal: boolean;
+  fileBrowser: boolean;
 }
 
 /**

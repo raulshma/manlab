@@ -32,6 +32,7 @@ public sealed record AgentToolCapabilities
     public bool NvidiaSmi { get; init; }
     public bool Upsc { get; init; }
     public bool Apcaccess { get; init; }
+    public bool Docker { get; init; }
 }
 
 public sealed record AgentFeatureCapabilities
