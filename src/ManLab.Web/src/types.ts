@@ -672,6 +672,17 @@ export interface AgentResourceUsage {
 }
 
 /**
+ * Server resource usage telemetry (from the ManLab server process).
+ */
+export interface ServerResourceUsage {
+  timestampUtc: string;
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  gcHeapBytes: number | null;
+  threadCount: number | null;
+}
+
+/**
  * Telemetry rollup history point.
  */
 export interface TelemetryHistoryPoint {

@@ -18,7 +18,7 @@ import {
   LogLevel,
 } from "@microsoft/signalr";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Node, NodeStatus, AgentBackoffStatus } from "./types";
+import type { Node, NodeStatus, AgentBackoffStatus, ServerResourceUsage } from "./types";
 
 /**
  * Local agent log entry for real-time log streaming.
@@ -89,6 +89,7 @@ interface SignalRContextValue {
   connectionStatus: ConnectionStatus;
   error: Error | null;
   localAgentLogs: LocalAgentLogEntry[];
+  serverResourceUsage: ServerResourceUsage[];
   /** Map of nodeId -> backoff status for agents experiencing heartbeat failures */
   agentBackoffStatus: Map<string, AgentBackoffStatus>;
   /** Map of commandId -> accumulated output logs */
@@ -151,6 +152,7 @@ export function SignalRProvider({
   const [localAgentLogs, setLocalAgentLogs] = useState<LocalAgentLogEntry[]>(
     []
   );
+  const [serverResourceUsage, setServerResourceUsage] = useState<ServerResourceUsage[]>([]);
   const [agentBackoffStatus, setAgentBackoffStatus] = useState<Map<string, AgentBackoffStatus>>(
     new Map()
   );
@@ -411,6 +413,10 @@ export function SignalRProvider({
     []
   );
 
+  const handleServerResourceUsage = useCallback((payload: ServerResourceUsage) => {
+    setServerResourceUsage((prev) => [payload, ...prev].slice(0, 120));
+  }, []);
+
   // Subscribe to command output for a specific command
   const subscribeToCommandOutput = useCallback(
     async (commandId: string) => {
@@ -529,6 +535,7 @@ export function SignalRProvider({
     handleNodeErrorStateChanged,
     handleNodeErrorStateCleared,
     handleCommandOutputAppended,
+    handleServerResourceUsage,
   });
 
   // Keep refs in sync with latest handlers
@@ -546,6 +553,7 @@ export function SignalRProvider({
       handleNodeErrorStateChanged,
       handleNodeErrorStateCleared,
       handleCommandOutputAppended,
+      handleServerResourceUsage,
     };
   });
 
@@ -579,6 +587,9 @@ export function SignalRProvider({
       setError(null);
       // Refetch all nodes after reconnection
       queryClient.invalidateQueries({ queryKey: ["nodes"] });
+      newConnection
+        .invoke("RegisterDashboard")
+        .catch((err) => console.warn("Failed to register dashboard:", err));
     });
 
     newConnection.onclose((err) => {
@@ -608,6 +619,9 @@ export function SignalRProvider({
     const localAgentStatusChangedHandler = (
       ...args: Parameters<typeof handleLocalAgentStatusChanged>
     ) => handlersRef.current.handleLocalAgentStatusChanged(...args);
+    const serverResourceUsageHandler = (
+      ...args: Parameters<typeof handleServerResourceUsage>
+    ) => handlersRef.current.handleServerResourceUsage(...args);
 
     // Register server-to-client event handlers
     newConnection.on("NodeStatusChanged", nodeStatusChangedHandler);
@@ -619,6 +633,7 @@ export function SignalRProvider({
     // Register local agent event handlers (prevents 'No client method' warnings)
     newConnection.on("LocalAgentLog", localAgentLogHandler);
     newConnection.on("LocalAgentStatusChanged", localAgentStatusChangedHandler);
+    newConnection.on("ServerResourceUsage", serverResourceUsageHandler);
 
     // Register agent backoff/ping event handlers
     const agentBackoffStatusHandler = (
@@ -664,6 +679,7 @@ export function SignalRProvider({
         await newConnection.start();
         setConnectionStatus("connected");
         setError(null);
+        await newConnection.invoke("RegisterDashboard");
       } catch (err) {
         setConnectionStatus("disconnected");
         setError(err instanceof Error ? err : new Error(String(err)));
@@ -687,6 +703,7 @@ export function SignalRProvider({
         "LocalAgentStatusChanged",
         localAgentStatusChangedHandler
       );
+      newConnection.off("ServerResourceUsage", serverResourceUsageHandler);
       newConnection.off("AgentBackoffStatus", agentBackoffStatusHandler);
       newConnection.off("AgentPingResponse", agentPingResponseHandler);
       newConnection.off("NodeDeleted", nodeDeletedHandler);
@@ -704,6 +721,7 @@ export function SignalRProvider({
         connectionStatus,
         error,
         localAgentLogs,
+        serverResourceUsage,
         agentBackoffStatus,
         commandOutputLogs,
         syncCommandOutputSnapshot,

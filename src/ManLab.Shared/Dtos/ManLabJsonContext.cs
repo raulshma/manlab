@@ -51,4 +51,5 @@ namespace ManLab.Shared.Dtos;
 [JsonSerializable(typeof(DownloadProgressUpdate))]
 [JsonSerializable(typeof(DownloadStatusChangedEvent))]
 [JsonSerializable(typeof(CancelCommandPayload))]
+[JsonSerializable(typeof(ServerResourceUsageDto))]
 public partial class ManLabJsonContext : JsonSerializerContext;

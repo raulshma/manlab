@@ -18,10 +18,12 @@ import { NodeGrid } from "@/components/NodeGrid";
 import { DashboardStatsCard } from "@/components/dashboard/DashboardStatsCard";
 import { IssuesPanel } from "@/components/dashboard/IssuesPanel";
 import { FleetHealthChart } from "@/components/dashboard/FleetHealthChart";
+import { ServerResourceUsagePanel } from "@/components/ServerResourceUsagePanel";
 import { fetchNodes, fetchNodeTelemetry } from "@/api";
 import { mapWithConcurrency } from "@/lib/async";
 import type { Node, Telemetry } from "@/types";
 import { cn } from "@/lib/utils";
+import { useSignalR } from "@/SignalRContext";
 import {
   Server,
   Activity,
@@ -69,6 +71,7 @@ function formatShortTime(ts: string): string {
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const { serverResourceUsage } = useSignalR();
 
   // Fetch nodes
   const {
@@ -314,6 +317,8 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         </div>
+
+        <ServerResourceUsagePanel data={serverResourceUsage} />
 
         {/* Top Nodes Table */}
         {topCpuNodes.length > 0 && (

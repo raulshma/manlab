@@ -192,6 +192,8 @@ builder.Services.AddHostedService<HealthMonitorService>();
 builder.Services.AddHostedService<ServiceMonitorSchedulerService>();
 builder.Services.AddSingleton<MonitorJobScheduler>();
 builder.Services.AddHostedService<MonitorJobBootstrapper>();
+builder.Services.AddSingleton<DashboardConnectionTracker>();
+builder.Services.AddHostedService<ServerResourceUsageService>();
 
 // Retention cleanup (snapshot tables)
 builder.Services.AddOptions<RetentionOptions>()

@@ -34,6 +34,9 @@ public class AgentHub : Hub
 
     private const string ContextNodeIdKey = "manlab.nodeId";
     private const string ContextTokenHashKey = "manlab.tokenHash";
+    private const string ContextDashboardKey = "manlab.dashboard";
+
+    public const string DashboardGroupName = "dashboard-clients";
 
     private const string CommandOutputGroupPrefix = "command-output";
 
@@ -44,6 +47,7 @@ public class AgentHub : Hub
     private readonly ILogger<AgentHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentConnectionRegistry _connectionRegistry;
+    private readonly Services.Monitoring.DashboardConnectionTracker _dashboardConnections;
     private readonly IAuditLog _audit;
     private readonly DownloadSessionService _downloadSessions;
     private readonly StreamingDownloadService _streamingDownloads;
@@ -52,6 +56,7 @@ public class AgentHub : Hub
         ILogger<AgentHub> logger,
         IServiceScopeFactory scopeFactory,
         AgentConnectionRegistry connectionRegistry,
+        Services.Monitoring.DashboardConnectionTracker dashboardConnections,
         IAuditLog audit,
         DownloadSessionService downloadSessions,
         StreamingDownloadService streamingDownloads)
@@ -59,6 +64,7 @@ public class AgentHub : Hub
         _logger = logger;
         _scopeFactory = scopeFactory;
         _connectionRegistry = connectionRegistry;
+        _dashboardConnections = dashboardConnections;
         _audit = audit;
         _downloadSessions = downloadSessions;
         _streamingDownloads = streamingDownloads;
@@ -83,11 +89,28 @@ public class AgentHub : Hub
 
         _connectionRegistry.TryRemoveByConnectionId(Context.ConnectionId, out _);
 
+        if (Context.Items.TryGetValue(ContextDashboardKey, out var isDashboardObj)
+            && isDashboardObj is true)
+        {
+            _dashboardConnections.Unregister(Context.ConnectionId);
+        }
+
         // Best-effort cleanup of per-connection auth context.
         Context.Items.Remove(ContextNodeIdKey);
         Context.Items.Remove(ContextTokenHashKey);
+        Context.Items.Remove(ContextDashboardKey);
 
         await base.OnDisconnectedAsync(exception);
+    }
+
+    /// <summary>
+    /// Registers this SignalR connection as a dashboard client.
+    /// </summary>
+    public async Task RegisterDashboard()
+    {
+        Context.Items[ContextDashboardKey] = true;
+        _dashboardConnections.Register(Context.ConnectionId);
+        await Groups.AddToGroupAsync(Context.ConnectionId, DashboardGroupName);
     }
 
     /// <summary>
