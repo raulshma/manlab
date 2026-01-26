@@ -108,6 +108,7 @@ public class AgentHub : Hub
     /// </summary>
     public async Task RegisterDashboard()
     {
+        EnsureDashboardAccess();
         Context.Items[ContextDashboardKey] = true;
         _dashboardConnections.Register(Context.ConnectionId);
         await Groups.AddToGroupAsync(Context.ConnectionId, DashboardGroupName);
@@ -701,6 +702,7 @@ public class AgentHub : Hub
     /// </summary>
     public async Task SubscribeTerminalOutput(Guid sessionId)
     {
+        EnsureDashboardAccess();
         await Groups.AddToGroupAsync(Context.ConnectionId, GetTerminalOutputGroup(sessionId));
         _logger.TerminalSubscribed(Context.ConnectionId, sessionId);
     }
@@ -710,6 +712,7 @@ public class AgentHub : Hub
     /// </summary>
     public async Task UnsubscribeTerminalOutput(Guid sessionId)
     {
+        EnsureDashboardAccess();
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetTerminalOutputGroup(sessionId));
     }
 
@@ -1319,6 +1322,7 @@ public class AgentHub : Hub
     /// </summary>
     public async Task SubscribeCommandOutput(Guid commandId)
     {
+        EnsureDashboardAccess();
         // Best-effort validation: command must exist.
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
@@ -1333,6 +1337,7 @@ public class AgentHub : Hub
 
     public async Task UnsubscribeCommandOutput(Guid commandId)
     {
+        EnsureDashboardAccess();
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetCommandOutputGroup(commandId));
     }
 
@@ -1502,6 +1507,7 @@ public class AgentHub : Hub
     /// <param name="downloadId">The download session ID to subscribe to.</param>
     public async Task SubscribeDownloadProgress(Guid downloadId)
     {
+        EnsureDashboardAccess();
         await Groups.AddToGroupAsync(Context.ConnectionId, GetDownloadProgressGroup(downloadId));
         _logger.LogDebug("Client {ConnectionId} subscribed to download progress for {DownloadId}", Context.ConnectionId, downloadId);
     }
@@ -1512,11 +1518,22 @@ public class AgentHub : Hub
     /// <param name="downloadId">The download session ID to unsubscribe from.</param>
     public async Task UnsubscribeDownloadProgress(Guid downloadId)
     {
+        EnsureDashboardAccess();
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetDownloadProgressGroup(downloadId));
     }
 
     private static string GetDownloadProgressGroup(Guid downloadId)
         => $"download-progress.{downloadId:N}";
+
+    private void EnsureDashboardAccess()
+    {
+        if (Context.User?.Identity?.IsAuthenticated == true)
+        {
+            return;
+        }
+
+        throw new HubException("Unauthorized: dashboard authentication required.");
+    }
 
     /// <summary>
     /// Receives backoff status from an agent when heartbeat fails.

@@ -4,9 +4,12 @@ import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/s
 import { AppSidebar } from "@/components/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { ModeToggle } from "@/components/mode-toggle";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/auth/AuthContext";
 
 export function AppLayout() {
   const location = useLocation();
+  const { status, logout } = useAuth();
 
   // Reset header state on route change
   useEffect(() => {
@@ -26,7 +29,12 @@ export function AppLayout() {
         <header id="app-header" className="flex h-12 shrink-0 items-center gap-2 border-b px-4 transition-all duration-300 ease-in-out group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-2 h-4" />
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {status?.authEnabled && status.isAuthenticated && (
+              <Button variant="ghost" size="sm" onClick={logout}>
+                Sign out
+              </Button>
+            )}
             <ModeToggle />
           </div>
         </header>

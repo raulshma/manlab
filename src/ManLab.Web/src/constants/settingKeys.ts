@@ -1,4 +1,9 @@
 export const SettingKeys = {
+  Auth: {
+    Enabled: "Auth.Enabled",
+    LocalBypassEnabled: "Auth.LocalBypassEnabled",
+    LocalBypassCidrs: "Auth.LocalBypassCidrs",
+  },
   Agent: {
     // Connection settings
     HeartbeatIntervalSeconds: "Agent.HeartbeatIntervalSeconds",

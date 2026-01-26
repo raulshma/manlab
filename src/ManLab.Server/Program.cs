@@ -9,13 +9,21 @@ using ManLab.Server.Services.Network;
 using ManLab.Server.Services.Monitoring;
 using ManLab.Server.Services.Persistence;
 using ManLab.Server.Services.Retention;
+using ManLab.Server.Services.Security;
 using ManLab.Shared.Dtos;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 using Quartz;
 using Scalar.AspNetCore;
+using System.Security.Cryptography;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -74,6 +82,78 @@ builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddMemoryCache();
 builder.Services.AddResponseCaching();
+
+// Auth options (JWT)
+var authOptions = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
+if (string.IsNullOrWhiteSpace(authOptions.JwtSigningKey))
+{
+    authOptions.JwtSigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+}
+builder.Services.AddSingleton<IOptions<AuthOptions>>(Options.Create(authOptions));
+builder.Services.AddSingleton<AuthTokenService>();
+builder.Services.AddSingleton<LocalBypassEvaluator>();
+builder.Services.AddSingleton<PasswordHasher<string>>();
+
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = authOptions.Issuer,
+            ValidAudience = authOptions.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(authOptions.JwtSigningKey))
+        };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                // Prefer Authorization header if present; fallback to query/cookie.
+                if (!string.IsNullOrWhiteSpace(context.Token))
+                {
+                    return Task.CompletedTask;
+                }
+
+                var path = context.HttpContext.Request.Path;
+                if (path.StartsWithSegments("/hubs"))
+                {
+                    var accessToken = context.Request.Query["access_token"].ToString();
+                    if (!string.IsNullOrWhiteSpace(accessToken))
+                    {
+                        context.Token = accessToken;
+                        return Task.CompletedTask;
+                    }
+                }
+
+                var cookieToken = context.Request.Cookies[AuthTokenService.CookieName];
+                if (!string.IsNullOrWhiteSpace(cookieToken))
+                {
+                    context.Token = cookieToken;
+                }
+
+                return Task.CompletedTask;
+            }
+        };
+    })
+    .AddScheme<AuthenticationSchemeOptions, LocalBypassAuthenticationHandler>(
+        LocalBypassAuthenticationHandler.SchemeName, _ => { });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+        .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, LocalBypassAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser()
+        .Build();
+});
 
 // Enhancements services
 builder.Services.AddScoped<LogViewerSessionService>();
@@ -243,6 +323,9 @@ forwardedHeadersOptions.KnownIPNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 // Activity logging for mutating HTTP requests (best-effort).
 app.UseMiddleware<AuditHttpMiddleware>();
 
@@ -327,7 +410,7 @@ app.MapOpenApi();
 app.MapScalarApiReference();
 
 app.MapControllers();
-app.MapHub<AgentHub>("/hubs/agent");
+app.MapHub<AgentHub>("/hubs/agent").AllowAnonymous();
 app.MapHub<ManLab.Server.Hubs.NetworkHub>("/hubs/network");
 
 app.Run();

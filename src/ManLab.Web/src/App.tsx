@@ -4,6 +4,8 @@ import { SignalRProvider } from "./SignalRContext";
 import { DownloadProvider } from "./DownloadContext";
 import { ThemeProvider } from "./components/theme-provider";
 import { AppLayout } from "./layout/AppLayout";
+import { AuthProvider } from "./auth/AuthContext";
+import { AuthGate } from "./auth/AuthGate";
 import { DashboardPage } from "./pages/DashboardPage";
 import { NodesPage } from "./pages/NodesPage";
 import { NodeDetailsPage } from "./pages/NodeDetailsPage";
@@ -59,12 +61,16 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
-        <SignalRProvider>
-          <DownloadProvider>
-            <AppRoutes />
-            <Toaster />
-          </DownloadProvider>
-        </SignalRProvider>
+        <AuthProvider>
+          <AuthGate>
+            <SignalRProvider>
+              <DownloadProvider>
+                <AppRoutes />
+                <Toaster />
+              </DownloadProvider>
+            </SignalRProvider>
+          </AuthGate>
+        </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

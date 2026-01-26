@@ -2,6 +2,30 @@ namespace ManLab.Server.Constants;
 
 public static class SettingKeys
 {
+    public static class Auth
+    {
+        /// <summary>
+        /// Whether dashboard/API authentication is required.
+        /// </summary>
+        public const string Enabled = "Auth.Enabled";
+
+        /// <summary>
+        /// Whether to bypass authentication for local network clients.
+        /// </summary>
+        public const string LocalBypassEnabled = "Auth.LocalBypassEnabled";
+
+        /// <summary>
+        /// Comma-separated list of CIDR ranges allowed to bypass auth.
+        /// When empty, defaults to RFC1918 + loopback + link-local ranges.
+        /// </summary>
+        public const string LocalBypassCidrs = "Auth.LocalBypassCidrs";
+
+        /// <summary>
+        /// Stored admin password hash (PBKDF2/PasswordHasher format).
+        /// </summary>
+        public const string AdminPasswordHash = "Auth.AdminPasswordHash";
+    }
+
     public static class Agent
     {
         // Connection settings

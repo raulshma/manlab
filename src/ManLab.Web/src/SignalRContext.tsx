@@ -19,6 +19,7 @@ import {
 } from "@microsoft/signalr";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Node, NodeStatus, AgentBackoffStatus, ServerResourceUsage } from "./types";
+import { useAuth } from "@/auth/AuthContext";
 
 /**
  * Local agent log entry for real-time log streaming.
@@ -127,6 +128,7 @@ export function SignalRProvider({
   children,
   hubUrl = "/hubs/agent",
 }: SignalRProviderProps) {
+  const { token } = useAuth();
   const normalizeServerBaseUrl = (value: string): string | null =>
     {
       const trimmed = value.trim();
@@ -559,8 +561,14 @@ export function SignalRProvider({
 
   useEffect(() => {
     // Build the connection
-    const newConnection = new HubConnectionBuilder()
-      .withUrl(finalHubUrl)
+    const newConnectionBuilder = new HubConnectionBuilder();
+    if (token) {
+      newConnectionBuilder.withUrl(finalHubUrl, { accessTokenFactory: () => token });
+    } else {
+      newConnectionBuilder.withUrl(finalHubUrl);
+    }
+
+    const newConnection = newConnectionBuilder
       .withAutomaticReconnect({
         nextRetryDelayInMilliseconds: (retryContext) => {
           // Exponential backoff: 0s, 2s, 4s, 8s, 16s, then cap at 30s
@@ -712,7 +720,7 @@ export function SignalRProvider({
       newConnection.off("CommandOutputAppended", commandOutputAppendedHandler);
       newConnection.stop();
     };
-  }, [finalHubUrl, queryClient]);
+  }, [finalHubUrl, queryClient, token]);
 
   return (
     <SignalRContext.Provider

@@ -18,6 +18,7 @@ import { AgentDefaultsSettings } from "@/components/settings/AgentDefaultsSettin
 import { ScriptsSettings } from "@/components/settings/ScriptsSettings";
 import { GitHubReleaseSettings } from "@/components/settings/GitHubReleaseSettings";
 import { NetworkSettings } from "@/components/settings/NetworkSettings";
+import { AuthSettings } from "@/components/settings/AuthSettings";
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -67,6 +68,7 @@ export function SettingsPage() {
       <Tabs defaultValue="general" className="w-full">
         <TabsList className="w-full flex-wrap h-auto">
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="network">Network</TabsTrigger>
           <TabsTrigger value="scripts">Scripts</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
@@ -121,6 +123,9 @@ export function SettingsPage() {
                 <Button onClick={handleSaveConnection}>Save & Reload</Button>
             </CardFooter>
           </Card>
+        </TabsContent>
+        <TabsContent value="security" className="space-y-4">
+          <AuthSettings />
         </TabsContent>
         <TabsContent value="network" className="space-y-4">
           <NetworkSettings />
