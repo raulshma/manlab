@@ -56,7 +56,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const isSetupMode = mustSetup || shouldOfferSetup;
   const allowSkip = shouldOfferSetup && !status.authEnabled;
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     setError(null);
     setSubmitting(true);
 
@@ -110,50 +111,58 @@ export function AuthGate({ children }: { children: ReactNode }) {
               </AlertDescription>
             </Alert>
           )}
-          <div className="grid gap-2">
-            <Label htmlFor="username">Username</Label>
-            <Input
-              id="username"
-              type="text"
-              autoComplete={isSetupMode ? "username" : "username"}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              disabled={isSetupMode && !canSetup}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete={isSetupMode ? "new-password" : "current-password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={isSetupMode && !canSetup}
-            />
-          </div>
-          {isSetupMode && (
+          <form onSubmit={handleSubmit}>
             <div className="grid gap-2">
-              <Label htmlFor="confirm-password">Confirm password</Label>
+              <Label htmlFor="username">Username</Label>
               <Input
-                id="confirm-password"
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={!canSetup}
+                id="username"
+                type="text"
+                autoComplete={isSetupMode ? "username" : "username"}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                disabled={isSetupMode && !canSetup}
               />
             </div>
-          )}
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-          <Button className="w-full" onClick={handleSubmit} disabled={submitting || (isSetupMode && !canSetup)}>
-            {submitting && <Spinner className="mr-2 h-4 w-4" />}
-            {isSetupMode ? "Create Account" : "Sign in"}
-          </Button>
+            <div className="grid gap-2 mt-4">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                autoComplete={isSetupMode ? "new-password" : "current-password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={isSetupMode && !canSetup}
+              />
+            </div>
+            {isSetupMode && (
+              <div className="grid gap-2 mt-4">
+                <Label htmlFor="confirm-password">Confirm password</Label>
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  disabled={!canSetup}
+                />
+              </div>
+            )}
+            {error && (
+              <div className="mt-4">
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              </div>
+            )}
+            <Button
+              type="submit"
+              className="w-full mt-4"
+              disabled={submitting || (isSetupMode && !canSetup)}
+            >
+              {submitting && <Spinner className="mr-2 h-4 w-4" />}
+              {isSetupMode ? "Create Account" : "Sign in"}
+            </Button>
+          </form>
           {allowSkip && (
             <Button
               variant="ghost"
