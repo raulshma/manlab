@@ -100,5 +100,32 @@ launchd_uninstall() {
     remove_system_user "$AGENT_USER"
 }
 
+#=============================================================================
+# INVENTORY FOR UNINSTALL PREVIEW
+#=============================================================================
+
+launchd_inventory() {
+    local plist_name="${1:-$LAUNCHD_PLIST_NAME}"
+    local items=()
+
+    local daemon_plist="${LAUNCHD_DAEMONS_DIR}/${plist_name}.plist"
+    local agent_plist="/Library/LaunchAgents/${plist_name}.plist"
+
+    if [[ -f "$daemon_plist" ]]; then
+        items+=("$daemon_plist")
+    fi
+
+    if [[ -f "$agent_plist" ]]; then
+        items+=("$agent_plist")
+    fi
+
+    if launchctl list 2>/dev/null | grep -q "${plist_name}"; then
+        items+=("Label: ${plist_name}")
+    fi
+
+    printf '%s\n' "${items[@]}"
+}
+
 export -f launchd_available launchd_create_plist launchd_load_service
 export -f launchd_remove_service launchd_status launchd_install launchd_uninstall
+export -f launchd_inventory

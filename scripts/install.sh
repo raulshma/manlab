@@ -55,6 +55,7 @@ Options:
   --force              Overwrite existing installation
   --run-as-root        Run agent as root
   --uninstall          Remove agent installation
+    --preview-uninstall  Show what would be removed (JSON output)
     --agent-channel <ch>  Local distribution channel for server downloads (e.g. stable, beta)
     --agent-version <v>   Local distribution version folder (e.g. v1.2.3). Omit for staged.
     --prefer-github       Prefer downloading agent from GitHub Releases
@@ -212,7 +213,7 @@ PY
 }
 
 # Parse arguments
-SERVER="" TOKEN="" INSTALL_DIR="/opt/manlab-agent" FORCE=0 UNINSTALL=0 RUN_AS_ROOT=0
+SERVER="" TOKEN="" INSTALL_DIR="/opt/manlab-agent" FORCE=0 UNINSTALL=0 RUN_AS_ROOT=0 PREVIEW_UNINSTALL=0
 ENABLE_LOG_VIEWER=0 ENABLE_SCRIPTS=0 ENABLE_TERMINAL=0 ENABLE_FILE_BROWSER=0
 PREFER_GITHUB=0 GITHUB_RELEASE_BASE_URL="" GITHUB_VERSION=""
 AGENT_CHANNEL="" AGENT_VERSION=""
@@ -230,6 +231,7 @@ while [[ $# -gt 0 ]]; do
         --github-release-base-url) GITHUB_RELEASE_BASE_URL="$2"; shift 2 ;;
         --github-version) GITHUB_VERSION="$2"; shift 2 ;;
         --uninstall)      UNINSTALL=1; shift ;;
+        --preview-uninstall) PREVIEW_UNINSTALL=1; shift ;;
         --enable-log-viewer)   ENABLE_LOG_VIEWER=1; shift ;;
         --enable-scripts)      ENABLE_SCRIPTS=1; shift ;;
         --enable-terminal)     ENABLE_TERMINAL=1; shift ;;
@@ -243,6 +245,55 @@ done
 [[ -z "$SERVER" ]] && SERVER="${MANLAB_SERVER_BASE_URL:-${MANLAB_SERVER:-}}"
 [[ -z "$TOKEN" ]] && TOKEN="${MANLAB_AUTH_TOKEN:-}"
 
+detect_os() {
+    local os
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    case "$os" in
+        linux)  echo "linux" ;;
+        darwin) echo "darwin" ;;
+        *)      echo "unknown" ;;
+    esac
+}
+
+preview_uninstall() {
+    local os_kind
+    os_kind="$(detect_os)"
+
+    local service_items=()
+    local dir_items=()
+    local user_items=()
+
+    case "$os_kind" in
+        linux)
+            for unit_file in "/etc/systemd/system/manlab-agent.service" "/lib/systemd/system/manlab-agent.service" "/usr/lib/systemd/system/manlab-agent.service"; do
+                [[ -f "$unit_file" ]] && service_items+=("$unit_file")
+            done
+            [[ -f "/etc/manlab-agent.env" ]] && service_items+=("/etc/manlab-agent.env")
+            [[ -f "/etc/default/manlab-agent" ]] && service_items+=("/etc/default/manlab-agent")
+            [[ -f "/etc/sysconfig/manlab-agent" ]] && service_items+=("/etc/sysconfig/manlab-agent")
+            ;;
+        darwin)
+            [[ -f "/Library/LaunchDaemons/com.manlab.agent.plist" ]] && service_items+=("/Library/LaunchDaemons/com.manlab.agent.plist")
+            [[ -f "/Library/LaunchAgents/com.manlab.agent.plist" ]] && service_items+=("/Library/LaunchAgents/com.manlab.agent.plist")
+            if command -v launchctl &>/dev/null && launchctl list 2>/dev/null | grep -q "com.manlab.agent"; then
+                service_items+=("Label: com.manlab.agent")
+            fi
+            ;;
+    esac
+
+    [[ -d "$INSTALL_DIR" ]] && dir_items+=("$INSTALL_DIR")
+
+    if command -v id &>/dev/null && id "manlab-agent" &>/dev/null; then
+        user_items+=("User: manlab-agent")
+    fi
+
+    printf '{"success":true,"osHint":"%s","sections":[' "${os_kind^}"
+    printf '{"label":"Service files","items":[%s]},' "$(printf '"%s",' "${service_items[@]}" | sed 's/,$//')"
+    printf '{"label":"Directories","items":[%s]},' "$(printf '"%s",' "${dir_items[@]}" | sed 's/,$//')"
+    printf '{"label":"Users","items":[%s]}' "$(printf '"%s",' "${user_items[@]}" | sed 's/,$//')"
+    printf '],"notes":[],"error":null}\n'
+}
+
 # Update-mode safety: if no token was provided, try to preserve the existing token.
 # This prevents accidental identity churn (new node) or lockout (empty token).
 if [[ -z "$TOKEN" && -f /etc/manlab-agent.env ]]; then
@@ -252,6 +303,12 @@ if [[ -z "$TOKEN" && -f /etc/manlab-agent.env ]]; then
     if [[ -n "$existing_token" ]]; then
         TOKEN="$existing_token"
     fi
+fi
+
+# Preview uninstall doesn't require root
+if [[ "$PREVIEW_UNINSTALL" -eq 1 ]]; then
+    preview_uninstall
+    exit 0
 fi
 
 # Persisted agent version override (optional). Helps keep dashboard-reported version stable.

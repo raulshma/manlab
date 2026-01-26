@@ -392,7 +392,14 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       );
     }
 
-    if (remoteUninstallPreview?.success && (remoteUninstallPreview.sections?.length ?? 0) > 0) {
+    const previewSections = (remoteUninstallPreview?.sections ?? [])
+      .map((section) => ({
+        ...section,
+        items: (section.items ?? []).filter((item) => item && item.trim().length > 0),
+      }))
+      .filter((section) => section.items.length > 0);
+
+    if (remoteUninstallPreview?.success && previewSections.length > 0) {
       return (
         <div className="space-y-2">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -402,7 +409,7 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
             Retrieved from the target machine via SSH.
           </div>
           <div className="space-y-2">
-            {remoteUninstallPreview.sections.map((s) => (
+            {previewSections.map((s) => (
               <div key={s.label}>
                 <div className="text-xs font-medium">{s.label}</div>
                 <ul className="mt-1 list-disc pl-5 text-xs font-mono text-muted-foreground">
@@ -417,123 +424,43 @@ export function MachineOnboardingModal({ trigger }: { trigger: ReactNode }) {
       );
     }
 
-    const osHint = lastTest?.osHint ?? null;
-    const os = osHint?.toLowerCase() ?? "";
-
-    const isWindows = os.startsWith("windows");
-    const isLinux = os.startsWith("linux");
-    const isMac = os.startsWith("darwin") || os.startsWith("mac") || os.startsWith("osx") || os.includes("darwin");
-
-    const title = "Cleanup preview (best-effort)";
-    const subtitle = "The uninstaller will attempt to stop/disable services and remove these resources:";
-
-    const commonItems: Array<{ label: string; items: string[] }> = [];
-
-    if (isWindows)
-    {
-      commonItems.push(
-        {
-          label: "Tasks / services",
-          items: [
-            "Scheduled task: ManLab Agent",
-            "Scheduled task: ManLab Agent User",
-            "Legacy Windows service (if present): manlab-agent",
-          ],
-        },
-        {
-          label: "Folders",
-          items: [
-            "C:\\ProgramData\\ManLab\\Agent",
-            "%LOCALAPPDATA%\\ManLab\\Agent",
-          ],
-        }
+    if (remoteUninstallPreview?.success && previewSections.length === 0) {
+      return (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Cleanup preview (from target)
+          </div>
+          <div className="text-xs text-muted-foreground">
+            No removable files or services were detected on the target machine.
+          </div>
+        </div>
       );
     }
-    else if (isLinux)
-    {
-      commonItems.push(
-        {
-          label: "Systemd units",
-          items: [
-            "manlab-agent.service (and any manlab-agent*.service variants)",
-            "/etc/systemd/system/manlab-agent.service",
-            "/lib/systemd/system/manlab-agent.service",
-            "/usr/lib/systemd/system/manlab-agent.service",
-          ],
-        },
-        {
-          label: "Config",
-          items: [
-            "/etc/manlab-agent.env",
-            "/etc/default/manlab-agent (if present)",
-            "/etc/sysconfig/manlab-agent (if present)",
-          ],
-        },
-        {
-          label: "Install directory",
-          items: [
-            "/opt/manlab-agent",
-          ],
-        },
-        {
-          label: "User/group",
-          items: [
-            "manlab-agent (if present)",
-          ],
-        }
+
+    if (remoteUninstallPreview && !remoteUninstallPreview.success) {
+      return (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Cleanup preview (from target)
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {remoteUninstallPreview.error || "Unable to retrieve inventory from the target machine."}
+          </div>
+        </div>
       );
-    }
-    else if (isMac)
-    {
-      commonItems.push(
-        {
-          label: "launchd",
-          items: [
-            "Label: com.manlab.agent",
-            "/Library/LaunchDaemons/com.manlab.agent.plist",
-            "/Library/LaunchAgents/com.manlab.agent.plist (if present)",
-          ],
-        },
-        {
-          label: "Install directory",
-          items: [
-            "/opt/manlab-agent",
-          ],
-        }
-      );
-    }
-    else
-    {
-      commonItems.push({
-        label: "Resources",
-        items: [
-          "Service: manlab-agent",
-          "Install directory: /opt/manlab-agent",
-        ],
-      });
     }
 
     return (
       <div className="space-y-2">
         <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {title}
+          Cleanup preview
         </div>
-        <div className="text-xs text-muted-foreground">{subtitle}</div>
-        <div className="space-y-2">
-          {commonItems.map((section) => (
-            <div key={section.label}>
-              <div className="text-xs font-medium">{section.label}</div>
-              <ul className="mt-1 list-disc pl-5 text-xs font-mono text-muted-foreground">
-                {section.items.map((it) => (
-                  <li key={it}>{it}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
+        <div className="text-xs text-muted-foreground">
+          Run preview to fetch the exact files and services detected on the target machine.
         </div>
       </div>
     );
-  }, [lastTest?.osHint, previewUninstallMutation.isPending, remoteUninstallPreview]);
+  }, [previewUninstallMutation.isPending, remoteUninstallPreview]);
 
   // Subscribe to onboarding progress events
   useEffect(() => {

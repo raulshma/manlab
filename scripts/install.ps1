@@ -187,9 +187,33 @@ function Try-DownloadAgentFromGitHub {
 
 # Preview uninstall
 if ($PreviewUninstall) {
-    $dirs = @($InstallDir)
-    if ($env:LOCALAPPDATA) { $dirs += "$env:LOCALAPPDATA\ManLab\Agent" }
-    @{ success = $true; osHint = "Windows"; sections = @(@{ label = "Directories"; items = @($dirs) }); notes = @() } | ConvertTo-Json -Depth 6
+    $sections = @()
+
+    # Scheduled tasks (service equivalent)
+    $taskItems = @()
+    try {
+        $candidateNames = @("ManLab Agent", "ManLab Agent User")
+        if (-not [string]::IsNullOrWhiteSpace($TaskName)) { $candidateNames += $TaskName }
+
+        $tasks = Get-ScheduledTask -ErrorAction Stop | Where-Object {
+            $candidateNames -contains $_.TaskName -or $_.TaskName -like '*ManLab*Agent*'
+        }
+
+        foreach ($t in $tasks) {
+            $taskItems += "Task: $($t.TaskPath)$($t.TaskName)"
+        }
+    } catch { }
+
+    $taskItems = @($taskItems | Select-Object -Unique)
+    $sections += @{ label = "Scheduled Tasks"; items = @($taskItems) }
+
+    # Directories
+    $candidateDirs = @($InstallDir, "C:\ProgramData\ManLab\Agent")
+    if ($env:LOCALAPPDATA) { $candidateDirs += "$env:LOCALAPPDATA\ManLab\Agent" }
+    $existingDirs = @($candidateDirs | Where-Object { Test-Path $_ } | Select-Object -Unique)
+    $sections += @{ label = "Directories"; items = @($existingDirs) }
+
+    @{ success = $true; osHint = "Windows"; sections = $sections; notes = @(); error = $null } | ConvertTo-Json -Depth 6
     exit 0
 }
 
