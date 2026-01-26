@@ -21,6 +21,7 @@ public sealed class ProcessTelemetryCollector
     {
         var now = DateTime.UtcNow;
         var list = new List<ProcessTelemetry>();
+        var activePids = new HashSet<int>();
 
         Process[] processes;
         try
@@ -33,11 +34,14 @@ public sealed class ProcessTelemetryCollector
             return list;
         }
 
+        list.Capacity = Math.Max(list.Capacity, processes.Length);
+
         foreach (var process in processes)
         {
             try
             {
                 var pid = process.Id;
+            activePids.Add(pid);
                 var cpuPercent = TryComputeCpuPercent(pid, process, now);
                 var memoryBytes = process.WorkingSet64;
 
@@ -56,6 +60,17 @@ public sealed class ProcessTelemetryCollector
             finally
             {
                 process.Dispose();
+            }
+        }
+
+        if (activePids.Count > 0 && _cpuSamples.Count > activePids.Count)
+        {
+            foreach (var pid in _cpuSamples.Keys.ToArray())
+            {
+                if (!activePids.Contains(pid))
+                {
+                    _cpuSamples.Remove(pid);
+                }
             }
         }
 

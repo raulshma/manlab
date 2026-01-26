@@ -89,10 +89,15 @@ internal sealed class EnhancedNetworkTelemetryCollector
                 .Where(nic => nic.NetworkInterfaceType != NetworkInterfaceType.Tunnel)
                 .ToList();
 
+            result.Capacity = Math.Max(result.Capacity, interfaces.Count);
+            var activeNames = new HashSet<string>(StringComparer.Ordinal);
+
             foreach (var nic in interfaces)
             {
                 try
                 {
+                    activeNames.Add(nic.Name);
+
                     var stats = nic.GetIPStatistics();
                     var props = nic.GetIPProperties();
 
@@ -156,6 +161,17 @@ internal sealed class EnhancedNetworkTelemetryCollector
                 catch (Exception ex)
                 {
                     _logger.LogDebug(ex, "Failed to collect stats for interface {Name}", nic.Name);
+                }
+            }
+
+            if (_interfaceStates.Count > activeNames.Count)
+            {
+                foreach (var name in _interfaceStates.Keys.ToArray())
+                {
+                    if (!activeNames.Contains(name))
+                    {
+                        _interfaceStates.Remove(name);
+                    }
                 }
             }
         }
@@ -226,7 +242,12 @@ internal sealed class EnhancedNetworkTelemetryCollector
             targets.Add("1.1.1.1");
         }
 
-        return targets.Take(3).ToList(); // Limit to 3 targets
+        if (targets.Count > 3)
+        {
+            targets.RemoveRange(3, targets.Count - 3);
+        }
+
+        return targets; // Limit to 3 targets
     }
 
     private LatencyMeasurement? MeasureLatency(string target)
@@ -496,7 +517,7 @@ internal sealed class EnhancedNetworkTelemetryCollector
         public long TxPackets { get; init; }
     }
 
-    private sealed class LatencyWindow
+    internal sealed class LatencyWindow
     {
         private readonly int _size;
         private readonly Queue<(bool Success, long? RttMs)> _samples = new();
@@ -517,26 +538,59 @@ internal sealed class EnhancedNetworkTelemetryCollector
 
         public LatencyStats GetStats()
         {
-            var samples = _samples.ToList();
-            var successfulRtts = samples.Where(s => s.Success && s.RttMs.HasValue).Select(s => s.RttMs!.Value).ToList();
+            var total = 0;
+            var failed = 0;
+            var successCount = 0;
+            long? last = null;
+            long min = long.MaxValue;
+            long max = long.MinValue;
+            double sum = 0;
+
+            foreach (var sample in _samples)
+            {
+                total++;
+                if (!sample.Success)
+                {
+                    failed++;
+                    continue;
+                }
+
+                if (sample.RttMs.HasValue)
+                {
+                    var rtt = sample.RttMs.Value;
+                    last = rtt;
+                    if (rtt < min) min = rtt;
+                    if (rtt > max) max = rtt;
+                    sum += rtt;
+                    successCount++;
+                }
+            }
 
             var stats = new LatencyStats
             {
-                PacketLossPercent = samples.Count > 0 ? (float)(samples.Count(s => !s.Success) * 100.0 / samples.Count) : null
+                PacketLossPercent = total > 0 ? (float)(failed * 100.0 / total) : null
             };
 
-            if (successfulRtts.Count > 0)
+            if (successCount > 0)
             {
-                stats.LastRtt = successfulRtts.Last();
-                stats.MinRtt = successfulRtts.Min();
-                stats.MaxRtt = successfulRtts.Max();
-                stats.AvgRtt = (float)successfulRtts.Average();
+                var avg = sum / successCount;
+                stats.LastRtt = last;
+                stats.MinRtt = min;
+                stats.MaxRtt = max;
+                stats.AvgRtt = (float)avg;
 
-                // Calculate jitter (average deviation from mean)
-                if (successfulRtts.Count > 1)
+                if (successCount > 1)
                 {
-                    var avg = successfulRtts.Average();
-                    stats.Jitter = (float)successfulRtts.Select(r => Math.Abs(r - avg)).Average();
+                    double jitterSum = 0;
+                    foreach (var sample in _samples)
+                    {
+                        if (sample.Success && sample.RttMs.HasValue)
+                        {
+                            jitterSum += Math.Abs(sample.RttMs.Value - avg);
+                        }
+                    }
+
+                    stats.Jitter = (float)(jitterSum / successCount);
                 }
             }
 
@@ -544,7 +598,7 @@ internal sealed class EnhancedNetworkTelemetryCollector
         }
     }
 
-    private sealed class LatencyStats
+    internal sealed class LatencyStats
     {
         public float? LastRtt { get; set; }
         public float? MinRtt { get; set; }
