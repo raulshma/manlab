@@ -395,7 +395,16 @@ public sealed class CommandDispatchService : BackgroundService
         // For log viewer commands, OutputLog is used to carry the file content/chunks.
         // Avoid polluting it with server operational notes.
         // For file browser commands, OutputLog carries JSON that must remain parseable.
-        return type is not (CommandType.LogRead or CommandType.LogTail or CommandType.FileList or CommandType.FileRead);
+        return type is not (
+            CommandType.LogRead
+            or CommandType.LogTail
+            or CommandType.FileList
+            or CommandType.FileRead
+            or CommandType.DockerList
+            or CommandType.DockerInspect
+            or CommandType.DockerLogs
+            or CommandType.DockerStats
+            or CommandType.ComposeList);
     }
 
     private static (string agentType, string payload, bool supported) MapToAgentCommand(CommandType type, string? payload)
@@ -407,6 +416,16 @@ public sealed class CommandDispatchService : BackgroundService
             CommandType.Update => (CommandTypes.SystemUpdate, payload ?? string.Empty, true),
             CommandType.DockerRestart => (CommandTypes.DockerRestart, payload ?? string.Empty, true),
             CommandType.DockerList => (CommandTypes.DockerList, payload ?? string.Empty, true),
+            CommandType.DockerStart => (CommandTypes.DockerStart, payload ?? string.Empty, true),
+            CommandType.DockerStop => (CommandTypes.DockerStop, payload ?? string.Empty, true),
+            CommandType.DockerInspect => (CommandTypes.DockerInspect, payload ?? string.Empty, true),
+            CommandType.DockerLogs => (CommandTypes.DockerLogs, payload ?? string.Empty, true),
+            CommandType.DockerStats => (CommandTypes.DockerStats, payload ?? string.Empty, true),
+            CommandType.DockerExec => (CommandTypes.DockerExec, payload ?? string.Empty, true),
+            CommandType.DockerRemove => (CommandTypes.DockerRemove, payload ?? string.Empty, true),
+            CommandType.ComposeList => (CommandTypes.ComposeList, payload ?? string.Empty, true),
+            CommandType.ComposeUp => (CommandTypes.ComposeUp, payload ?? string.Empty, true),
+            CommandType.ComposeDown => (CommandTypes.ComposeDown, payload ?? string.Empty, true),
             CommandType.Shutdown => (CommandTypes.AgentShutdown, payload ?? string.Empty, true),
             CommandType.EnableTask => (CommandTypes.AgentEnableTask, payload ?? string.Empty, true),
             CommandType.DisableTask => (CommandTypes.AgentDisableTask, payload ?? string.Empty, true),

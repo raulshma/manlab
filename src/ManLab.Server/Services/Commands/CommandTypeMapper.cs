@@ -41,11 +41,35 @@ public static class CommandTypeMapper
                 commandType = CommandType.DockerList;
                 return true;
             case CommandTypes.DockerStart:
-                // Not yet persisted as a first-class enum value; treat as Shell until expanded.
-                // For now we don't accept it.
-                return false;
+                commandType = CommandType.DockerStart;
+                return true;
             case CommandTypes.DockerStop:
-                return false;
+                commandType = CommandType.DockerStop;
+                return true;
+            case CommandTypes.DockerInspect:
+                commandType = CommandType.DockerInspect;
+                return true;
+            case CommandTypes.DockerLogs:
+                commandType = CommandType.DockerLogs;
+                return true;
+            case CommandTypes.DockerStats:
+                commandType = CommandType.DockerStats;
+                return true;
+            case CommandTypes.DockerExec:
+                commandType = CommandType.DockerExec;
+                return true;
+            case CommandTypes.DockerRemove:
+                commandType = CommandType.DockerRemove;
+                return true;
+            case CommandTypes.ComposeList:
+                commandType = CommandType.ComposeList;
+                return true;
+            case CommandTypes.ComposeUp:
+                commandType = CommandType.ComposeUp;
+                return true;
+            case CommandTypes.ComposeDown:
+                commandType = CommandType.ComposeDown;
+                return true;
             case CommandTypes.AgentShutdown:
                 commandType = CommandType.Shutdown;
                 return true;
@@ -117,6 +141,16 @@ public static class CommandTypeMapper
         CommandType.Update => CommandTypes.SystemUpdate,
         CommandType.DockerRestart => CommandTypes.DockerRestart,
         CommandType.DockerList => CommandTypes.DockerList,
+        CommandType.DockerStart => CommandTypes.DockerStart,
+        CommandType.DockerStop => CommandTypes.DockerStop,
+        CommandType.DockerInspect => CommandTypes.DockerInspect,
+        CommandType.DockerLogs => CommandTypes.DockerLogs,
+        CommandType.DockerStats => CommandTypes.DockerStats,
+        CommandType.DockerExec => CommandTypes.DockerExec,
+        CommandType.DockerRemove => CommandTypes.DockerRemove,
+        CommandType.ComposeList => CommandTypes.ComposeList,
+        CommandType.ComposeUp => CommandTypes.ComposeUp,
+        CommandType.ComposeDown => CommandTypes.ComposeDown,
         CommandType.Shutdown => CommandTypes.AgentShutdown,
         CommandType.EnableTask => CommandTypes.AgentEnableTask,
         CommandType.DisableTask => CommandTypes.AgentDisableTask,

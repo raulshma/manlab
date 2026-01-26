@@ -153,6 +153,14 @@ public sealed class CommandDispatcher : IDisposable
                     var t when t == CommandTypes.DockerRestart => await HandleDockerRestartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.DockerStop => await HandleDockerStopAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.DockerStart => await HandleDockerStartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.DockerInspect => await HandleDockerInspectAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.DockerLogs => await HandleDockerLogsAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.DockerStats => await HandleDockerStatsAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.DockerExec => await HandleDockerExecAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.DockerRemove => await HandleDockerRemoveAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.ComposeList => await HandleComposeListAsync(commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.ComposeUp => await HandleComposeUpAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                    var t when t == CommandTypes.ComposeDown => await HandleComposeDownAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.SystemUpdate => await HandleSystemUpdateAsync(commandId, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.SystemShutdown => await HandleSystemShutdownAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
                     var t when t == CommandTypes.SystemRestart => await HandleSystemRestartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
@@ -238,6 +246,121 @@ public sealed class CommandDispatcher : IDisposable
     {
         var containerId = ExtractContainerIdStrict(payloadRoot);
         return await _dockerManager.StartContainerAsync(containerId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleDockerInspectAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        var containerId = ExtractContainerIdStrict(payloadRoot);
+        return await _dockerManager.InspectContainerAsync(containerId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleDockerLogsAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        var containerId = ExtractContainerIdStrict(payloadRoot);
+        var tail = ExtractOptionalInt(payloadRoot, "tail", "Tail");
+        var since = ExtractOptionalString(payloadRoot, "since", "Since");
+        var timestamps = ExtractOptionalBool(payloadRoot, "timestamps", "Timestamps") ?? false;
+        var maxBytes = ExtractOptionalInt(payloadRoot, "maxBytes", "MaxBytes");
+
+        return await _dockerManager.GetContainerLogsAsync(
+            containerId,
+            tail,
+            since,
+            timestamps,
+            maxBytes,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleDockerStatsAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        var containerId = ExtractOptionalString(payloadRoot, "containerId", "ContainerId");
+        return await _dockerManager.GetContainerStatsAsync(containerId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleDockerExecAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        if (payloadRoot is null || payloadRoot.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("docker.exec requires a JSON object payload.");
+        }
+
+        var root = payloadRoot.Value;
+        var containerId = ExtractContainerIdStrict(payloadRoot);
+        var command = ExtractCommandArrayStrict(root);
+        var workingDir = ExtractOptionalString(root, "workingDir", "WorkingDir");
+        var user = ExtractOptionalString(root, "user", "User");
+        var environment = ExtractOptionalStringDictionary(root, "environment", "Environment");
+
+        return await _dockerManager.ExecContainerAsync(
+            containerId,
+            command,
+            workingDir,
+            user,
+            environment,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleDockerRemoveAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        var containerId = ExtractContainerIdStrict(payloadRoot);
+        var force = ExtractOptionalBool(payloadRoot, "force", "Force") ?? false;
+        var removeVolumes = ExtractOptionalBool(payloadRoot, "removeVolumes", "RemoveVolumes") ?? false;
+        return await _dockerManager.RemoveContainerAsync(containerId, force, removeVolumes, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleComposeListAsync(CancellationToken cancellationToken)
+    {
+        return await _dockerManager.ListComposeStacksAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleComposeUpAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        if (payloadRoot is null || payloadRoot.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("compose.up requires a JSON object payload.");
+        }
+
+        var root = payloadRoot.Value;
+        var projectName = ExtractRequiredString(root, "projectName", "ProjectName", "compose.up requires 'projectName'.");
+        var composeYaml = ExtractRequiredString(root, "composeYaml", "ComposeYaml", "compose.up requires 'composeYaml'.");
+        var env = ExtractOptionalStringDictionary(root, "environment", "Environment");
+        var detach = ExtractOptionalBool(root, "detach", "Detach") ?? true;
+        var removeOrphans = ExtractOptionalBool(root, "removeOrphans", "RemoveOrphans") ?? false;
+        var profiles = ExtractOptionalStringArray(root, "profiles", "Profiles");
+
+        return await _dockerManager.ComposeUpAsync(
+            projectName,
+            composeYaml,
+            env,
+            detach,
+            removeOrphans,
+            profiles,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> HandleComposeDownAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
+    {
+        if (payloadRoot is null || payloadRoot.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("compose.down requires a JSON object payload.");
+        }
+
+        var root = payloadRoot.Value;
+        var projectName = ExtractRequiredString(root, "projectName", "ProjectName", "compose.down requires 'projectName'.");
+        var composeYaml = ExtractRequiredString(root, "composeYaml", "ComposeYaml", "compose.down requires 'composeYaml'.");
+        var env = ExtractOptionalStringDictionary(root, "environment", "Environment");
+        var removeOrphans = ExtractOptionalBool(root, "removeOrphans", "RemoveOrphans") ?? false;
+        var removeVolumes = ExtractOptionalBool(root, "volumes", "Volumes") ?? false;
+        var removeImages = ExtractOptionalBool(root, "removeImages", "RemoveImages") ?? false;
+
+        return await _dockerManager.ComposeDownAsync(
+            projectName,
+            composeYaml,
+            env,
+            removeOrphans,
+            removeVolumes,
+            removeImages,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private Task<string> HandleCommandCancelAsync(string payload)
@@ -856,6 +979,171 @@ del ""%~f0""
         }
 
         return command;
+    }
+
+    private static string? ExtractOptionalString(JsonElement? payloadRoot, string camel, string pascal)
+    {
+        if (payloadRoot is null) return null;
+        return ExtractOptionalString(payloadRoot.Value, camel, pascal);
+    }
+
+    private static string? ExtractOptionalString(JsonElement root, string camel, string pascal)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        if (root.TryGetProperty(camel, out var el) || root.TryGetProperty(pascal, out el))
+        {
+            if (el.ValueKind == JsonValueKind.String)
+            {
+                var s = el.GetString()?.Trim();
+                return string.IsNullOrWhiteSpace(s) ? null : s;
+            }
+        }
+        return null;
+    }
+
+    private static string ExtractRequiredString(JsonElement root, string camel, string pascal, string errorMessage)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("Command payload must be a JSON object.");
+        }
+
+        if (!root.TryGetProperty(camel, out var el) && !root.TryGetProperty(pascal, out el))
+        {
+            throw new ArgumentException(errorMessage);
+        }
+
+        var value = el.GetString()?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException(errorMessage);
+        }
+
+        return value;
+    }
+
+    private static bool? ExtractOptionalBool(JsonElement? payloadRoot, string camel, string pascal)
+    {
+        if (payloadRoot is null) return null;
+        return ExtractOptionalBool(payloadRoot.Value, camel, pascal);
+    }
+
+    private static bool? ExtractOptionalBool(JsonElement root, string camel, string pascal)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        if (root.TryGetProperty(camel, out var el) || root.TryGetProperty(pascal, out el))
+        {
+            if (el.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                return el.GetBoolean();
+            }
+        }
+        return null;
+    }
+
+    private static IReadOnlyList<string> ExtractCommandArrayStrict(JsonElement root)
+    {
+        if (!root.TryGetProperty("command", out var cmdEl) && !root.TryGetProperty("Command", out cmdEl))
+        {
+            throw new ArgumentException("docker.exec requires 'command' array.");
+        }
+
+        if (cmdEl.ValueKind != JsonValueKind.Array)
+        {
+            throw new ArgumentException("'command' must be an array of strings.");
+        }
+
+        var items = new List<string>();
+        foreach (var el in cmdEl.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var s = el.GetString()?.Trim();
+            if (string.IsNullOrWhiteSpace(s))
+            {
+                continue;
+            }
+
+            if (s.Length > 256)
+            {
+                throw new ArgumentException("docker.exec command tokens must be <= 256 characters.");
+            }
+
+            items.Add(s);
+        }
+
+        if (items.Count == 0)
+        {
+            throw new ArgumentException("docker.exec requires at least one command token.");
+        }
+
+        if (items.Count > 32)
+        {
+            throw new ArgumentException("docker.exec supports up to 32 command tokens.");
+        }
+
+        return items;
+    }
+
+    private static IReadOnlyDictionary<string, string?>? ExtractOptionalStringDictionary(JsonElement root, string camel, string pascal)
+    {
+        if (!root.TryGetProperty(camel, out var envEl) && !root.TryGetProperty(pascal, out envEl))
+        {
+            return null;
+        }
+
+        if (envEl.ValueKind != JsonValueKind.Object)
+        {
+            throw new ArgumentException("environment must be a JSON object with string values.");
+        }
+
+        var dict = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var prop in envEl.EnumerateObject())
+        {
+            var key = prop.Name?.Trim();
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
+            var value = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : prop.Value.ToString();
+            dict[key] = value;
+        }
+
+        return dict.Count == 0 ? null : dict;
+    }
+
+    private static IReadOnlyList<string>? ExtractOptionalStringArray(JsonElement root, string camel, string pascal)
+    {
+        if (!root.TryGetProperty(camel, out var arrEl) && !root.TryGetProperty(pascal, out arrEl))
+        {
+            return null;
+        }
+
+        if (arrEl.ValueKind != JsonValueKind.Array)
+        {
+            throw new ArgumentException("profiles must be a JSON array of strings.");
+        }
+
+        var items = new List<string>();
+        foreach (var el in arrEl.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var s = el.GetString()?.Trim();
+            if (!string.IsNullOrWhiteSpace(s))
+            {
+                items.Add(s);
+            }
+        }
+
+        return items.Count == 0 ? null : items;
     }
 
     private async Task<string> HandleShellExecAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)

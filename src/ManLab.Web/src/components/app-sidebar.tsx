@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Home, Server, Settings, Activity, FileText, Folder, BarChart3, Network, Radar } from "lucide-react"
+import { Home, Server, Settings, Activity, FileText, Folder, BarChart3, Network, Radar, Boxes } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 
 import {
@@ -64,6 +64,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SidebarMenuButton render={<NavLink to="/files" />} isActive={location.pathname.startsWith("/files")}>
                   <Folder />
                   <span>Files</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton render={<NavLink to="/docker" />} isActive={location.pathname.startsWith("/docker")}>
+                  <Boxes />
+                  <span>Docker Studio</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>

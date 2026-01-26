@@ -10,6 +10,16 @@ public static class CommandTypes
     public const string DockerRestart = "docker.restart";
     public const string DockerStop = "docker.stop";
     public const string DockerStart = "docker.start";
+    public const string DockerInspect = "docker.inspect";
+    public const string DockerLogs = "docker.logs";
+    public const string DockerStats = "docker.stats";
+    public const string DockerExec = "docker.exec";
+    public const string DockerRemove = "docker.remove";
+
+    // Docker Compose (stacks)
+    public const string ComposeList = "compose.list";
+    public const string ComposeUp = "compose.up";
+    public const string ComposeDown = "compose.down";
 
     // System commands  
     public const string SystemUpdate = "system.update";
@@ -63,6 +73,14 @@ public static class CommandTypes
         DockerRestart,
         DockerStop,
         DockerStart,
+        DockerInspect,
+        DockerLogs,
+        DockerStats,
+        DockerExec,
+        DockerRemove,
+        ComposeList,
+        ComposeUp,
+        ComposeDown,
         SystemUpdate,
         SystemShutdown,
         SystemRestart,
@@ -192,6 +210,117 @@ public record DockerCommandPayload
     /// The container ID to operate on.
     /// </summary>
     public string ContainerId { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Payload for docker.logs command.
+/// </summary>
+public sealed record DockerLogsPayload
+{
+    /// <summary>The container ID or name.</summary>
+    public string ContainerId { get; init; } = string.Empty;
+
+    /// <summary>Number of lines from the end of the logs.</summary>
+    public int? Tail { get; init; }
+
+    /// <summary>Show logs since a timestamp (e.g., RFC3339 or duration like 5m).</summary>
+    public string? Since { get; init; }
+
+    /// <summary>Include timestamps in the output.</summary>
+    public bool? Timestamps { get; init; }
+
+    /// <summary>Maximum bytes to return (defense-in-depth limit).</summary>
+    public int? MaxBytes { get; init; }
+}
+
+/// <summary>
+/// Payload for docker.exec command.
+/// </summary>
+public sealed record DockerExecPayload
+{
+    /// <summary>The container ID or name.</summary>
+    public string ContainerId { get; init; } = string.Empty;
+
+    /// <summary>Command tokens to execute inside the container.</summary>
+    public IReadOnlyList<string> Command { get; init; } = Array.Empty<string>();
+
+    /// <summary>Optional working directory.</summary>
+    public string? WorkingDir { get; init; }
+
+    /// <summary>Optional user (uid:gid or name).</summary>
+    public string? User { get; init; }
+
+    /// <summary>Optional environment variables to set.</summary>
+    public IReadOnlyDictionary<string, string?>? Environment { get; init; }
+}
+
+/// <summary>
+/// Payload for docker.remove command.
+/// </summary>
+public sealed record DockerRemovePayload
+{
+    /// <summary>The container ID or name.</summary>
+    public string ContainerId { get; init; } = string.Empty;
+
+    /// <summary>Force removal (kill running container).</summary>
+    public bool? Force { get; init; }
+
+    /// <summary>Remove associated volumes.</summary>
+    public bool? RemoveVolumes { get; init; }
+}
+
+/// <summary>
+/// Payload for docker.stats command (optional filtering).
+/// </summary>
+public sealed record DockerStatsPayload
+{
+    /// <summary>Optional container ID or name to filter stats.</summary>
+    public string? ContainerId { get; init; }
+}
+
+/// <summary>
+/// Payload for compose.up command.
+/// </summary>
+public sealed record ComposeUpPayload
+{
+    /// <summary>Project name (stack name).</summary>
+    public string ProjectName { get; init; } = string.Empty;
+
+    /// <summary>Compose YAML content.</summary>
+    public string ComposeYaml { get; init; } = string.Empty;
+
+    /// <summary>Optional environment variables.</summary>
+    public IReadOnlyDictionary<string, string?>? Environment { get; init; }
+
+    /// <summary>Run services in the background (default true).</summary>
+    public bool? Detach { get; init; }
+
+    /// <summary>Remove containers for services not defined in the compose file.</summary>
+    public bool? RemoveOrphans { get; init; }
+
+    /// <summary>Optional profiles to enable.</summary>
+    public IReadOnlyList<string>? Profiles { get; init; }
+}
+
+/// <summary>
+/// Payload for compose.down command.
+/// </summary>
+public sealed record ComposeDownPayload
+{
+    /// <summary>Project name (stack name).</summary>
+    public string ProjectName { get; init; } = string.Empty;
+
+    /// <summary>Compose YAML content.</summary>
+    public string ComposeYaml { get; init; } = string.Empty;
+
+    /// <summary>Remove containers for services not defined in the compose file.</summary>
+    public bool? RemoveOrphans { get; init; }
+
+    /// <summary>Remove named volumes declared in the compose file.</summary>
+    public bool? Volumes { get; init; }
+
+    /// <summary>Remove images ("all" if true).</summary>
+    public bool? RemoveImages { get; init; }
 }
 
 /// <summary>

@@ -106,6 +106,53 @@ export interface Container {
 }
 
 /**
+ * Docker logs response.
+ */
+export interface DockerLogsResult {
+  containerId: string;
+  content: string;
+  truncated: boolean;
+  tail: number | null;
+  since: string | null;
+  timestamps: boolean;
+}
+
+/**
+ * Docker stats info.
+ */
+export interface DockerStatsInfo {
+  id: string;
+  name: string;
+  cpuPercent: string;
+  memUsage: string;
+  memPercent: string;
+  netIO: string;
+  blockIO: string;
+  pids: string;
+}
+
+/**
+ * Docker exec response.
+ */
+export interface DockerExecResult {
+  containerId: string;
+  exitCode: number;
+  output: string;
+  error: string;
+  success: boolean;
+}
+
+/**
+ * Docker compose action response.
+ */
+export interface DockerComposeActionResponse {
+  success: boolean;
+  projectName: string;
+  action: string;
+  output?: string | null;
+}
+
+/**
  * Command execution status.
  */
 export type CommandExecutionStatus = 'Queued' | 'Sent' | 'InProgress' | 'Success' | 'Failed';

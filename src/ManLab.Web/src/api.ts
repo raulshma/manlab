@@ -901,6 +901,129 @@ export async function restartContainer(
 }
 
 /**
+ * Starts a Docker container on a node.
+ */
+export async function startContainer(
+  nodeId: string,
+  containerId: string
+): Promise<Command> {
+  return createCommand(nodeId, "docker.start", { containerId });
+}
+
+/**
+ * Stops a Docker container on a node.
+ */
+export async function stopContainer(
+  nodeId: string,
+  containerId: string
+): Promise<Command> {
+  return createCommand(nodeId, "docker.stop", { containerId });
+}
+
+/**
+ * Inspects a Docker container on a node.
+ */
+export async function inspectContainer(
+  nodeId: string,
+  containerId: string
+): Promise<Command> {
+  return createCommand(nodeId, "docker.inspect", { containerId });
+}
+
+/**
+ * Reads Docker logs for a container.
+ */
+export async function fetchContainerLogs(
+  nodeId: string,
+  input: {
+    containerId: string;
+    tail?: number;
+    since?: string;
+    timestamps?: boolean;
+    maxBytes?: number;
+  }
+): Promise<Command> {
+  return createCommand(nodeId, "docker.logs", input);
+}
+
+/**
+ * Reads one-shot Docker stats for containers.
+ */
+export async function fetchContainerStats(
+  nodeId: string,
+  containerId?: string
+): Promise<Command> {
+  return createCommand(nodeId, "docker.stats", containerId ? { containerId } : undefined);
+}
+
+/**
+ * Executes a command inside a container.
+ */
+export async function execInContainer(
+  nodeId: string,
+  input: {
+    containerId: string;
+    command: string[];
+    workingDir?: string;
+    user?: string;
+    environment?: Record<string, string | null>;
+  }
+): Promise<Command> {
+  return createCommand(nodeId, "docker.exec", input);
+}
+
+/**
+ * Removes a Docker container.
+ */
+export async function removeContainer(
+  nodeId: string,
+  input: { containerId: string; force?: boolean; removeVolumes?: boolean }
+): Promise<Command> {
+  return createCommand(nodeId, "docker.remove", input);
+}
+
+/**
+ * Lists Docker compose stacks on a node.
+ */
+export async function listComposeStacks(nodeId: string): Promise<Command> {
+  return createCommand(nodeId, "compose.list");
+}
+
+/**
+ * Brings up a Docker compose stack.
+ */
+export async function composeUp(
+  nodeId: string,
+  input: {
+    projectName: string;
+    composeYaml: string;
+    environment?: Record<string, string | null>;
+    detach?: boolean;
+    removeOrphans?: boolean;
+    profiles?: string[];
+  }
+): Promise<Command> {
+  return createCommand(nodeId, "compose.up", input);
+}
+
+/**
+ * Brings down a Docker compose stack.
+ */
+export async function composeDown(
+  nodeId: string,
+  input: {
+    projectName: string;
+    composeYaml: string;
+    environment?: Record<string, string | null>;
+    removeOrphans?: boolean;
+    volumes?: boolean;
+    removeImages?: boolean;
+  }
+): Promise<Command> {
+  return createCommand(nodeId, "compose.down", input);
+}
+
+/**
  * Triggers a system update on a node.
  */
 export async function triggerSystemUpdate(nodeId: string): Promise<Command> {

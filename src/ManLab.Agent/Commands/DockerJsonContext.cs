@@ -24,6 +24,49 @@ public sealed record DockerErrorResponse(string Error, string? ContainerId = nul
 public sealed record DockerActionResponse(bool Success, string ContainerId, string Action);
 
 /// <summary>
+/// Result for docker.logs.
+/// </summary>
+public sealed record DockerLogsResult(
+    string ContainerId,
+    string Content,
+    bool Truncated,
+    int? Tail,
+    string? Since,
+    bool Timestamps);
+
+/// <summary>
+/// Result for docker.exec.
+/// </summary>
+public sealed record DockerExecResult(
+    string ContainerId,
+    int ExitCode,
+    string Output,
+    string Error,
+    bool Success);
+
+/// <summary>
+/// Result for docker.stats.
+/// </summary>
+public sealed record DockerStatsInfo(
+    string Id,
+    string Name,
+    string CpuPercent,
+    string MemUsage,
+    string MemPercent,
+    string NetIO,
+    string BlockIO,
+    string Pids);
+
+/// <summary>
+/// Result for docker compose operations.
+/// </summary>
+public sealed record DockerComposeActionResponse(
+    bool Success,
+    string ProjectName,
+    string Action,
+    string? Output = null);
+
+/// <summary>
 /// Raw Docker ps JSON output format.
 /// Field names match Docker CLI JSON output exactly (PascalCase).
 /// </summary>
@@ -36,6 +79,20 @@ public sealed record DockerPsOutput(
     string? CreatedAt);
 
 /// <summary>
+/// Raw Docker stats JSON output format.
+/// Field names match Docker CLI JSON output exactly (PascalCase).
+/// </summary>
+public sealed record DockerStatsOutput(
+    string? ID,
+    string? Name,
+    string? CPUPerc,
+    string? MemUsage,
+    string? MemPerc,
+    string? NetIO,
+    string? BlockIO,
+    string? PIDs);
+
+/// <summary>
 /// Source-generated JSON serializer context for Docker Manager DTOs.
 /// Enables Native AOT compatibility by avoiding runtime reflection.
 /// </summary>
@@ -43,7 +100,13 @@ public sealed record DockerPsOutput(
 [JsonSerializable(typeof(List<ContainerInfo>))]
 [JsonSerializable(typeof(DockerErrorResponse))]
 [JsonSerializable(typeof(DockerActionResponse))]
+[JsonSerializable(typeof(DockerLogsResult))]
+[JsonSerializable(typeof(DockerExecResult))]
+[JsonSerializable(typeof(DockerStatsInfo))]
+[JsonSerializable(typeof(List<DockerStatsInfo>))]
+[JsonSerializable(typeof(DockerComposeActionResponse))]
 [JsonSerializable(typeof(DockerPsOutput))]
+[JsonSerializable(typeof(DockerStatsOutput))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 public sealed partial class DockerJsonContext : JsonSerializerContext
 {
@@ -54,6 +117,7 @@ public sealed partial class DockerJsonContext : JsonSerializerContext
 /// Docker CLI outputs property names in PascalCase.
 /// </summary>
 [JsonSerializable(typeof(DockerPsOutput))]
+[JsonSerializable(typeof(DockerStatsOutput))]
 [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
 public sealed partial class DockerCliJsonContext : JsonSerializerContext
 {

@@ -15,6 +15,7 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { NodeUpdatePage } from "./pages/NodeUpdatePage";
 import { NetworkScannerPage } from "./pages/NetworkScannerPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
+import { DockerStudioPage } from "./pages/DockerStudioPage";
 import { Toaster } from "@/components/ui/sonner";
 
 // Create a client
@@ -41,6 +42,7 @@ function AppRoutes() {
         <Route path="/node-logs" element={<LogViewerPage />} />
         <Route path="/network" element={<NetworkScannerPage />} />
         <Route path="/monitoring" element={<MonitoringPage />} />
+        <Route path="/docker" element={<DockerStudioPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

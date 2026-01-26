@@ -71,5 +71,37 @@ public enum CommandType
     FileRead,
 
     /// <summary>Create a zip archive from multiple files/folders (file browser).</summary>
-    FileZip
+    FileZip,
+
+    // --- Docker management (append-only) ---
+
+    /// <summary>Start a Docker container.</summary>
+    DockerStart,
+
+    /// <summary>Stop a Docker container.</summary>
+    DockerStop,
+
+    /// <summary>Inspect a Docker container.</summary>
+    DockerInspect,
+
+    /// <summary>Read Docker container logs.</summary>
+    DockerLogs,
+
+    /// <summary>Read Docker container stats.</summary>
+    DockerStats,
+
+    /// <summary>Execute a command in a container.</summary>
+    DockerExec,
+
+    /// <summary>Remove a Docker container.</summary>
+    DockerRemove,
+
+    /// <summary>List Docker compose stacks.</summary>
+    ComposeList,
+
+    /// <summary>Bring up a Docker compose stack.</summary>
+    ComposeUp,
+
+    /// <summary>Bring down a Docker compose stack.</summary>
+    ComposeDown
 }

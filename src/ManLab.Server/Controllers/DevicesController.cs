@@ -844,7 +844,12 @@ public class DevicesController : ControllerBase
             using (doc)
             {
                 // Minimal per-command validation. (Detailed validation belongs in a dedicated command subsystem.)
-                if (commandType is CommandType.DockerRestart)
+                if (commandType is CommandType.DockerRestart
+                    or CommandType.DockerStart
+                    or CommandType.DockerStop
+                    or CommandType.DockerInspect
+                    or CommandType.DockerLogs
+                    or CommandType.DockerRemove)
                 {
                     if (doc.RootElement.ValueKind != JsonValueKind.Object)
                         return BadRequest("Payload must be a JSON object.");
@@ -858,6 +863,71 @@ public class DevicesController : ControllerBase
                     var containerId = containerIdEl.GetString()?.Trim();
                     if (string.IsNullOrWhiteSpace(containerId))
                         return BadRequest("Payload must include a non-empty 'containerId'.");
+                }
+
+                if (commandType is CommandType.DockerExec)
+                {
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                        return BadRequest("Payload must be a JSON object.");
+
+                    if (!doc.RootElement.TryGetProperty("containerId", out var containerIdEl) &&
+                        !doc.RootElement.TryGetProperty("ContainerId", out containerIdEl))
+                    {
+                        return BadRequest("Payload must include 'containerId'.");
+                    }
+
+                    var containerId = containerIdEl.GetString()?.Trim();
+                    if (string.IsNullOrWhiteSpace(containerId))
+                        return BadRequest("Payload must include a non-empty 'containerId'.");
+
+                    if (!doc.RootElement.TryGetProperty("command", out var commandEl) &&
+                        !doc.RootElement.TryGetProperty("Command", out commandEl))
+                    {
+                        return BadRequest("Payload must include 'command'.");
+                    }
+
+                    if (commandEl.ValueKind != JsonValueKind.Array)
+                        return BadRequest("'command' must be a JSON array of strings.");
+                }
+
+                if (commandType is CommandType.DockerStats)
+                {
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                        return BadRequest("Payload must be a JSON object.");
+
+                    if (doc.RootElement.TryGetProperty("containerId", out var containerIdEl) ||
+                        doc.RootElement.TryGetProperty("ContainerId", out containerIdEl))
+                    {
+                        var containerId = containerIdEl.GetString()?.Trim();
+                        if (string.IsNullOrWhiteSpace(containerId))
+                            return BadRequest("'containerId' must be non-empty when provided.");
+                    }
+                }
+
+                if (commandType is CommandType.ComposeUp or CommandType.ComposeDown)
+                {
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                        return BadRequest("Payload must be a JSON object.");
+
+                    if (!doc.RootElement.TryGetProperty("projectName", out var projectEl) &&
+                        !doc.RootElement.TryGetProperty("ProjectName", out projectEl))
+                    {
+                        return BadRequest("Payload must include 'projectName'.");
+                    }
+
+                    var projectName = projectEl.GetString()?.Trim();
+                    if (string.IsNullOrWhiteSpace(projectName))
+                        return BadRequest("Payload must include a non-empty 'projectName'.");
+
+                    if (!doc.RootElement.TryGetProperty("composeYaml", out var composeEl) &&
+                        !doc.RootElement.TryGetProperty("ComposeYaml", out composeEl))
+                    {
+                        return BadRequest("Payload must include 'composeYaml'.");
+                    }
+
+                    var composeYaml = composeEl.GetString();
+                    if (string.IsNullOrWhiteSpace(composeYaml))
+                        return BadRequest("Payload must include a non-empty 'composeYaml'.");
                 }
 
                 if (commandType is CommandType.Shell)
