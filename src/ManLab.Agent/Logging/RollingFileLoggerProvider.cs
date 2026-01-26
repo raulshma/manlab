@@ -19,6 +19,8 @@ internal sealed class RollingFileLoggerProvider : ILoggerProvider
     private StreamWriter? _writer;
     private long _approxBytes;
 
+    private const int StringBuilderCacheMax = 1024;
+
     public RollingFileLoggerProvider(string filePath, int maxBytes, int retainedFiles)
     {
         _filePath = filePath;
@@ -120,6 +122,51 @@ internal sealed class RollingFileLoggerProvider : ILoggerProvider
         }
     }
 
+    private static string FormatLevel(LogLevel level) => level switch
+    {
+        LogLevel.Trace => "TRACE",
+        LogLevel.Debug => "DEBUG",
+        LogLevel.Information => "INFO",
+        LogLevel.Warning => "WARN",
+        LogLevel.Error => "ERROR",
+        LogLevel.Critical => "CRIT",
+        _ => "NONE"
+    };
+
+    private static class StringBuilderCache
+    {
+        [ThreadStatic]
+        private static StringBuilder? _cached;
+
+        public static StringBuilder Acquire(int capacity)
+        {
+            var sb = _cached;
+            if (sb is not null)
+            {
+                _cached = null;
+                sb.Clear();
+                if (sb.Capacity < capacity)
+                {
+                    sb.Capacity = capacity;
+                }
+                return sb;
+            }
+
+            return new StringBuilder(capacity);
+        }
+
+        public static string GetStringAndRelease(StringBuilder sb)
+        {
+            var result = sb.ToString();
+            if (sb.Capacity <= StringBuilderCacheMax)
+            {
+                _cached = sb;
+            }
+
+            return result;
+        }
+    }
+
     internal void WriteLine(LogLevel level, string category, EventId eventId, string message, Exception? exception)
     {
         if (_writer is null)
@@ -128,10 +175,10 @@ internal sealed class RollingFileLoggerProvider : ILoggerProvider
         }
 
         var ts = DateTimeOffset.UtcNow.ToString("O");
-        var sb = new StringBuilder(256);
+        var sb = StringBuilderCache.Acquire(256);
         sb.Append(ts);
         sb.Append(' ');
-        sb.Append(level.ToString().ToUpperInvariant());
+        sb.Append(FormatLevel(level));
         sb.Append(' ');
         sb.Append(category);
 
@@ -157,7 +204,7 @@ internal sealed class RollingFileLoggerProvider : ILoggerProvider
         }
 
         sb.Append("\n");
-        var line = sb.ToString();
+        var line = StringBuilderCache.GetStringAndRelease(sb);
 
         lock (_lock)
         {

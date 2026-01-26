@@ -526,8 +526,14 @@ public sealed class ConnectionManager : IAsyncDisposable
             return false;
         }
 
-        var trimmed = logs.TrimStart();
-        if (!(trimmed.StartsWith('{') || trimmed.StartsWith('[')))
+        var trimmed = logs.AsSpan().TrimStart();
+        if (trimmed.IsEmpty)
+        {
+            return false;
+        }
+
+        var first = trimmed[0];
+        if (first is not '{' and not '[')
         {
             return false;
         }
@@ -558,7 +564,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.SendAsync("SendServiceStatusSnapshots", _nodeId, snapshots.ToList()).ConfigureAwait(false);
+            await _connection.SendAsync("SendServiceStatusSnapshots", _nodeId, snapshots).ConfigureAwait(false);
             _logger.LogDebug("Service status snapshots sent: {Count}", snapshots.Count);
         }
         catch (Exception ex)
@@ -585,7 +591,7 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-            await _connection.SendAsync("SendSmartDriveSnapshots", _nodeId, snapshots.ToList()).ConfigureAwait(false);
+            await _connection.SendAsync("SendSmartDriveSnapshots", _nodeId, snapshots).ConfigureAwait(false);
             _logger.LogDebug("SMART drive snapshots sent: {Count}", snapshots.Count);
         }
         catch (Exception ex)

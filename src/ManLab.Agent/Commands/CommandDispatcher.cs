@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
@@ -1320,21 +1321,30 @@ del ""%~f0""
             return string.Empty;
         }
 
-        var buffer = new byte[toRead];
-        var read = 0;
-        while (read < toRead)
-        {
-            var r = await fs.ReadAsync(buffer.AsMemory(read, toRead - read), cancellationToken).ConfigureAwait(false);
-            if (r <= 0) break;
-            read += r;
-        }
+        var pool = ArrayPool<byte>.Shared;
+        var buffer = pool.Rent(toRead);
 
-        if (read <= 0)
+        try
         {
-            return string.Empty;
-        }
+            var read = 0;
+            while (read < toRead)
+            {
+                var r = await fs.ReadAsync(buffer.AsMemory(read, toRead - read), cancellationToken).ConfigureAwait(false);
+                if (r <= 0) break;
+                read += r;
+            }
 
-        return System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+            if (read <= 0)
+            {
+                return string.Empty;
+            }
+
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+        }
+        finally
+        {
+            pool.Return(buffer);
+        }
     }
 
     private sealed record LogTailPayload(string Path, int? MaxBytes, int? DurationSeconds, int? PollMs, int? ChunkBytes);
@@ -1445,61 +1455,77 @@ del ""%~f0""
         var initialToRead = (int)Math.Min(maxBytes, remaining);
         var sent = 0;
 
+        var pool = ArrayPool<byte>.Shared;
+
         if (initialToRead > 0)
         {
-            var buffer = new byte[initialToRead];
-            var read = 0;
-            while (read < initialToRead)
+            var initialBuffer = pool.Rent(initialToRead);
+            try
             {
-                var r = await fs.ReadAsync(buffer.AsMemory(read, initialToRead - read), cancellationToken).ConfigureAwait(false);
-                if (r <= 0) break;
-                read += r;
-            }
+                var read = 0;
+                while (read < initialToRead)
+                {
+                    var r = await fs.ReadAsync(initialBuffer.AsMemory(read, initialToRead - read), cancellationToken).ConfigureAwait(false);
+                    if (r <= 0) break;
+                    read += r;
+                }
 
-            if (read > 0)
+                if (read > 0)
+                {
+                    var text = System.Text.Encoding.UTF8.GetString(initialBuffer, 0, read);
+                    // Stream as an in-progress chunk.
+                    await _updateStatusCallback(commandId, "InProgress", text).ConfigureAwait(false);
+                    sent += read;
+                }
+            }
+            finally
             {
-                var text = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
-                // Stream as an in-progress chunk.
-                await _updateStatusCallback(commandId, "InProgress", text).ConfigureAwait(false);
-                sent += read;
+                pool.Return(initialBuffer);
             }
         }
 
         // Follow for a bounded duration.
         var deadline = DateTime.UtcNow.AddSeconds(durationSeconds);
-        while (DateTime.UtcNow < deadline && sent < maxBytes)
+        var tailBuffer = pool.Rent(chunkBytes);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Check if the file grew; if so, read incrementally.
-            var newLen = fs.Length;
-            if (newLen > length)
+            while (DateTime.UtcNow < deadline && sent < maxBytes)
             {
-                var growth = newLen - length;
-                var allow = Math.Min((int)Math.Min(growth, maxBytes - sent), chunkBytes);
-                if (allow > 0)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Check if the file grew; if so, read incrementally.
+                var newLen = fs.Length;
+                if (newLen > length)
                 {
-                    var buffer = new byte[allow];
-                    var read = 0;
-                    while (read < allow)
+                    var growth = newLen - length;
+                    var allow = Math.Min((int)Math.Min(growth, maxBytes - sent), chunkBytes);
+                    if (allow > 0)
                     {
-                        var r = await fs.ReadAsync(buffer.AsMemory(read, allow - read), cancellationToken).ConfigureAwait(false);
-                        if (r <= 0) break;
-                        read += r;
-                    }
+                        var read = 0;
+                        while (read < allow)
+                        {
+                            var r = await fs.ReadAsync(tailBuffer.AsMemory(read, allow - read), cancellationToken).ConfigureAwait(false);
+                            if (r <= 0) break;
+                            read += r;
+                        }
 
-                    if (read > 0)
-                    {
-                        var text = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
-                        await _updateStatusCallback(commandId, "InProgress", text).ConfigureAwait(false);
-                        sent += read;
-                    }
+                        if (read > 0)
+                        {
+                            var text = System.Text.Encoding.UTF8.GetString(tailBuffer, 0, read);
+                            await _updateStatusCallback(commandId, "InProgress", text).ConfigureAwait(false);
+                            sent += read;
+                        }
 
-                    length = newLen;
+                        length = newLen;
+                    }
                 }
-            }
 
-            await Task.Delay(pollMs, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(pollMs, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            pool.Return(tailBuffer);
         }
 
         return $"Tail complete. Bytes streamed={sent}.";
@@ -1654,28 +1680,36 @@ del ""%~f0""
 
         static async Task ReadBoundedAsync(System.IO.StreamReader reader, System.Text.StringBuilder buffer, int maxChars, CancellationToken ct)
         {
-            var charBuffer = new char[1024];
-            while (true)
+            var pool = ArrayPool<char>.Shared;
+            var charBuffer = pool.Rent(1024);
+            try
             {
-                var read = await reader.ReadAsync(charBuffer.AsMemory(0, charBuffer.Length), ct).ConfigureAwait(false);
-                if (read <= 0) break;
-
-                lock (buffer)
+                while (true)
                 {
-                    var remaining = maxChars - buffer.Length;
-                    if (remaining <= 0)
+                    var read = await reader.ReadAsync(charBuffer.AsMemory(0, charBuffer.Length), ct).ConfigureAwait(false);
+                    if (read <= 0) break;
+
+                    lock (buffer)
                     {
-                        continue;
+                        var remaining = maxChars - buffer.Length;
+                        if (remaining <= 0)
+                        {
+                            continue;
+                        }
+
+                        var toAppend = Math.Min(remaining, read);
+                        buffer.Append(charBuffer, 0, toAppend);
                     }
 
-                    var toAppend = Math.Min(remaining, read);
-                    buffer.Append(charBuffer, 0, toAppend);
+                    if (buffer.Length >= maxChars)
+                    {
+                        return;
+                    }
                 }
-
-                if (buffer.Length >= maxChars)
-                {
-                    return;
-                }
+            }
+            finally
+            {
+                pool.Return(charBuffer);
             }
         }
 
