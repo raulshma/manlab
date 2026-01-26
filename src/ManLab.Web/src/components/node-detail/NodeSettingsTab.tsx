@@ -226,9 +226,11 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
   const isCommandComplete = commandStatus === "Completed" || commandStatus === "Failed" || commandStatus === "Cancelled";
 
   // Auto-scroll to bottom when new logs arrive
+  // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    const viewport = logContainerRef.current?.closest("[data-slot='scroll-area-viewport']");
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight;
     }
   }, [activeLogs.length]);
 

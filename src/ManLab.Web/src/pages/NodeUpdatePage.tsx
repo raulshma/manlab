@@ -354,9 +354,11 @@ export function NodeUpdatePage() {
   }, [connection, machine, nodeId, queryClient]);
 
   // Auto-scroll logs
+  // Auto-scroll logs
   useEffect(() => {
-    if (logScrollRef.current) {
-      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
+    const viewport = logScrollRef.current?.closest("[data-slot='scroll-area-viewport']");
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight;
     }
   }, [logs.length]);
 
