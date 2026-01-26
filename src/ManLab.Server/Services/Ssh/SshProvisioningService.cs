@@ -694,13 +694,25 @@ public sealed class SshProvisioningService
             "if ! command -v bash >/dev/null 2>&1; then echo 'Need bash' 1>&2; exit 2; fi; " +
             $"URL='{safeUrl}'; " +
             // Prefer explicit template path for portability across mktemp variants.
-            "TMP=\"$(mktemp /tmp/manlab-install.XXXXXX)\"; " +
+            "TMP_BASE=\"\"; " +
+            "if [ -n \"${TMPDIR:-}\" ] && [ -d \"${TMPDIR}\" ] && [ -w \"${TMPDIR}\" ]; then TMP_BASE=\"$TMPDIR\"; " +
+            "elif [ -d /var/tmp ] && [ -w /var/tmp ]; then TMP_BASE=/var/tmp; " +
+            "elif [ -n \"${HOME:-}\" ] && [ -d \"${HOME}\" ] && [ -w \"${HOME}\" ]; then TMP_BASE=\"$HOME\"; " +
+            "else TMP_BASE=/tmp; fi; " +
+            "TMP=\"$(mktemp \"$TMP_BASE/manlab-install.XXXXXX\" 2>/dev/null || mktemp /tmp/manlab-install.XXXXXX)\"; " +
             "if [ -z \"$TMP\" ]; then echo 'mktemp produced empty TMP' 1>&2; exit 2; fi; " +
             // Use a double-quoted trap body so we don't need single quotes inside the single-quoted script.
             "trap \"rm -f \\\"$TMP\\\"\" EXIT; " +
-            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; " +
-            "elif command -v wget >/dev/null 2>&1; then wget -q --timeout=120 -O \"$TMP\" \"$URL\"; " +
+            "DOWNLOADED=0; " +
+            "if command -v curl >/dev/null 2>&1; then if curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; then DOWNLOADED=1; fi; " +
+            "elif command -v wget >/dev/null 2>&1; then if wget -q --timeout=120 -O \"$TMP\" \"$URL\"; then DOWNLOADED=1; fi; " +
             "else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
+            "if [ \"$DOWNLOADED\" -ne 1 ]; then echo 'Download to temp failed; falling back to streaming install.' 1>&2; " +
+            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" | " +
+            $"{sudoPrefix}bash -s -- --server '{safeServer}'{tokenArg}{forceArg}{(string.IsNullOrWhiteSpace(extraInstallerArgs) ? string.Empty : extraInstallerArgs)}; " +
+            "elif command -v wget >/dev/null 2>&1; then wget -qO- --timeout=120 \"$URL\" | " +
+            $"{sudoPrefix}bash -s -- --server '{safeServer}'{tokenArg}{forceArg}{(string.IsNullOrWhiteSpace(extraInstallerArgs) ? string.Empty : extraInstallerArgs)}; " +
+            "else echo 'Need curl or wget' 1>&2; exit 2; fi; exit $?; fi; " +
             // Defensive: strip CR if the script was served with CRLF (common when the server runs on Windows).
             "if command -v sed >/dev/null 2>&1; then sed -i 's/\r$//' \"$TMP\" 2>/dev/null || true; " +
             "else tr -d '\\r' < \"$TMP\" > \"$TMP.clean\" && mv -f \"$TMP.clean\" \"$TMP\"; fi; " +
@@ -862,12 +874,24 @@ public sealed class SshProvisioningService
             "set -euo pipefail; " +
             "if ! command -v bash >/dev/null 2>&1; then echo 'Need bash' 1>&2; exit 2; fi; " +
             $"URL='{safeUrl}'; " +
-            "TMP=\"$(mktemp /tmp/manlab-install.XXXXXX)\"; " +
+            "TMP_BASE=\"\"; " +
+            "if [ -n \"${TMPDIR:-}\" ] && [ -d \"${TMPDIR}\" ] && [ -w \"${TMPDIR}\" ]; then TMP_BASE=\"$TMPDIR\"; " +
+            "elif [ -d /var/tmp ] && [ -w /var/tmp ]; then TMP_BASE=/var/tmp; " +
+            "elif [ -n \"${HOME:-}\" ] && [ -d \"${HOME}\" ] && [ -w \"${HOME}\" ]; then TMP_BASE=\"$HOME\"; " +
+            "else TMP_BASE=/tmp; fi; " +
+            "TMP=\"$(mktemp \"$TMP_BASE/manlab-install.XXXXXX\" 2>/dev/null || mktemp /tmp/manlab-install.XXXXXX)\"; " +
             "if [ -z \"$TMP\" ]; then echo 'mktemp produced empty TMP' 1>&2; exit 2; fi; " +
             "trap \"rm -f \\\"$TMP\\\"\" EXIT; " +
-            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; " +
-            "elif command -v wget >/dev/null 2>&1; then wget -q --timeout=120 -O \"$TMP\" \"$URL\"; " +
+            "DOWNLOADED=0; " +
+            "if command -v curl >/dev/null 2>&1; then if curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; then DOWNLOADED=1; fi; " +
+            "elif command -v wget >/dev/null 2>&1; then if wget -q --timeout=120 -O \"$TMP\" \"$URL\"; then DOWNLOADED=1; fi; " +
             "else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
+            "if [ \"$DOWNLOADED\" -ne 1 ]; then echo 'Download to temp failed; falling back to streaming uninstall.' 1>&2; " +
+            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" | " +
+            $"{sudoPrefix}bash -s -- --uninstall; " +
+            "elif command -v wget >/dev/null 2>&1; then wget -qO- --timeout=120 \"$URL\" | " +
+            $"{sudoPrefix}bash -s -- --uninstall; " +
+            "else echo 'Need curl or wget' 1>&2; exit 2; fi; exit $?; fi; " +
             "if command -v sed >/dev/null 2>&1; then sed -i 's/\r$//' \"$TMP\" 2>/dev/null || true; " +
             "else tr -d '\\r' < \"$TMP\" > \"$TMP.clean\" && mv -f \"$TMP.clean\" \"$TMP\"; fi; " +
             "chmod +x \"$TMP\"; " +
@@ -884,12 +908,22 @@ public sealed class SshProvisioningService
             "set -euo pipefail; " +
             "if ! command -v bash >/dev/null 2>&1; then echo 'Need bash' 1>&2; exit 2; fi; " +
             $"URL='{safeUrl}'; " +
-            "TMP=\"$(mktemp /tmp/manlab-install.XXXXXX)\"; " +
+            "TMP_BASE=\"\"; " +
+            "if [ -n \"${TMPDIR:-}\" ] && [ -d \"${TMPDIR}\" ] && [ -w \"${TMPDIR}\" ]; then TMP_BASE=\"$TMPDIR\"; " +
+            "elif [ -d /var/tmp ] && [ -w /var/tmp ]; then TMP_BASE=/var/tmp; " +
+            "elif [ -n \"${HOME:-}\" ] && [ -d \"${HOME}\" ] && [ -w \"${HOME}\" ]; then TMP_BASE=\"$HOME\"; " +
+            "else TMP_BASE=/tmp; fi; " +
+            "TMP=\"$(mktemp \"$TMP_BASE/manlab-install.XXXXXX\" 2>/dev/null || mktemp /tmp/manlab-install.XXXXXX)\"; " +
             "if [ -z \"$TMP\" ]; then echo 'mktemp produced empty TMP' 1>&2; exit 2; fi; " +
             "trap \"rm -f \\\"$TMP\\\"\" EXIT; " +
-            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; " +
-            "elif command -v wget >/dev/null 2>&1; then wget -q --timeout=120 -O \"$TMP\" \"$URL\"; " +
+            "DOWNLOADED=0; " +
+            "if command -v curl >/dev/null 2>&1; then if curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" -o \"$TMP\"; then DOWNLOADED=1; fi; " +
+            "elif command -v wget >/dev/null 2>&1; then if wget -q --timeout=120 -O \"$TMP\" \"$URL\"; then DOWNLOADED=1; fi; " +
             "else echo 'Need curl or wget' 1>&2; exit 2; fi; " +
+            "if [ \"$DOWNLOADED\" -ne 1 ]; then echo 'Download to temp failed; falling back to streaming preview.' 1>&2; " +
+            "if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 5 --max-time 120 \"$URL\" | bash -s -- --preview-uninstall; " +
+            "elif command -v wget >/dev/null 2>&1; then wget -qO- --timeout=120 \"$URL\" | bash -s -- --preview-uninstall; " +
+            "else echo 'Need curl or wget' 1>&2; exit 2; fi; exit $?; fi; " +
             "if command -v sed >/dev/null 2>&1; then sed -i 's/\r$//' \"$TMP\" 2>/dev/null || true; " +
             "else tr -d '\\r' < \"$TMP\" > \"$TMP.clean\" && mv -f \"$TMP.clean\" \"$TMP\"; fi; " +
             "chmod +x \"$TMP\"; " +

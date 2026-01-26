@@ -34,14 +34,14 @@ public sealed class ProcessTelemetryCollector
             return list;
         }
 
-        list.Capacity = Math.Max(list.Capacity, processes.Length);
+        list.Capacity = processes.Length;
 
         foreach (var process in processes)
         {
             try
             {
                 var pid = process.Id;
-            activePids.Add(pid);
+                activePids.Add(pid);
                 var cpuPercent = TryComputeCpuPercent(pid, process, now);
                 var memoryBytes = process.WorkingSet64;
 
@@ -65,36 +65,81 @@ public sealed class ProcessTelemetryCollector
 
         if (activePids.Count > 0 && _cpuSamples.Count > activePids.Count)
         {
-            foreach (var pid in _cpuSamples.Keys.ToArray())
+            List<int>? toRemove = null;
+            foreach (var pid in _cpuSamples.Keys)
             {
                 if (!activePids.Contains(pid))
+                {
+                    toRemove ??= new List<int>();
+                    toRemove.Add(pid);
+                }
+            }
+
+            if (toRemove is not null)
+            {
+                foreach (var pid in toRemove)
                 {
                     _cpuSamples.Remove(pid);
                 }
             }
         }
 
-        var topByCpu = list
-            .Where(p => p.CpuPercent.HasValue)
-            .OrderByDescending(p => p.CpuPercent)
-            .Take(maxItems)
-            .Select(p => p.ProcessId)
-            .ToHashSet();
+        if (list.Count == 0)
+        {
+            return list;
+        }
 
-        var topByMem = list
-            .OrderByDescending(p => p.MemoryBytes ?? 0)
-            .Take(maxItems)
-            .Select(p => p.ProcessId)
-            .ToHashSet();
+        var max = Math.Max(1, maxItems);
+        var selectedIds = new HashSet<int>();
 
-        var selectedIds = topByCpu.Union(topByMem).ToHashSet();
+        var byCpu = list.ToArray();
+        Array.Sort(byCpu, static (a, b) => (b.CpuPercent ?? -1).CompareTo(a.CpuPercent ?? -1));
+        var cpuCount = 0;
+        for (var i = 0; i < byCpu.Length && cpuCount < max; i++)
+        {
+            if (!byCpu[i].CpuPercent.HasValue)
+            {
+                continue;
+            }
 
-        return list
-            .Where(p => selectedIds.Contains(p.ProcessId))
-            .OrderByDescending(p => p.CpuPercent ?? -1)
-            .ThenByDescending(p => p.MemoryBytes ?? 0)
-            .Take(Math.Max(1, maxItems))
-            .ToList();
+            if (selectedIds.Add(byCpu[i].ProcessId))
+            {
+                cpuCount++;
+            }
+        }
+
+        Array.Sort(byCpu, static (a, b) => (b.MemoryBytes ?? 0).CompareTo(a.MemoryBytes ?? 0));
+        for (var i = 0; i < byCpu.Length && selectedIds.Count < max * 2; i++)
+        {
+            selectedIds.Add(byCpu[i].ProcessId);
+        }
+
+        var result = new List<ProcessTelemetry>(Math.Min(list.Count, max * 2));
+        foreach (var item in list)
+        {
+            if (selectedIds.Contains(item.ProcessId))
+            {
+                result.Add(item);
+            }
+        }
+
+        result.Sort(static (a, b) =>
+        {
+            var cpuCompare = (b.CpuPercent ?? -1).CompareTo(a.CpuPercent ?? -1);
+            if (cpuCompare != 0)
+            {
+                return cpuCompare;
+            }
+
+            return (b.MemoryBytes ?? 0).CompareTo(a.MemoryBytes ?? 0);
+        });
+
+        if (result.Count > max)
+        {
+            result.RemoveRange(max, result.Count - max);
+        }
+
+        return result;
     }
 
     private float? TryComputeCpuPercent(int pid, Process process, DateTime now)
