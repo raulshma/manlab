@@ -19,7 +19,7 @@ public sealed class AuthTokenService
         _logger = logger;
     }
 
-    public AuthTokenResult CreateToken(string subject, string role)
+    public AuthTokenResult CreateToken(string subject, string role, bool passwordMustChange = false)
     {
         if (string.IsNullOrWhiteSpace(_options.JwtSigningKey))
         {
@@ -45,6 +45,11 @@ public sealed class AuthTokenService
             new(ClaimTypes.Role, role),
             new("auth_method", "password")
         };
+
+        if (passwordMustChange)
+        {
+            claims.Add(new Claim("password_must_change", "true"));
+        }
 
         var token = new JwtSecurityToken(
             issuer: _options.Issuer,

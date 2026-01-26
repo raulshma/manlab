@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Home, Server, Settings, Activity, FileText, Folder, BarChart3, Network, Radar, Boxes } from "lucide-react"
+import { Home, Server, Settings, Activity, FileText, Folder, BarChart3, Network, Radar, Boxes, Users } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 
 import {
@@ -16,9 +16,12 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar"
 import { ConnectionStatus } from "@/components/ConnectionStatus"
+import { useAuth } from "@/auth/AuthContext"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const location = useLocation()
+  const { status } = useAuth()
+  const isAdmin = status?.role === "Admin"
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -90,6 +93,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <span>Logs</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {isAdmin && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton render={<NavLink to="/users" />} isActive={location.pathname.startsWith("/users")}>
+                    <Users />
+                    <span>Users</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
               <SidebarMenuItem>
                 <SidebarMenuButton render={<NavLink to="/settings" />} isActive={location.pathname.startsWith("/settings")}>
                   <Settings />

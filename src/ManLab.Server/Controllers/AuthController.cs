@@ -16,6 +16,7 @@ public class AuthController : ControllerBase
     private readonly LocalBypassEvaluator _localBypassEvaluator;
     private readonly AuthTokenService _tokenService;
     private readonly PasswordHasher<string> _passwordHasher;
+    private readonly UsersService _usersService;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
@@ -23,12 +24,14 @@ public class AuthController : ControllerBase
         LocalBypassEvaluator localBypassEvaluator,
         AuthTokenService tokenService,
         PasswordHasher<string> passwordHasher,
+        UsersService usersService,
         ILogger<AuthController> logger)
     {
         _settingsService = settingsService;
         _localBypassEvaluator = localBypassEvaluator;
         _tokenService = tokenService;
         _passwordHasher = passwordHasher;
+        _usersService = usersService;
         _logger = logger;
     }
 
@@ -42,16 +45,33 @@ public class AuthController : ControllerBase
         var passwordHash = await _settingsService.GetValueAsync(SettingKeys.Auth.AdminPasswordHash);
         var clientIsLocal = await _localBypassEvaluator.IsClientInLocalRangeAsync(HttpContext);
 
+        // Check if we need to migrate from SystemSettings to Users table
+        if (!string.IsNullOrWhiteSpace(passwordHash))
+        {
+            await _usersService.MigrateAdminFromSettingsAsync(passwordHash);
+            // Clear the old setting after migration
+            await _settingsService.SetValueAsync(SettingKeys.Auth.AdminPasswordHash, "", "Auth", "Migrated to Users table.");
+        }
+
+        // Check password status based on existing users
+        var hasUsers = await _usersService.GetAllUsersAsync();
+        var passwordSet = hasUsers.Any();
+        var needsSetup = await _usersService.NeedsInitialAdminAsync();
+
         return Ok(new AuthStatusResponse
         {
             AuthEnabled = authEnabled,
-            PasswordSet = !string.IsNullOrWhiteSpace(passwordHash),
+            PasswordSet = passwordSet,
+            NeedsSetup = needsSetup,
             LocalBypassEnabled = bypassEnabled,
             LocalBypassCidrs = string.IsNullOrWhiteSpace(cidrs) ? null : cidrs,
             ClientIp = HttpContext.Connection.RemoteIpAddress?.ToString(),
             ClientIsLocal = clientIsLocal,
             IsAuthenticated = User?.Identity?.IsAuthenticated == true,
-            AuthMethod = User?.FindFirst("auth_method")?.Value
+            AuthMethod = User?.FindFirst("auth_method")?.Value,
+            Username = User?.FindFirst(ClaimTypes.Name)?.Value,
+            Role = User?.FindFirst(ClaimTypes.Role)?.Value,
+            PasswordMustChange = User?.FindFirst("password_must_change")?.Value == "true"
         });
     }
 
@@ -65,46 +85,40 @@ public class AuthController : ControllerBase
             return Forbid();
         }
 
-        if (string.IsNullOrWhiteSpace(request.Password))
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
         {
-            return BadRequest("Password is required.");
+            return BadRequest("Username and password are required.");
         }
 
-        var existingHash = await _settingsService.GetValueAsync(SettingKeys.Auth.AdminPasswordHash);
-        if (!string.IsNullOrWhiteSpace(existingHash))
+        try
         {
-            return Conflict("Password already set.");
+            var user = await _usersService.CreateInitialAdminAsync(request.Username, request.Password);
+            await _settingsService.SetValueAsync(SettingKeys.Auth.Enabled, "true", "Auth", "Require authentication for dashboard/API.");
+
+            return await IssueTokenAsync(user.Username, user.Role.ToString());
         }
-
-        var hash = _passwordHasher.HashPassword("admin", request.Password);
-        await _settingsService.SetValueAsync(SettingKeys.Auth.AdminPasswordHash, hash, "Auth", "Hashed admin password.");
-        await _settingsService.SetValueAsync(SettingKeys.Auth.Enabled, "true", "Auth", "Require authentication for dashboard/API.");
-
-        return await IssueTokenAsync();
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ex.Message);
+        }
     }
 
     [HttpPost("login")]
     [AllowAnonymous]
     public async Task<ActionResult<AuthLoginResponse>> Login([FromBody] AuthLoginRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Password))
+        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
         {
-            return BadRequest("Password is required.");
+            return BadRequest("Username and password are required.");
         }
 
-        var passwordHash = await _settingsService.GetValueAsync(SettingKeys.Auth.AdminPasswordHash);
-        if (string.IsNullOrWhiteSpace(passwordHash))
+        var (user, success) = await _usersService.VerifyCredentialsAsync(request.Username, request.Password);
+        if (!success || user == null)
         {
-            return Conflict("Password has not been set.");
+            return Unauthorized("Invalid username or password.");
         }
 
-        var result = _passwordHasher.VerifyHashedPassword("admin", passwordHash, request.Password);
-        if (result == PasswordVerificationResult.Failed)
-        {
-            return Unauthorized();
-        }
-
-        return await IssueTokenAsync();
+        return await IssueTokenAsync(user.Username, user.Role.ToString(), user.PasswordMustChange);
     }
 
     [HttpPost("change-password")]
@@ -116,21 +130,25 @@ public class AuthController : ControllerBase
             return BadRequest("New password is required.");
         }
 
-        var passwordHash = await _settingsService.GetValueAsync(SettingKeys.Auth.AdminPasswordHash);
-        if (string.IsNullOrWhiteSpace(passwordHash))
-        {
-            return Conflict("Password has not been set.");
-        }
-
-        var result = _passwordHasher.VerifyHashedPassword("admin", passwordHash, request.CurrentPassword ?? string.Empty);
-        if (result == PasswordVerificationResult.Failed)
+        var username = User.FindFirst(ClaimTypes.Name)?.Value;
+        if (string.IsNullOrWhiteSpace(username))
         {
             return Unauthorized();
         }
 
-        var newHash = _passwordHasher.HashPassword("admin", request.NewPassword);
-        await _settingsService.SetValueAsync(SettingKeys.Auth.AdminPasswordHash, newHash, "Auth", "Hashed admin password.");
-        return await IssueTokenAsync();
+        var user = await _usersService.GetUserByUsernameAsync(username);
+        if (user == null)
+        {
+            return NotFound("User not found.");
+        }
+
+        var success = await _usersService.ChangePasswordAsync(user.Id, request.CurrentPassword ?? string.Empty, request.NewPassword);
+        if (!success)
+        {
+            return Unauthorized("Current password is incorrect.");
+        }
+
+        return await IssueTokenAsync(user.Username, user.Role.ToString(), false);
     }
 
     [HttpPost("logout")]
@@ -141,11 +159,11 @@ public class AuthController : ControllerBase
         return Ok();
     }
 
-    private async Task<ActionResult<AuthLoginResponse>> IssueTokenAsync()
+    private async Task<ActionResult<AuthLoginResponse>> IssueTokenAsync(string username, string role, bool passwordMustChange = false)
     {
         try
         {
-            var token = _tokenService.CreateToken("admin", "Admin");
+            var token = _tokenService.CreateToken(username, role);
             var cookieOptions = new CookieOptions
             {
                 HttpOnly = true,
@@ -160,7 +178,10 @@ public class AuthController : ControllerBase
             {
                 Token = token.Token,
                 ExpiresAtUtc = token.ExpiresAtUtc,
-                AuthEnabled = authEnabled
+                AuthEnabled = authEnabled,
+                Username = username,
+                Role = role,
+                PasswordMustChange = passwordMustChange
             });
         }
         catch (Exception ex)
@@ -174,21 +195,27 @@ public class AuthController : ControllerBase
     {
         public bool AuthEnabled { get; set; }
         public bool PasswordSet { get; set; }
+        public bool NeedsSetup { get; set; }
         public bool LocalBypassEnabled { get; set; }
         public string? LocalBypassCidrs { get; set; }
         public string? ClientIp { get; set; }
         public bool ClientIsLocal { get; set; }
         public bool IsAuthenticated { get; set; }
         public string? AuthMethod { get; set; }
+        public string? Username { get; set; }
+        public string? Role { get; set; }
+        public bool PasswordMustChange { get; set; }
     }
 
     public sealed class AuthLoginRequest
     {
+        public string Username { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;
     }
 
     public sealed class AuthSetupRequest
     {
+        public string Username { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;
     }
 
@@ -203,5 +230,8 @@ public class AuthController : ControllerBase
         public string Token { get; set; } = string.Empty;
         public DateTime ExpiresAtUtc { get; set; }
         public bool AuthEnabled { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public string Role { get; set; } = string.Empty;
+        public bool PasswordMustChange { get; set; }
     }
 }

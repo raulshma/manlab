@@ -16,12 +16,16 @@ const TOKEN_EXP_KEY = "manlab:auth_expires_at";
 export interface AuthStatus {
   authEnabled: boolean;
   passwordSet: boolean;
+  needsSetup: boolean;
   localBypassEnabled: boolean;
   localBypassCidrs: string | null;
   clientIp: string | null;
   clientIsLocal: boolean;
   isAuthenticated: boolean;
   authMethod: string | null;
+  username: string | null;
+  role: string | null;
+  passwordMustChange: boolean;
 }
 
 interface AuthContextValue {
@@ -29,8 +33,8 @@ interface AuthContextValue {
   loading: boolean;
   token: string | null;
   refreshStatus: () => Promise<void>;
-  login: (password: string) => Promise<void>;
-  setup: (password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
+  setup: (username: string, password: string) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -81,10 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(
-    async (password: string) => {
-      const { data } = await api.post<{ token: string; expiresAtUtc: string }>(
+    async (username: string, password: string) => {
+      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean }>(
         "/api/auth/login",
-        { password }
+        { username, password }
       );
       persistToken(data.token, data.expiresAtUtc);
       await refreshStatus();
@@ -94,21 +98,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const setup = useCallback(
-    async (password: string) => {
-      const { data } = await api.post<{ token: string; expiresAtUtc: string }>(
+    async (username: string, password: string) => {
+      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean }>(
         "/api/auth/setup",
-        { password }
+        { username, password }
       );
       persistToken(data.token, data.expiresAtUtc);
       await refreshStatus();
-      toast.success("Password set and signed in");
+      toast.success("Admin account created and signed in");
     },
     [persistToken, refreshStatus]
   );
 
   const changePassword = useCallback(
     async (currentPassword: string, newPassword: string) => {
-      const { data } = await api.post<{ token: string; expiresAtUtc: string }>(
+      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean }>(
         "/api/auth/change-password",
         { currentPassword, newPassword }
       );

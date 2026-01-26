@@ -41,7 +41,7 @@ public sealed class LocalBypassEvaluator
             return LocalBypassDecision.Deny("local-bypass-disabled");
         }
 
-        var ip = httpContext.Connection.RemoteIpAddress;
+        var ip = NormalizeIp(httpContext.Connection.RemoteIpAddress);
         if (ip is null)
         {
             return LocalBypassDecision.Deny("missing-client-ip");
@@ -67,7 +67,7 @@ public sealed class LocalBypassEvaluator
 
     public async Task<bool> IsClientInLocalRangeAsync(HttpContext httpContext)
     {
-        var ip = httpContext.Connection.RemoteIpAddress;
+        var ip = NormalizeIp(httpContext.Connection.RemoteIpAddress);
         if (ip is null)
         {
             return false;
@@ -101,6 +101,16 @@ public sealed class LocalBypassEvaluator
         }
 
         return list;
+    }
+
+    private static IPAddress? NormalizeIp(IPAddress? address)
+    {
+        if (address is null)
+        {
+            return null;
+        }
+
+        return address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
     }
 
     public sealed record LocalBypassDecision(bool Allowed, string Reason, string? MatchedCidr)

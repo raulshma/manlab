@@ -13,6 +13,7 @@ using ManLab.Server.Services.Security;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
@@ -93,6 +94,9 @@ builder.Services.AddSingleton<IOptions<AuthOptions>>(Options.Create(authOptions)
 builder.Services.AddSingleton<AuthTokenService>();
 builder.Services.AddSingleton<LocalBypassEvaluator>();
 builder.Services.AddSingleton<PasswordHasher<string>>();
+builder.Services.AddScoped<UsersService>();
+builder.Services.AddSingleton<IAuthorizationHandler, AdminOrLocalBypassHandler>();
+builder.Services.AddSingleton<IAuthorizationHandler, PasswordChangeRequiredHandler>();
 
 builder.Services
     .AddAuthentication(options =>
@@ -149,9 +153,16 @@ builder.Services
 
 builder.Services.AddAuthorization(options =>
 {
+    options.AddPolicy("AdminOnly", policy =>
+    {
+        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, LocalBypassAuthenticationHandler.SchemeName)
+            .AddRequirements(new AdminOrLocalBypassRequirement());
+    });
+
     options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
         .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, LocalBypassAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
+        .AddRequirements(new PasswordChangeRequiredRequirement())
         .Build();
 });
 

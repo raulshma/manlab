@@ -44,6 +44,9 @@ public class DataContext : DbContext
     /// <summary>Per-node configuration settings.</summary>
     public DbSet<NodeSetting> NodeSettings => Set<NodeSetting>();
 
+    /// <summary>User accounts for the system.</summary>
+    public DbSet<User> Users => Set<User>();
+
     // Enhancements
     public DbSet<ServiceMonitorConfig> ServiceMonitorConfigs => Set<ServiceMonitorConfig>();
     public DbSet<ServiceStatusSnapshot> ServiceStatusSnapshots => Set<ServiceStatusSnapshot>();
@@ -169,6 +172,14 @@ public class DataContext : DbContext
                 .WithMany()
                 .HasForeignKey(e => e.NodeId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // User authentication
+        modelBuilder.Entity<User>(entity =>
+        {
+            entity.HasIndex(e => e.Username).IsUnique();
+            entity.HasIndex(e => e.Role);
+            entity.HasIndex(e => e.CreatedAt);
         });
 
         // Enhancements: File browser policies

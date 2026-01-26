@@ -11,6 +11,10 @@ export function AppLayout() {
   const location = useLocation();
   const { status, logout } = useAuth();
 
+  // Don't show logout button if auth is disabled or using local bypass
+  const isLocalBypass = status?.authMethod === "local-bypass";
+  const showLogoutButton = status?.authEnabled && status.isAuthenticated && !isLocalBypass;
+
   // Reset header state on route change
   useEffect(() => {
     const header = document.getElementById("app-header");
@@ -30,11 +34,11 @@ export function AppLayout() {
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-2 h-4" />
           <div className="ml-auto flex items-center gap-2">
-            {status?.authEnabled && status.isAuthenticated && (
+            {showLogoutButton ? (
               <Button variant="ghost" size="sm" onClick={logout}>
                 Sign out
               </Button>
-            )}
+            ) : null}
             <ModeToggle />
           </div>
         </header>

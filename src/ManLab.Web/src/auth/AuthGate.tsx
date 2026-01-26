@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,9 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "./AuthContext";
+import { useNavigate } from "react-router-dom";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const { status, loading, login, setup } = useAuth();
+  const navigate = useNavigate();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -16,6 +19,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [skipSetup, setSkipSetup] = useState(() =>
     localStorage.getItem("manlab:skip_auth_setup") === "true"
   );
+
+  // Check if password change is required and redirect
+  useEffect(() => {
+    if (status?.isAuthenticated && status.passwordMustChange) {
+      navigate("/change-password");
+    }
+  }, [status, navigate]);
 
   if (loading) {
     return (
@@ -29,13 +39,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  const needsSetup = !status.passwordSet;
+  const needsSetup = status.needsSetup;
   const canSetup = status.clientIsLocal;
   const shouldOfferSetup = !status.authEnabled && needsSetup && canSetup && !skipSetup;
   const mustSetup = status.authEnabled && needsSetup;
   const mustLogin = status.authEnabled && !needsSetup && !status.isAuthenticated;
 
-  if (status.isAuthenticated) {
+  if (status.isAuthenticated && !status.passwordMustChange) {
     return <>{children}</>;
   }
 
@@ -52,6 +62,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
     try {
       if (isSetupMode) {
+        if (!username || username.length < 2) {
+          setError("Username must be at least 2 characters.");
+          return;
+        }
         if (!password || password.length < 4) {
           setError("Password must be at least 4 characters.");
           return;
@@ -60,9 +74,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
           setError("Passwords do not match.");
           return;
         }
-        await setup(password);
+        await setup(username, password);
       } else {
-        await login(password);
+        if (!username || !password) {
+          setError("Username and password are required.");
+          return;
+        }
+        await login(username, password);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
@@ -75,23 +93,34 @@ export function AuthGate({ children }: { children: ReactNode }) {
     <div className="flex h-svh items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>{isSetupMode ? "Set Admin Password" : "Sign in"}</CardTitle>
+          <CardTitle>{isSetupMode ? "Create Admin Account" : "Sign in"}</CardTitle>
           <CardDescription>
             {isSetupMode
               ? (status.authEnabled
-                ? "Create the initial admin password to secure your ManLab dashboard."
-                : "Set an admin password to enable secure access. You can skip this for now.")
-              : "Enter your admin password to access the dashboard."}
+                ? "Create the initial admin account to secure your ManLab dashboard."
+                : "Create an admin account to enable secure access. You can skip this for now.")
+              : "Enter your credentials to access the dashboard."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {isSetupMode && !canSetup && (
             <Alert variant="destructive">
               <AlertDescription>
-                Admin password setup is only available from a local network connection.
+                Admin account setup is only available from a local network connection.
               </AlertDescription>
             </Alert>
           )}
+          <div className="grid gap-2">
+            <Label htmlFor="username">Username</Label>
+            <Input
+              id="username"
+              type="text"
+              autoComplete={isSetupMode ? "username" : "username"}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              disabled={isSetupMode && !canSetup}
+            />
+          </div>
           <div className="grid gap-2">
             <Label htmlFor="password">Password</Label>
             <Input
@@ -123,7 +152,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
           )}
           <Button className="w-full" onClick={handleSubmit} disabled={submitting || (isSetupMode && !canSetup)}>
             {submitting && <Spinner className="mr-2 h-4 w-4" />}
-            {isSetupMode ? "Set Password" : "Sign in"}
+            {isSetupMode ? "Create Account" : "Sign in"}
           </Button>
           {allowSkip && (
             <Button
