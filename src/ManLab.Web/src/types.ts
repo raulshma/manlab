@@ -310,6 +310,7 @@ export interface LocalAgentStatus {
   isInstalled: boolean;
   isRunning: boolean;
   linkedNodeId: string | null;
+  agentVersion: string | null;
   status: string;
   currentOperation: string | null;
   installMode: "System" | "User" | null;

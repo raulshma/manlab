@@ -370,6 +370,11 @@ export function LocalAgentCard() {
 
               <div className="flex items-center gap-2">
                 <Badge variant={statusVariant}>{status.status}</Badge>
+                {status.agentVersion && (
+                  <Badge variant="outline" className="font-mono text-xs">
+                    v{status.agentVersion}
+                  </Badge>
+                )}
                 <ChevronRight
                   className={`h-4 w-4 text-muted-foreground transition-transform ${
                     isExpanded ? "rotate-90" : ""
@@ -649,17 +654,25 @@ export function LocalAgentCard() {
         </div>
 
         {/* Linked Node */}
-        {status.linkedNodeId && (
-          <div className="space-x-2 text-sm">
-            <span className="text-muted-foreground">Linked node:</span>
-            <a
-              href={`/nodes/${status.linkedNodeId}`}
-              className="font-mono underline underline-offset-4"
-            >
-              {status.linkedNodeId.substring(0, 8)}...
-            </a>
-          </div>
-        )}
+        <div className="space-y-2 text-sm">
+          {status.linkedNodeId && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Linked node:</span>
+              <a
+                href={`/nodes/${status.linkedNodeId}`}
+                className="font-mono underline underline-offset-4"
+              >
+                {status.linkedNodeId.substring(0, 8)}...
+              </a>
+            </div>
+          )}
+          {status.agentVersion && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Agent version:</span>
+              <span className="font-mono">v{status.agentVersion}</span>
+            </div>
+          )}
+        </div>
 
         {/* Logs Toggle */}
         <Button

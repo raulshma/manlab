@@ -67,6 +67,7 @@ public sealed class LocalAgentInstallationService
                 IsInstalled: false,
                 IsRunning: false,
                 LinkedNodeId: null,
+                AgentVersion: null,
                 Status: "Not supported on this platform",
                 CurrentOperation: null,
                 InstallMode: null,
@@ -84,6 +85,7 @@ public sealed class LocalAgentInstallationService
                 IsInstalled: false,
                 IsRunning: false,
                 LinkedNodeId: null,
+                AgentVersion: null,
                 Status: "Operation in progress",
                 CurrentOperation: "Running",
                 InstallMode: null,
@@ -130,6 +132,10 @@ public sealed class LocalAgentInstallationService
 
             if (isInstalled)
             {
+                // Extract version from the installed binary
+                var binaryPath = installMode == "User" ? UserInstallDir : SystemInstallDir;
+                var agentVersion = GetAgentVersion(Path.Combine(binaryPath, "manlab-agent.exe"));
+
                 var isTaskRunning = CheckScheduledTaskRunning(taskName);
                 // If the user install is using HKCU Run (no scheduled task), fall back to
                 // process inspection to infer running state.
@@ -165,6 +171,7 @@ public sealed class LocalAgentInstallationService
                     IsInstalled: true,
                     IsRunning: isTaskRunning,
                     LinkedNodeId: node?.Id,
+                    AgentVersion: agentVersion,
                     Status: isTaskRunning
                         ? $"Running ({installMode} mode)"
                         : (!userTaskExists && userBinaryExists && userRunEntryExists)
@@ -196,6 +203,7 @@ public sealed class LocalAgentInstallationService
                 IsInstalled: false,
                 IsRunning: false,
                 LinkedNodeId: null,
+                AgentVersion: null,
                 Status: "Not installed",
                 CurrentOperation: null,
                 InstallMode: null,
@@ -213,6 +221,7 @@ public sealed class LocalAgentInstallationService
                 IsInstalled: false,
                 IsRunning: false,
                 LinkedNodeId: null,
+                AgentVersion: null,
                 Status: $"Error: {ex.Message}",
                 CurrentOperation: null,
                 InstallMode: null,
@@ -862,6 +871,38 @@ public sealed class LocalAgentInstallationService
         }
     }
 
+    /// <summary>
+    /// Extracts informational version from agent binary.
+    /// </summary>
+    /// <param name="binaryPath">Path to agent executable.</param>
+    /// <returns>The informational version string, or null if unable to extract.</returns>
+    [SupportedOSPlatform("windows")]
+    private static string? GetAgentVersion(string binaryPath)
+    {
+        if (!OperatingSystem.IsWindows() || !File.Exists(binaryPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var versionInfo = FileVersionInfo.GetVersionInfo(binaryPath);
+            // Prefer ProductVersion (InformationalVersion) as it contains full version string
+            var version = versionInfo.ProductVersion;
+            if (!string.IsNullOrWhiteSpace(version))
+            {
+                return version.Trim();
+            }
+            // Fallback to FileVersion
+            version = versionInfo.FileVersion;
+            return !string.IsNullOrWhiteSpace(version) ? version.Trim() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static TaskInfo? GetTaskInfo(string taskName)
     {
         if (!OperatingSystem.IsWindows())
@@ -1052,6 +1093,7 @@ public sealed class LocalAgentInstallationService
 /// <param name="IsInstalled">Whether the agent is currently installed.</param>
 /// <param name="IsRunning">Whether the agent task is currently running.</param>
 /// <param name="LinkedNodeId">The node ID if the agent has registered.</param>
+/// <param name="AgentVersion">The version of the installed agent binary, or null if not installed/unable to read.</param>
 /// <param name="Status">Human-readable status message.</param>
 /// <param name="CurrentOperation">Current operation in progress, if any.</param>
 /// <param name="InstallMode">Installation mode: "System" for admin install, "User" for user-local, null if not installed.</param>
@@ -1060,6 +1102,7 @@ public sealed record LocalAgentStatus(
     bool IsInstalled,
     bool IsRunning,
     Guid? LinkedNodeId,
+    string? AgentVersion,
     string Status,
     string? CurrentOperation,
     string? InstallMode,
