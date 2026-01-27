@@ -11,6 +11,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Cpu,
   MemoryStick,
@@ -19,8 +20,11 @@ import {
   Info,
   Thermometer,
   Monitor,
+  ArrowUpCircle,
+  CheckCircle2,
 } from "lucide-react";
 import type { Node, Telemetry, NetworkTelemetryPoint, PingTelemetryPoint, GpuSnapshot } from "../types";
+import { useAgentUpdateCheck } from "@/hooks/useAgentUpdateCheck";
 
 interface SystemInfoPanelProps {
   node: Node;
@@ -57,6 +61,12 @@ export function SystemInfoPanel({
   pingTelemetry,
   gpuTelemetry,
 }: SystemInfoPanelProps) {
+  // Check for agent updates
+  const { hasUpdate, latestVersion, loading: updateCheckLoading } = useAgentUpdateCheck(
+    node.id,
+    node.agentVersion
+  );
+
   // Get the latest telemetry values
   const latestTelemetry = telemetry.length > 0 ? telemetry[telemetry.length - 1] : null;
   const latestNetwork = networkTelemetry.length > 0 ? networkTelemetry[networkTelemetry.length - 1] : null;
@@ -130,7 +140,32 @@ export function SystemInfoPanel({
                 </div>
                 <div>
                   <span className="text-muted-foreground">Agent Version</span>
-                  <p>{node.agentVersion ? `v${node.agentVersion}` : "N/A"}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium">{node.agentVersion ? `v${node.agentVersion}` : "N/A"}</p>
+                    {!updateCheckLoading && hasUpdate && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <ArrowUpCircle className="h-4 w-4 text-blue-500 cursor-help shrink-0" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="font-semibold">Update available</p>
+                          <p className="text-sm text-muted-foreground">
+                            Upgrade to v{latestVersion}
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    {!updateCheckLoading && !hasUpdate && node.agentVersion && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <CheckCircle2 className="h-4 w-4 text-green-500 cursor-help shrink-0" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-sm">Latest version</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Last Seen</span>

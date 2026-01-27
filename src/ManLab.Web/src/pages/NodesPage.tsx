@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/empty";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertCircle,
   Server,
@@ -21,6 +22,7 @@ import {
   PanelLeft,
   LayoutGrid,
   List as ListIcon,
+  ArrowUpCircle,
 } from "lucide-react";
 import { MachineOnboardingModal } from "@/components/MachineOnboardingModal";
 import { NodeDetailView } from "@/components/NodeDetailView";
@@ -28,6 +30,7 @@ import { NetworkMap } from "@/components/NetworkMap";
 import { fetchNodes } from "@/api";
 import type { Node, NodeStatus } from "@/types";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useAgentUpdateCheck } from "@/hooks/useAgentUpdateCheck";
 import { cn } from "@/lib/utils";
 
 function StatusPill({ status }: { status: NodeStatus | "All" }) {
@@ -50,6 +53,102 @@ function formatRelativeTime(dateString: string): string {
   if (diffMinutes < 60) return `${diffMinutes}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
   return `${diffDays}d ago`;
+}
+
+function NodeListItem({
+  node,
+  isSelected,
+  collapsed,
+  isMobile,
+  onSelect,
+}: {
+  node: Node;
+  isSelected: boolean;
+  collapsed: boolean;
+  isMobile: boolean;
+  onSelect: () => void;
+}) {
+  const statusColor =
+    node.status === "Online"
+      ? "bg-green-500"
+      : node.status === "Offline"
+      ? "bg-red-500"
+      : node.status === "Maintenance"
+      ? "bg-yellow-500"
+      : "bg-muted";
+  
+  const { hasUpdate, latestVersion, loading: updateCheckLoading } = useAgentUpdateCheck(
+    node.id,
+    node.agentVersion
+  );
+
+  if (collapsed && !isMobile) {
+    // Collapsed view - just status indicator
+    return (
+      <button
+        onClick={onSelect}
+        className="w-full p-2 rounded-md transition-colors flex items-center justify-center hover:bg-accent/50"
+        title={node.hostname}
+      >
+        <div
+          className={`w-3 h-3 rounded-full ${statusColor} ${
+            node.status === "Online" ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]" : ""
+          }`}
+        />
+      </button>
+    );
+  }
+
+  // Expanded view
+  return (
+    <button
+      onClick={onSelect}
+      className={cn(
+        "w-full text-left p-2 rounded-md transition-colors flex items-center gap-2",
+        isSelected ? "bg-accent" : "hover:bg-accent/50"
+      )}
+    >
+      <div
+        className={`w-2 h-2 rounded-full shrink-0 ${statusColor} ${
+          node.status === "Online" ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]" : ""
+        }`}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-sm truncate flex items-center gap-2">
+          {node.hostname}
+          {!updateCheckLoading && hasUpdate && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ArrowUpCircle className="h-4 w-4 text-blue-500 shrink-0" />
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="font-semibold">Update available</p>
+                <p className="text-sm text-muted-foreground">
+                  Upgrade to v{latestVersion}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+        {node.ipAddress && (
+          <div className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+            <Globe className="w-3 h-3" />
+            {node.ipAddress}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-col items-end gap-0.5">
+        <span className="text-[10px] text-muted-foreground">
+          {formatRelativeTime(node.lastSeen)}
+        </span>
+        <ChevronRight
+          className={`w-4 h-4 transition-colors ${
+            isSelected ? "text-primary" : "text-muted-foreground/50"
+          }`}
+        />
+      </div>
+    </button>
+  );
 }
 
 export function NodesPage() {
@@ -256,84 +355,16 @@ export function NodesPage() {
             {/* Node List Items */}
             {!isLoading &&
               !isError &&
-              filtered.map((node: Node) => {
-                const isSelected = node.id === effectiveSelectedId;
-                const statusColor =
-                  node.status === "Online"
-                    ? "bg-green-500"
-                    : node.status === "Offline"
-                    ? "bg-red-500"
-                    : node.status === "Maintenance"
-                    ? "bg-yellow-500"
-                    : "bg-muted";
-
-                if (sidebarCollapsed && !isMobile) {
-                  // Collapsed view - just status indicator
-                  return (
-                    <button
-                      key={node.id}
-                      onClick={() => setSelectedNodeId(node.id)}
-                      className={`w-full p-2 rounded-md transition-colors flex items-center justify-center ${
-                        isSelected
-                          ? "bg-accent"
-                          : "hover:bg-accent/50"
-                      }`}
-                      title={node.hostname}
-                    >
-                      <div
-                        className={`w-3 h-3 rounded-full ${statusColor} ${
-                          node.status === "Online"
-                            ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]"
-                            : ""
-                        }`}
-                      />
-                    </button>
-                  );
-                }
-
-                // Expanded view
-                return (
-                  <button
-                    key={node.id}
-                    onClick={() => setSelectedNodeId(node.id)}
-                    className={cn(
-                      "w-full text-left p-2 rounded-md transition-colors flex items-center gap-2",
-                      isSelected ? "bg-accent" : "hover:bg-accent/50"
-                    )}
-                  >
-                    <div
-                      className={`w-2 h-2 rounded-full shrink-0 ${statusColor} ${
-                        node.status === "Online"
-                          ? "shadow-[0_0_6px_rgba(34,197,94,0.5)]"
-                          : ""
-                      }`}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">
-                        {node.hostname}
-                      </div>
-                      {node.ipAddress && (
-                        <div className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                          <Globe className="w-3 h-3" />
-                          {node.ipAddress}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-0.5">
-                      <span className="text-[10px] text-muted-foreground">
-                        {formatRelativeTime(node.lastSeen)}
-                      </span>
-                      <ChevronRight
-                        className={`w-4 h-4 transition-colors ${
-                          isSelected
-                            ? "text-primary"
-                            : "text-muted-foreground/50"
-                        }`}
-                      />
-                    </div>
-                  </button>
-                );
-              })}
+              filtered.map((node: Node) => (
+                <NodeListItem
+                  key={node.id}
+                  node={node}
+                  isSelected={node.id === effectiveSelectedId}
+                  collapsed={sidebarCollapsed && !isMobile}
+                  isMobile={isMobile}
+                  onSelect={() => setSelectedNodeId(node.id)}
+                />
+              ))}
           </div>
         </ScrollArea>
 

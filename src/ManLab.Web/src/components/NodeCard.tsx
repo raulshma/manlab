@@ -2,7 +2,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Node } from '../types';
-import { Globe, Monitor, Tag, AlertTriangle } from 'lucide-react';
+import { Globe, Monitor, Tag, AlertTriangle, ArrowUpCircle, CheckCircle2 } from 'lucide-react';
+import { useAgentUpdateCheck } from '@/hooks/useAgentUpdateCheck';
 
 interface NodeCardProps {
   node: Node;
@@ -57,6 +58,12 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
   const statusVariant = getStatusVariant(node.status);
   const isError = node.status === 'Error';
 
+  // Check for agent updates
+  const { hasUpdate, latestVersion, loading: updateCheckLoading } = useAgentUpdateCheck(
+    node.id,
+    node.agentVersion
+  );
+
   return (
     <Card
       role="button"
@@ -77,12 +84,39 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
             <div className="flex items-center gap-3 mb-2">
               {/* Error indicator */}
               {isError && (
-                <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0" />
+                <AlertTriangle className="h-5 w-5 text-destructive shrink-0" />
               )}
               {/* Hostname */}
               <h3 className="text-base font-semibold text-foreground truncate">
                 {node.hostname}
               </h3>
+              
+              {/* Update indicator */}
+              {!updateCheckLoading && hasUpdate && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <ArrowUpCircle className="h-5 w-5 text-blue-500 shrink-0 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    <p className="font-semibold">Agent update available</p>
+                    <p className="text-sm text-muted-foreground">
+                      Upgrade from v{node.agentVersion} to v{latestVersion}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              
+              {/* Latest version indicator (when no update available) */}
+              {!updateCheckLoading && !hasUpdate && node.agentVersion && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p className="text-sm">Running latest agent version</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </div>
 
             {/* Details */}
