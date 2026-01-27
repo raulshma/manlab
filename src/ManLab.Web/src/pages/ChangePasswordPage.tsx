@@ -19,6 +19,9 @@ export function ChangePasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Determine if we should skip current password validation
+  const isPasswordMustChange = status?.passwordMustChange === true;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -34,7 +37,8 @@ export function ChangePasswordPage() {
         return;
       }
 
-      await changePassword(currentPassword, newPassword);
+      // Send empty string for current password if it's a forced password change
+      await changePassword(isPasswordMustChange ? "" : currentPassword, newPassword);
       toast.success("Password changed successfully. You can now access the dashboard.");
       navigate("/");
     } catch (err) {
@@ -70,7 +74,7 @@ export function ChangePasswordPage() {
             </Alert>
           )}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {(!status?.passwordMustChange || !status.username || status.username !== "admin") && (
+            {!isPasswordMustChange && (
               <div className="grid gap-2">
                 <Label htmlFor="current-password">Current Password</Label>
                 <Input

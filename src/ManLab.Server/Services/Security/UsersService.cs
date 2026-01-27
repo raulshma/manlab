@@ -185,10 +185,14 @@ public class UsersService
             return false;
         }
 
-        var result = _passwordHasher.VerifyHashedPassword(user.Username, user.PasswordHash, currentPassword);
-        if (result == PasswordVerificationResult.Failed)
+        // Skip current password validation if user is forced to change password
+        if (!user.PasswordMustChange)
         {
-            return false;
+            var result = _passwordHasher.VerifyHashedPassword(user.Username, user.PasswordHash, currentPassword);
+            if (result == PasswordVerificationResult.Failed)
+            {
+                return false;
+            }
         }
 
         user.PasswordHash = _passwordHasher.HashPassword(user.Username, newPassword);
