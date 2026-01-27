@@ -1,9 +1,12 @@
 using System.Reflection;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ManLab.Server.Controllers;
 
 [ApiController]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.BinariesDownload)]
 public sealed class InstallerScriptsController : ControllerBase
 {
     private readonly ILogger<InstallerScriptsController> _logger;

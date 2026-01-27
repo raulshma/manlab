@@ -1,10 +1,13 @@
 using ManLab.Server.Services.Network;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/network/packet-capture")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.PacketCapture)]
 public sealed class PacketCaptureController : ControllerBase
 {
     private readonly IPacketCaptureService _service;

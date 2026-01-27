@@ -1,5 +1,7 @@
 using ManLab.Server.Services.Audit;
 using ManLab.Server.Services.Network;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Net;
 
@@ -72,6 +74,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The ping request.</param>
     /// <returns>The ping result.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsPing)]
     [HttpPost("ping")]
     public async Task<ActionResult<PingResult>> Ping([FromBody] PingRequest request, CancellationToken ct)
     {
@@ -146,6 +149,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Records an aggregated ping history entry (for infinite mode).
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsPing)]
     [HttpPost("ping/aggregate")]
     public async Task<ActionResult<object>> RecordPingAggregate([FromBody] PingAggregateRequest request)
     {
@@ -192,6 +196,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Updates an aggregated ping history entry (for infinite mode).
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsPing)]
     [HttpPut("ping/aggregate/{id:guid}")]
     public async Task<ActionResult> UpdatePingAggregate(Guid id, [FromBody] PingAggregateRequest request)
     {
@@ -243,6 +248,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Retrieves a combined internet health snapshot (ping, DNS resolution, optional public IP).
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsInternetHealth)]
     [HttpPost("internet-health")]
     public async Task<ActionResult<InternetHealthResult>> GetInternetHealth([
         FromBody] InternetHealthRequest? request,
@@ -374,6 +380,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The subnet scan request.</param>
     /// <returns>List of discovered hosts.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsSubnetScan)]
     [HttpPost("discover")]
     public async Task<ActionResult<SubnetScanResult>> DiscoverSubnet([FromBody] SubnetScanRequest request, CancellationToken ct)
     {
@@ -494,6 +501,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Builds a topology map for a subnet, optionally merging discovery data.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsTopology)]
     [HttpPost("topology")]
     public async Task<ActionResult<NetworkTopologyResult>> BuildTopology(
         [FromBody] NetworkTopologyRequest request,
@@ -598,6 +606,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The traceroute request.</param>
     /// <returns>The traceroute result.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsTraceroute)]
     [HttpPost("traceroute")]
     public async Task<ActionResult<TracerouteResult>> Traceroute([FromBody] TracerouteRequest request, CancellationToken ct)
     {
@@ -650,6 +659,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The port scan request.</param>
     /// <returns>The port scan result.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsPortScan)]
     [HttpPost("ports")]
     public async Task<ActionResult<PortScanResult>> ScanPorts([FromBody] PortScanRequest request, CancellationToken ct)
     {
@@ -722,6 +732,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="ip">The IP address.</param>
     /// <returns>Device information.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsDeviceInfo)]
     [HttpGet("device/{ip}")]
     public async Task<ActionResult<DeviceInfo>> GetDeviceInfo(string ip, CancellationToken ct)
     {
@@ -754,6 +765,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Performs DNS lookup for a hostname or IP address.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsDnsLookup)]
     [HttpPost("dns")]
     public async Task<ActionResult<DnsLookupResult>> DnsLookup([FromBody] DnsLookupRequest request, CancellationToken ct)
     {
@@ -821,6 +833,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Checks DNS propagation across multiple resolvers.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsDnsPropagation)]
     [HttpPost("dns/propagation")]
     public async Task<ActionResult<DnsPropagationResult>> DnsPropagationCheck(
         [FromBody] DnsPropagationRequest request,
@@ -962,6 +975,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Performs SNMP GET request for one or more OIDs.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsSnmp)]
     [HttpPost("snmp/get")]
     public async Task<ActionResult<SnmpGetResult>> SnmpGet([FromBody] SnmpGetRequest request, CancellationToken ct)
     {
@@ -1065,6 +1079,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Performs SNMP walk starting from a base OID.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsSnmp)]
     [HttpPost("snmp/walk")]
     public async Task<ActionResult<SnmpWalkResult>> SnmpWalk([FromBody] SnmpWalkRequest request, CancellationToken ct)
     {
@@ -1160,6 +1175,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Queries SNMP table columns and returns a row/column mapping.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsSnmp)]
     [HttpPost("snmp/table")]
     public async Task<ActionResult<SnmpTableResult>> SnmpTable([FromBody] SnmpTableRequest request, CancellationToken ct)
     {
@@ -1256,6 +1272,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Performs WHOIS lookup for a domain or IP.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsWhois)]
     [HttpPost("whois")]
     public async Task<ActionResult<WhoisResult>> Whois([FromBody] WhoisRequest request, CancellationToken ct)
     {
@@ -1322,6 +1339,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Sends a Wake-on-LAN magic packet to a MAC address.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsWol)]
     [HttpPost("wol")]
     public async Task<ActionResult<WolSendResult>> WakeOnLan([FromBody] WolRequest request, CancellationToken ct)
     {
@@ -1390,6 +1408,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Looks up the vendor for a MAC address.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsMacVendor)]
     [HttpPost("mac/vendor")]
     public ActionResult<MacVendorLookupResult> LookupMacVendor([FromBody] MacVendorLookupRequest request)
     {
@@ -1447,6 +1466,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Gets the ARP table entries.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsArp)]
     [HttpGet("arp/table")]
     public async Task<ActionResult<ArpTableResult>> GetArpTable(CancellationToken ct)
     {
@@ -1526,6 +1546,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Adds or replaces a static ARP entry.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsArp)]
     [HttpPost("arp/add-static")]
     public async Task<ActionResult<ArpOperationResult>> AddStaticArpEntry([FromBody] ArpAddStaticRequest request, CancellationToken ct)
     {
@@ -1623,6 +1644,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Removes an ARP entry for the given IP.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsArp)]
     [HttpDelete("arp/entry/{ip}")]
     public async Task<ActionResult<ArpOperationResult>> DeleteArpEntry(string ip, CancellationToken ct)
     {
@@ -1711,6 +1733,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Flushes the ARP cache.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsArp)]
     [HttpPost("arp/flush")]
     public async Task<ActionResult<ArpOperationResult>> FlushArpCache(CancellationToken ct)
     {
@@ -1790,6 +1813,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Runs a server-side internet speed test.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsSpeedTest)]
     [HttpPost("speedtest")]
     public async Task<ActionResult<SpeedTestResult>> RunSpeedTest([FromBody] SpeedTestRequest? request, CancellationToken ct)
     {
@@ -1863,6 +1887,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Gets the server's public IP address(es).
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsPublicIp)]
     [HttpGet("public-ip")]
     public async Task<ActionResult<PublicIpResult>> GetPublicIp(CancellationToken ct)
     {
@@ -1920,6 +1945,7 @@ public class NetworkController : ControllerBase
     /// <summary>
     /// Inspects SSL/TLS certificate chain for a host.
     /// </summary>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsSslInspect)]
     [HttpPost("ssl/inspect")]
     public async Task<ActionResult<SslInspectionResult>> InspectCertificate([FromBody] SslInspectRequest request, CancellationToken ct)
     {
@@ -1989,6 +2015,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The discovery request.</param>
     /// <returns>List of discovered devices.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsDiscovery)]
     [HttpPost("discovery")]
     public async Task<ActionResult<DiscoveryScanResult>> DiscoverDevices([FromBody] DeviceDiscoveryRequest? request, CancellationToken ct)
     {
@@ -2031,6 +2058,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The mDNS discovery request.</param>
     /// <returns>List of discovered mDNS devices.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsDiscovery)]
     [HttpPost("discovery/mdns")]
     public async Task<ActionResult<List<MdnsDiscoveredDevice>>> DiscoverMdns([FromBody] MdnsDiscoveryRequest? request, CancellationToken ct)
     {
@@ -2074,6 +2102,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The UPnP discovery request.</param>
     /// <returns>List of discovered UPnP devices.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsDiscovery)]
     [HttpPost("discovery/upnp")]
     public async Task<ActionResult<List<UpnpDiscoveredDevice>>> DiscoverUpnp([FromBody] UpnpDiscoveryRequest? request, CancellationToken ct)
     {
@@ -2116,6 +2145,7 @@ public class NetworkController : ControllerBase
     /// Gets the list of common mDNS service types.
     /// </summary>
     /// <returns>List of common mDNS service types.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsDiscovery)]
     [HttpGet("discovery/mdns/service-types")]
     public ActionResult<string[]> GetMdnsServiceTypes()
     {
@@ -2126,6 +2156,7 @@ public class NetworkController : ControllerBase
     /// Gets whether WiFi scanning is supported on this host.
     /// </summary>
     /// <returns>WiFi scanning support status.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsWifi)]
     [HttpGet("wifi/supported")]
     public ActionResult<object> IsWifiSupported()
     {
@@ -2141,6 +2172,7 @@ public class NetworkController : ControllerBase
     /// Gets available WiFi adapters.
     /// </summary>
     /// <returns>List of WiFi adapters.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsWifi)]
     [HttpGet("wifi/adapters")]
     public async Task<ActionResult<List<WifiAdapter>>> GetWifiAdapters(CancellationToken ct)
     {
@@ -2175,6 +2207,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The WiFi scan request.</param>
     /// <returns>WiFi scan result.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsWifi)]
     [HttpPost("wifi/scan")]
     public async Task<ActionResult<WifiScanResult>> ScanWifi([FromBody] WifiScanRequest? request, CancellationToken ct)
     {
@@ -2226,6 +2259,7 @@ public class NetworkController : ControllerBase
     /// Gets the list of available geolocation database sources.
     /// </summary>
     /// <returns>List of available database sources.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsGeolocation)]
     [HttpGet("geolocation/sources")]
     public ActionResult<IReadOnlyList<GeoDatabaseSource>> GetGeolocationSources()
     {
@@ -2236,6 +2270,7 @@ public class NetworkController : ControllerBase
     /// Gets the status of the IP geolocation database.
     /// </summary>
     /// <returns>Database status including availability and metadata.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsGeolocation)]
     [HttpGet("geolocation/status")]
     public async Task<ActionResult<GeoDatabaseStatus>> GetGeolocationStatus(CancellationToken ct)
     {
@@ -2247,6 +2282,7 @@ public class NetworkController : ControllerBase
     /// Downloads the IP geolocation database from the default source.
     /// </summary>
     /// <returns>True if download was successful.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsGeolocation)]
     [HttpPost("geolocation/download")]
     public async Task<ActionResult<object>> DownloadGeolocationDatabase(CancellationToken ct)
     {
@@ -2283,6 +2319,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="sourceId">The source ID to download from.</param>
     /// <returns>True if download was successful.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsGeolocation)]
     [HttpPost("geolocation/download/{sourceId}")]
     public async Task<ActionResult<object>> DownloadGeolocationDatabase(string sourceId, CancellationToken ct)
     {
@@ -2328,6 +2365,7 @@ public class NetworkController : ControllerBase
     /// Updates the IP geolocation database to the latest version.
     /// </summary>
     /// <returns>True if update was successful.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsGeolocation)]
     [HttpPut("geolocation/update")]
     public async Task<ActionResult<object>> UpdateGeolocationDatabase(CancellationToken ct)
     {
@@ -2363,6 +2401,7 @@ public class NetworkController : ControllerBase
     /// Deletes the installed IP geolocation database.
     /// </summary>
     /// <returns>True if deletion was successful.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsGeolocation)]
     [HttpDelete("geolocation/database")]
     public async Task<ActionResult<object>> DeleteGeolocationDatabase(CancellationToken ct)
     {
@@ -2399,6 +2438,7 @@ public class NetworkController : ControllerBase
     /// </summary>
     /// <param name="request">The lookup request containing IP addresses.</param>
     /// <returns>List of geolocation results.</returns>
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsGeolocation)]
     [HttpPost("geolocation/lookup")]
     public async Task<ActionResult<IReadOnlyList<GeoLocationResult>>> LookupGeolocation(
         [FromBody] GeoLookupRequest request, 

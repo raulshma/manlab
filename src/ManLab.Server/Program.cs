@@ -97,6 +97,7 @@ builder.Services.AddSingleton<PasswordHasher<string>>();
 builder.Services.AddScoped<UsersService>();
 builder.Services.AddSingleton<IAuthorizationHandler, AdminOrLocalBypassHandler>();
 builder.Services.AddSingleton<IAuthorizationHandler, PasswordChangeRequiredHandler>();
+builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
 builder.Services
     .AddAuthentication(options =>
@@ -158,6 +159,16 @@ builder.Services.AddAuthorization(options =>
         policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, LocalBypassAuthenticationHandler.SchemeName)
             .AddRequirements(new AdminOrLocalBypassRequirement());
     });
+
+    foreach (var permission in Permissions.All)
+    {
+        options.AddPolicy(Permissions.PolicyFor(permission), policy =>
+        {
+            policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, LocalBypassAuthenticationHandler.SchemeName)
+                .RequireAuthenticatedUser()
+                .AddRequirements(new PermissionRequirement(permission));
+        });
+    }
 
     options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
         .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, LocalBypassAuthenticationHandler.SchemeName)

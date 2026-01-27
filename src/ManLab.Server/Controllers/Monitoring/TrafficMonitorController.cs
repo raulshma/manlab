@@ -1,6 +1,8 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Services.Monitoring;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Quartz;
@@ -9,6 +11,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/monitoring/traffic")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringView)]
 public sealed class TrafficMonitorController : ControllerBase
 {
     private readonly DataContext _db;
@@ -38,6 +41,7 @@ public sealed class TrafficMonitorController : ControllerBase
     }
 
     [HttpPut("config")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult<TrafficMonitorConfigDto>> UpdateConfig([FromBody] TrafficMonitorConfigRequest request, CancellationToken ct)
     {
         if (!CronExpression.IsValidExpression(request.Cron))
@@ -83,6 +87,7 @@ public sealed class TrafficMonitorController : ControllerBase
     }
 
     [HttpPost("run")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult> RunNow(CancellationToken ct)
     {
         var config = await _db.TrafficMonitorConfigs.FirstOrDefaultAsync(ct).ConfigureAwait(false);
@@ -104,6 +109,7 @@ public sealed class TrafficMonitorController : ControllerBase
     }
 
     [HttpDelete("config")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult> DeleteConfig(CancellationToken ct)
     {
         var config = await _db.TrafficMonitorConfigs.FirstOrDefaultAsync(ct).ConfigureAwait(false);

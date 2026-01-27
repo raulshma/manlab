@@ -1,4 +1,6 @@
 using ManLab.Server.Data;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,6 +13,7 @@ namespace ManLab.Server.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/audit-events")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.AuditView)]
 public sealed class AuditEventsController : ControllerBase
 {
     private readonly DataContext _db;

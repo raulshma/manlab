@@ -1,6 +1,8 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Services.Enhancements;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,6 +14,7 @@ namespace ManLab.Server.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/devices/{nodeId:guid}/log-viewer-policies")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.LogViewerUse)]
 public sealed class LogViewerPoliciesController : ControllerBase
 {
     private const int MaxDisplayNameChars = 255;

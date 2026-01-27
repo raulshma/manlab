@@ -4,7 +4,9 @@ using ManLab.Server.Data.Enums;
 using ManLab.Server.Services;
 using ManLab.Server.Services.Audit;
 using ManLab.Server.Services.Ssh;
+using ManLab.Server.Services.Security;
 using ManLab.Shared;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -17,6 +19,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.OnboardingManage)]
 public sealed class OnboardingController : ControllerBase
 {
     private readonly DataContext _db;

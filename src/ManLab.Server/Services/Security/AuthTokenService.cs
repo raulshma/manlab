@@ -19,7 +19,11 @@ public sealed class AuthTokenService
         _logger = logger;
     }
 
-    public AuthTokenResult CreateToken(string subject, string role, bool passwordMustChange = false)
+    public AuthTokenResult CreateToken(
+        string subject,
+        string role,
+        IEnumerable<string> permissions,
+        bool passwordMustChange = false)
     {
         if (string.IsNullOrWhiteSpace(_options.JwtSigningKey))
         {
@@ -45,6 +49,11 @@ public sealed class AuthTokenService
             new(ClaimTypes.Role, role),
             new("auth_method", "password")
         };
+
+        foreach (var permission in permissions.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            claims.Add(new Claim(Permissions.ClaimType, permission));
+        }
 
         if (passwordMustChange)
         {

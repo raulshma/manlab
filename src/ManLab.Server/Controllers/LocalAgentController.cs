@@ -1,4 +1,6 @@
 using ManLab.Server.Services;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -9,6 +11,7 @@ namespace ManLab.Server.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
 public sealed class LocalAgentController : ControllerBase
 {
     private readonly LocalAgentInstallationService _installService;

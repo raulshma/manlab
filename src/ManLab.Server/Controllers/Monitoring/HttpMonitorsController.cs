@@ -1,6 +1,8 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Services.Monitoring;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Quartz;
@@ -9,6 +11,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/monitoring/http")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringView)]
 public sealed class HttpMonitorsController : ControllerBase
 {
     private readonly DataContext _db;
@@ -50,6 +53,7 @@ public sealed class HttpMonitorsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult<HttpMonitorConfigDto>> Create([FromBody] HttpMonitorConfigRequest request, CancellationToken ct)
     {
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out _))
@@ -85,6 +89,7 @@ public sealed class HttpMonitorsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult<HttpMonitorConfigDto>> Update(Guid id, [FromBody] HttpMonitorConfigRequest request, CancellationToken ct)
     {
         var config = await _db.HttpMonitorConfigs.FirstOrDefaultAsync(c => c.Id == id, ct).ConfigureAwait(false);
@@ -123,6 +128,7 @@ public sealed class HttpMonitorsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult> Delete(Guid id, CancellationToken ct)
     {
         var config = await _db.HttpMonitorConfigs.FirstOrDefaultAsync(c => c.Id == id, ct).ConfigureAwait(false);
@@ -140,6 +146,7 @@ public sealed class HttpMonitorsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/run")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult> RunNow(Guid id, CancellationToken ct)
     {
         var exists = await _db.HttpMonitorConfigs.AnyAsync(c => c.Id == id, ct).ConfigureAwait(false);

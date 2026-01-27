@@ -6,6 +6,8 @@ using ManLab.Server.Hubs;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Enhancements;
 using ManLab.Shared.Dtos;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
@@ -20,6 +22,7 @@ namespace ManLab.Server.Controllers.Enhancements;
 /// Server-side authorization checks are performed before dispatching commands.
 /// </summary>
 [ApiController]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.FileBrowserView)]
 public sealed class FileBrowserController : ControllerBase
 {
     private static readonly TimeSpan DefaultWaitTimeout = TimeSpan.FromSeconds(10);

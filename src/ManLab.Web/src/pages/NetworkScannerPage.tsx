@@ -74,6 +74,8 @@ import { NetworkToolsProvider, type NetworkToolTab } from "@/contexts/NetworkToo
 import { useNetworkSettingsSync } from "@/hooks/useNetworkSettingsSync";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/auth/AuthContext";
+import { isNetworkToolAllowed } from "@/lib/network-tool-permissions";
 import {
   Select,
   SelectContent,
@@ -174,6 +176,7 @@ function ConnectionIndicator({
 }
 
 export function NetworkScannerPage() {
+  const { hasPermission } = useAuth();
 
   const { isReady: settingsReady } = useNetworkSettingsSync();
 
@@ -194,6 +197,16 @@ export function NetworkScannerPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const isMobile = useIsMobile();
 
+  const allowedToolIds = useMemo(() => {
+    return new Set(
+      TOOLS.filter((tool) => isNetworkToolAllowed(tool.id as NetworkToolTab, hasPermission)).map(
+        (tool) => tool.id
+      )
+    );
+  }, [hasPermission]);
+
+  const hasAnyToolAccess = allowedToolIds.size > 0;
+
   const filteredTools = useMemo(() => {
     const query = toolQuery.trim().toLowerCase();
     if (!query) return TOOLS;
@@ -211,10 +224,11 @@ export function NetworkScannerPage() {
         )
       : TOOLS;
 
-    if (nextFiltered.length > 0 && !nextFiltered.some((tool) => tool.id === activeTab)) {
-      setActiveTab(nextFiltered[0].id as NetworkToolTab);
+    const firstAllowed = nextFiltered.find((tool) => allowedToolIds.has(tool.id));
+    if (firstAllowed && !allowedToolIds.has(activeTab)) {
+      setActiveTab(firstAllowed.id as NetworkToolTab);
     }
-  }, [activeTab]);
+  }, [activeTab, allowedToolIds, setActiveTab]);
 
   // Force reconnect by toggling realtime off and on
   const handleRetryConnection = useCallback(() => {
@@ -231,10 +245,22 @@ export function NetworkScannerPage() {
     };
   }, []);
 
+  const resolvedActiveTab = useMemo(() => {
+    if (!hasAnyToolAccess) {
+      return activeTab;
+    }
+
+    if (allowedToolIds.has(activeTab)) {
+      return activeTab;
+    }
+
+    return (TOOLS.find((tool) => allowedToolIds.has(tool.id))?.id ?? activeTab) as NetworkToolTab;
+  }, [allowedToolIds, activeTab, hasAnyToolAccess]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem(ACTIVE_TAB_KEY, activeTab);
-  }, [activeTab]);
+    localStorage.setItem(ACTIVE_TAB_KEY, resolvedActiveTab);
+  }, [resolvedActiveTab]);
 
   // Auto-hide header on scroll
   // Auto-hide header on scroll
@@ -287,9 +313,11 @@ export function NetworkScannerPage() {
 
   const sidebarWidth = sidebarCollapsed && !isMobile ? "md:w-14" : "md:w-48";
 
+  const isActiveToolAllowed = allowedToolIds.has(resolvedActiveTab);
+
   return (
     <NetworkToolsProvider
-      activeTab={activeTab}
+      activeTab={resolvedActiveTab}
       onTabChange={setActiveTab}
     >
     <div 
@@ -337,8 +365,12 @@ export function NetworkScannerPage() {
         {isMobile ? (
           <div className="p-4 border-b border-border shrink-0 bg-sidebar/50 backdrop-blur-sm z-30 sticky top-0">
             <Select 
-              value={activeTab} 
-              onValueChange={(v) => setActiveTab(v as NetworkToolTab)}
+              value={resolvedActiveTab} 
+              onValueChange={(v) => {
+                if (v && allowedToolIds.has(v as NetworkToolTab)) {
+                  setActiveTab(v as NetworkToolTab);
+                }
+              }}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select a tool" />
@@ -346,8 +378,9 @@ export function NetworkScannerPage() {
               <SelectContent>
                 {TOOLS.map((tool) => {
                    const Icon = tool.icon;
+                   const isAllowed = allowedToolIds.has(tool.id);
                    return (
-                    <SelectItem key={tool.id} value={tool.id}>
+                    <SelectItem key={tool.id} value={tool.id} disabled={!isAllowed}>
                       <div className="flex items-center gap-2">
                         <Icon className="h-4 w-4" />
                         <span>{tool.label}</span>
@@ -372,7 +405,7 @@ export function NetworkScannerPage() {
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-semibold px-2">Tools</h2>
                   <span className="text-xs text-muted-foreground">
-                    {filteredTools.length}/{TOOLS.length}
+                    {allowedToolIds.size}/{TOOLS.length}
                   </span>
                 </div>
               )}
@@ -427,17 +460,24 @@ export function NetworkScannerPage() {
                     </div>
                   )}
                   {filteredTools.map((tool) => {
-                    const isSelected = tool.id === activeTab;
+                    const isSelected = tool.id === resolvedActiveTab;
                     const Icon = tool.icon;
+                    const isAllowed = allowedToolIds.has(tool.id);
 
                     if (sidebarCollapsed) {
                       return (
                         <button
                           key={tool.id}
-                          onClick={() => setActiveTab(tool.id as NetworkToolTab)}
+                          onClick={() => {
+                            if (isAllowed) {
+                              setActiveTab(tool.id as NetworkToolTab);
+                            }
+                          }}
+                          disabled={!isAllowed}
                           className={cn(
                             "w-full p-2 rounded-md transition-colors flex items-center justify-center",
-                            isSelected ? "bg-accent" : "hover:bg-accent/50"
+                            isSelected ? "bg-accent" : "hover:bg-accent/50",
+                            !isAllowed && "opacity-50 cursor-not-allowed"
                           )}
                           title={tool.label}
                         >
@@ -449,10 +489,16 @@ export function NetworkScannerPage() {
                     return (
                       <button
                         key={tool.id}
-                        onClick={() => setActiveTab(tool.id as NetworkToolTab)}
+                        onClick={() => {
+                          if (isAllowed) {
+                            setActiveTab(tool.id as NetworkToolTab);
+                          }
+                        }}
+                        disabled={!isAllowed}
                         className={cn(
                           "w-full text-left p-2 rounded-md transition-colors flex items-center gap-2",
-                          isSelected ? "bg-accent text-foreground" : "hover:bg-accent/50 text-muted-foreground"
+                          isSelected ? "bg-accent text-foreground" : "hover:bg-accent/50 text-muted-foreground",
+                          !isAllowed && "opacity-50 cursor-not-allowed"
                         )}
                       >
                         <Icon className="h-4 w-4 shrink-0" />
@@ -472,138 +518,164 @@ export function NetworkScannerPage() {
           </div>
         )}
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as NetworkToolTab)} className="flex-1 flex flex-col min-w-0 md:overflow-hidden h-full">
+        <Tabs
+          value={resolvedActiveTab}
+          onValueChange={(v) => {
+            if (allowedToolIds.has(v)) {
+              setActiveTab(v as NetworkToolTab);
+            }
+          }}
+          className="flex-1 flex flex-col min-w-0 md:overflow-hidden h-full"
+        >
           <CardContent 
             className="flex-col relative pt-4 px-4 sm:px-6 scroll-smooth md:flex-1 md:overflow-y-auto"
             onScroll={handleContentScroll}
           >
-            <TabsContent value="ping" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Ping Tool Error">
-                <PingTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+            {!hasAnyToolAccess && (
+              <Card className="mb-4">
+                <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                  You do not have permission to access any network tools.
+                </CardContent>
+              </Card>
+            )}
+            {hasAnyToolAccess && !isActiveToolAllowed && (
+              <Card className="mb-4">
+                <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                  You do not have permission to access this tool.
+                </CardContent>
+              </Card>
+            )}
+            {hasAnyToolAccess && (
+              <>
+                <TabsContent value="ping" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Ping Tool Error">
+                    <PingTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="internet-health" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Internet Health Error">
-                <InternetHealthTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="internet-health" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Internet Health Error">
+                    <InternetHealthTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="syslog" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Syslog Receiver Error">
-                <SyslogTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="syslog" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Syslog Receiver Error">
+                    <SyslogTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="packet-capture" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Packet Capture Error">
-                <PacketCaptureTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="packet-capture" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Packet Capture Error">
+                    <PacketCaptureTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="subnet" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Subnet Scanner Error">
-                <SubnetScanTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="subnet" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Subnet Scanner Error">
+                    <SubnetScanTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="topology" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Topology Mapper Error">
-                <NetworkTopologyTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="topology" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Topology Mapper Error">
+                    <NetworkTopologyTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="traceroute" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Traceroute Tool Error">
-                <TracerouteTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="traceroute" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Traceroute Tool Error">
+                    <TracerouteTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="ports" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Port Scanner Error">
-                <PortScanTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="ports" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Port Scanner Error">
+                    <PortScanTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="wol" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Wake-on-LAN Error">
-                <WakeOnLanTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="wol" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Wake-on-LAN Error">
+                    <WakeOnLanTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="speedtest" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Speed Test Error">
-                <SpeedTestTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="speedtest" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Speed Test Error">
+                    <SpeedTestTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="subnetcalc" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Subnet Calculator Error">
-                <SubnetCalculatorTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="subnetcalc" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Subnet Calculator Error">
+                    <SubnetCalculatorTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="mac-vendor" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="MAC Vendor Lookup Error">
-                <MacVendorLookupTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="mac-vendor" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="MAC Vendor Lookup Error">
+                    <MacVendorLookupTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="dns" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="DNS Tool Error">
-                <DnsTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="dns" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="DNS Tool Error">
+                    <DnsTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="public-ip" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Public IP Tool Error">
-                <PublicIpTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="public-ip" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Public IP Tool Error">
+                    <PublicIpTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="snmp" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="SNMP Tool Error">
-                <SnmpTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="snmp" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="SNMP Tool Error">
+                    <SnmpTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="arp" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="ARP Tool Error">
-                <ArpTableTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="arp" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="ARP Tool Error">
+                    <ArpTableTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="ssl" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="SSL Inspector Error">
-                <SslInspectorTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="ssl" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="SSL Inspector Error">
+                    <SslInspectorTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="discovery" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Device Discovery Error">
-                <DeviceDiscoveryTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="discovery" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Device Discovery Error">
+                    <DeviceDiscoveryTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="wifi" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="WiFi Scanner Error">
-                <WifiScannerTool />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="wifi" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="WiFi Scanner Error">
+                    <WifiScannerTool />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="geodb" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="Geolocation Database Error">
-                <GeolocationDbManager />
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="geodb" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="Geolocation Database Error">
+                    <GeolocationDbManager />
+                  </NetworkErrorBoundary>
+                </TabsContent>
 
-            <TabsContent value="history" className="mt-0 space-y-4">
-              <NetworkErrorBoundary fallbackTitle="History Panel Error">
-                <NetworkToolHistoryProvider autoRefreshMs={30000}>
-                  <NetworkToolHistoryPanel />
-                </NetworkToolHistoryProvider>
-              </NetworkErrorBoundary>
-            </TabsContent>
+                <TabsContent value="history" className="mt-0 space-y-4">
+                  <NetworkErrorBoundary fallbackTitle="History Panel Error">
+                    <NetworkToolHistoryProvider autoRefreshMs={30000}>
+                      <NetworkToolHistoryPanel />
+                    </NetworkToolHistoryProvider>
+                  </NetworkErrorBoundary>
+                </TabsContent>
+              </>
+            )}
           </CardContent>
         </Tabs>
       </div>

@@ -39,4 +39,7 @@ public class User
 
     /// <summary>When the password was last changed.</summary>
     public DateTime? PasswordChangedAt { get; set; }
+
+    /// <summary>Per-user permission overrides.</summary>
+    public ICollection<UserPermission> Permissions { get; set; } = [];
 }

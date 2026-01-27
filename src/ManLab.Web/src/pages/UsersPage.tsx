@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/api";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
@@ -48,7 +48,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Pencil, Trash2, Plus } from "lucide-react";
+import { Pencil, Trash2, Plus, Shield } from "lucide-react";
 import { toast } from "sonner";
 
 export interface UserDto {
@@ -60,17 +60,29 @@ export interface UserDto {
   lastLoginAt: string | null;
 }
 
+type PermissionState = "inherit" | "allow" | "deny";
+
+interface UserPermissionOverrideDto {
+  permission: string;
+  state: PermissionState;
+}
+
+interface UserPermissionsResponse {
+  availablePermissions: string[];
+  effectivePermissions: string[];
+  overrides: UserPermissionOverrideDto[];
+}
+
 export function UsersPage() {
-  const { status } = useAuth();
+  const { hasPermission } = useAuth();
   const queryClient = useQueryClient();
 
-  // Check if current user is admin
-  const isCurrentUserAdmin = status?.role === "Admin";
+  const canManageUsers = hasPermission("users.manage");
 
   const { data: users, isLoading, error } = useQuery<UserDto[]>({
     queryKey: ["users"],
     queryFn: async () => (await api.get<UserDto[]>("/api/users")).data,
-    enabled: isCurrentUserAdmin,
+    enabled: canManageUsers,
   });
 
   // Create user mutation
@@ -136,6 +148,19 @@ export function UsersPage() {
     },
   });
 
+  const updatePermissionsMutation = useMutation({
+    mutationFn: async ({ userId, overrides }: { userId: string; overrides: UserPermissionOverrideDto[] }) =>
+      api.put(`/api/users/${userId}/permissions`, { overrides }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["user-permissions", variables.userId] });
+      toast.success("Permissions updated successfully");
+      setPermissionsDialogOpen(false);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Failed to update permissions");
+    },
+  });
+
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newUsername, setNewUsername] = useState("");
   const [newRole, setNewRole] = useState("user");
@@ -145,13 +170,32 @@ export function UsersPage() {
   const [userToResetPassword, setUserToResetPassword] = useState<UserDto | null>(null);
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
   const [userToChangeRole, setUserToChangeRole] = useState<UserDto | null>(null);
+  const [permissionsDialogOpen, setPermissionsDialogOpen] = useState(false);
+  const [userToEditPermissions, setUserToEditPermissions] = useState<UserDto | null>(null);
+  const [permissionOverrides, setPermissionOverrides] = useState<Record<string, PermissionState>>({});
 
-  if (!isCurrentUserAdmin) {
+  const permissionsQuery = useQuery<UserPermissionsResponse>({
+    queryKey: ["user-permissions", userToEditPermissions?.id],
+    queryFn: async () => (await api.get<UserPermissionsResponse>(`/api/users/${userToEditPermissions?.id}/permissions`)).data,
+    enabled: permissionsDialogOpen && !!userToEditPermissions,
+  });
+
+  useEffect(() => {
+    if (!permissionsQuery.data) {
+      return;
+    }
+    const overrides = Object.fromEntries(
+      permissionsQuery.data.overrides.map((override) => [override.permission, override.state])
+    );
+    setPermissionOverrides(overrides);
+  }, [permissionsQuery.data]);
+
+  if (!canManageUsers) {
     return (
       <div className="container mx-auto py-8">
         <Alert variant="destructive">
           <AlertDescription>
-            You do not have permission to access this page. Only administrators can manage users.
+            You do not have permission to access this page.
           </AlertDescription>
         </Alert>
       </div>
@@ -217,6 +261,35 @@ export function UsersPage() {
     setNewRole(user.role);
     setRoleDialogOpen(true);
   };
+
+  const openPermissionsDialog = (user: UserDto) => {
+    setUserToEditPermissions(user);
+    setPermissionsDialogOpen(true);
+  };
+
+  const handlePermissionsDialogChange = (open: boolean) => {
+    setPermissionsDialogOpen(open);
+    if (!open) {
+      setUserToEditPermissions(null);
+      setPermissionOverrides({});
+    }
+  };
+
+  const handleSavePermissions = () => {
+    if (!userToEditPermissions || !permissionsQuery.data) {
+      return;
+    }
+
+    const overrides = permissionsQuery.data.availablePermissions.map((permission) => ({
+      permission,
+      state: permissionOverrides[permission] ?? "inherit",
+    }));
+
+    updatePermissionsMutation.mutate({ userId: userToEditPermissions.id, overrides });
+  };
+
+  const availablePermissions = permissionsQuery.data?.availablePermissions ?? [];
+  const effectivePermissionSet = new Set(permissionsQuery.data?.effectivePermissions ?? []);
 
   return (
     <div className="container mx-auto py-8 space-y-6">
@@ -350,6 +423,14 @@ export function UsersPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          onClick={() => openPermissionsDialog(user)}
+                          title="Edit permissions"
+                        >
+                          <Shield className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => openResetPasswordDialog(user)}
                           title="Reset password"
                         >
@@ -437,6 +518,108 @@ export function UsersPage() {
             <Button onClick={handleUpdateRole} disabled={updateRoleMutation.isPending}>
               {updateRoleMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
               Change Role
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Permissions Dialog */}
+      <Dialog open={permissionsDialogOpen} onOpenChange={handlePermissionsDialogChange}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Permissions</DialogTitle>
+            <DialogDescription>
+              Manage permission overrides for <strong>{userToEditPermissions?.username}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          {permissionsQuery.isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Spinner className="h-6 w-6" />
+            </div>
+          ) : permissionsQuery.isError ? (
+            <Alert variant="destructive">
+              <AlertDescription>
+                Failed to load permissions. {(permissionsQuery.error as Error).message}
+              </AlertDescription>
+            </Alert>
+          ) : userToEditPermissions?.role === "Admin" ? (
+            <Alert>
+              <AlertDescription>
+                Admin users always have full permissions and cannot be overridden.
+              </AlertDescription>
+            </Alert>
+          ) : availablePermissions.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No permissions available.</div>
+          ) : (
+            <div className="max-h-105 overflow-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Permission</TableHead>
+                    <TableHead>Effective</TableHead>
+                    <TableHead>Override</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {availablePermissions.map((permission) => {
+                    const effective = effectivePermissionSet.has(permission);
+                    const overrideValue = permissionOverrides[permission] ?? "inherit";
+                    return (
+                      <TableRow key={permission}>
+                        <TableCell className="font-mono text-xs">{permission}</TableCell>
+                        <TableCell>
+                          <span
+                            className={`rounded px-2 py-1 text-xs font-medium ${
+                              effective
+                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
+                                : "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200"
+                            }`}
+                          >
+                            {effective ? "Allowed" : "Denied"}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Select
+                            value={overrideValue}
+                            onValueChange={(value) =>
+                              setPermissionOverrides((prev) => ({
+                                ...prev,
+                                [permission]: value as PermissionState,
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="inherit">Inherit</SelectItem>
+                              <SelectItem value="allow">Allow</SelectItem>
+                              <SelectItem value="deny">Deny</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handlePermissionsDialogChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSavePermissions}
+              disabled={
+                updatePermissionsMutation.isPending ||
+                permissionsQuery.isLoading ||
+                userToEditPermissions?.role === "Admin" ||
+                !permissionsQuery.data
+              }
+            >
+              {updatePermissionsMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
+              Save Permissions
             </Button>
           </DialogFooter>
         </DialogContent>

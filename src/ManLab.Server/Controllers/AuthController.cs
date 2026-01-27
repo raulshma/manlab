@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using ManLab.Server.Constants;
+using ManLab.Server.Data.Entities;
 using ManLab.Server.Services;
 using ManLab.Server.Services.Security;
 using Microsoft.AspNetCore.Authorization;
@@ -58,6 +59,16 @@ public class AuthController : ControllerBase
         var passwordSet = hasUsers.Any();
         var needsSetup = await _usersService.NeedsInitialAdminAsync();
 
+        var permissionClaims = User?.FindAll(Permissions.ClaimType)
+            .Select(c => c.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+
+        var isAdmin = string.Equals(User?.FindFirst(ClaimTypes.Role)?.Value, "Admin", StringComparison.OrdinalIgnoreCase);
+        var effectivePermissions = permissionClaims.Length == 0 && isAdmin
+            ? Permissions.All.ToArray()
+            : permissionClaims;
+
         return Ok(new AuthStatusResponse
         {
             AuthEnabled = authEnabled,
@@ -71,7 +82,8 @@ public class AuthController : ControllerBase
             AuthMethod = User?.FindFirst("auth_method")?.Value,
             Username = User?.FindFirst(ClaimTypes.Name)?.Value,
             Role = User?.FindFirst(ClaimTypes.Role)?.Value,
-            PasswordMustChange = User?.FindFirst("password_must_change")?.Value == "true"
+            PasswordMustChange = User?.FindFirst("password_must_change")?.Value == "true",
+            Permissions = effectivePermissions
         });
     }
 
@@ -95,7 +107,7 @@ public class AuthController : ControllerBase
             var user = await _usersService.CreateInitialAdminAsync(request.Username, request.Password);
             await _settingsService.SetValueAsync(SettingKeys.Auth.Enabled, "true", "Auth", "Require authentication for dashboard/API.");
 
-            return await IssueTokenAsync(user.Username, user.Role.ToString());
+            return await IssueTokenAsync(user, user.PasswordMustChange);
         }
         catch (InvalidOperationException ex)
         {
@@ -118,7 +130,7 @@ public class AuthController : ControllerBase
             return Unauthorized("Invalid username or password.");
         }
 
-        return await IssueTokenAsync(user.Username, user.Role.ToString(), user.PasswordMustChange);
+        return await IssueTokenAsync(user, user.PasswordMustChange);
     }
 
     [HttpPost("change-password")]
@@ -148,7 +160,7 @@ public class AuthController : ControllerBase
             return Unauthorized("Current password is incorrect.");
         }
 
-        return await IssueTokenAsync(user.Username, user.Role.ToString(), false);
+        return await IssueTokenAsync(user, false);
     }
 
     [HttpPost("logout")]
@@ -159,11 +171,12 @@ public class AuthController : ControllerBase
         return Ok();
     }
 
-    private async Task<ActionResult<AuthLoginResponse>> IssueTokenAsync(string username, string role, bool passwordMustChange = false)
+    private async Task<ActionResult<AuthLoginResponse>> IssueTokenAsync(User user, bool passwordMustChange = false)
     {
         try
         {
-            var token = _tokenService.CreateToken(username, role);
+            var permissions = await _usersService.GetEffectivePermissionsAsync(user);
+            var token = _tokenService.CreateToken(user.Username, user.Role.ToString(), permissions, passwordMustChange);
             var cookieOptions = new CookieOptions
             {
                 HttpOnly = true,
@@ -179,9 +192,10 @@ public class AuthController : ControllerBase
                 Token = token.Token,
                 ExpiresAtUtc = token.ExpiresAtUtc,
                 AuthEnabled = authEnabled,
-                Username = username,
-                Role = role,
-                PasswordMustChange = passwordMustChange
+                Username = user.Username,
+                Role = user.Role.ToString(),
+                PasswordMustChange = passwordMustChange,
+                Permissions = permissions.ToArray()
             });
         }
         catch (Exception ex)
@@ -205,6 +219,7 @@ public class AuthController : ControllerBase
         public string? Username { get; set; }
         public string? Role { get; set; }
         public bool PasswordMustChange { get; set; }
+        public string[] Permissions { get; set; } = [];
     }
 
     public sealed class AuthLoginRequest
@@ -233,5 +248,6 @@ public class AuthController : ControllerBase
         public string Username { get; set; } = string.Empty;
         public string Role { get; set; } = string.Empty;
         public bool PasswordMustChange { get; set; }
+        public string[] Permissions { get; set; } = [];
     }
 }

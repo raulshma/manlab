@@ -8,6 +8,8 @@ using ManLab.Server.Hubs;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Enhancements;
 using ManLab.Shared.Dtos;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -26,6 +28,7 @@ namespace ManLab.Server.Controllers.Enhancements;
 /// - SignalR is only used for control messages (start/stop/progress) not data
 /// </summary>
 [ApiController]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.FileBrowserView)]
 public sealed class FileDownloadController : ControllerBase
 {
     // Performance configuration

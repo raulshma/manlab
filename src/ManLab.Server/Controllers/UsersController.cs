@@ -7,7 +7,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/users")]
-[Authorize(Policy = "AdminOnly")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.UsersManage)]
 public class UsersController : ControllerBase
 {
     private readonly UsersService _usersService;
@@ -132,6 +132,100 @@ public class UsersController : ControllerBase
         return Ok(_usersService.ToDto(user));
     }
 
+    [HttpGet("{id}/permissions")]
+    public async Task<ActionResult<UserPermissionsResponse>> GetUserPermissions(Guid id)
+    {
+        var user = await _usersService.GetUserByIdAsync(id);
+        if (user == null)
+        {
+            return NotFound();
+        }
+
+        var effective = await _usersService.GetEffectivePermissionsAsync(user);
+        var overrides = await _usersService.GetUserPermissionOverridesAsync(id);
+
+        var overrideDtos = overrides
+            .Select(o => new UserPermissionOverrideDto(
+                o.Permission,
+                o.IsGranted ? PermissionState.Allow : PermissionState.Deny))
+            .OrderBy(o => o.Permission, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Ok(new UserPermissionsResponse(
+            Permissions.All.ToArray(),
+            effective.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray(),
+            overrideDtos));
+    }
+
+    [HttpPut("{id}/permissions")]
+    public async Task<ActionResult<UserPermissionsResponse>> UpdateUserPermissions(
+        Guid id,
+        [FromBody] UpdateUserPermissionsRequest request)
+    {
+        var user = await _usersService.GetUserByIdAsync(id);
+        if (user == null)
+        {
+            return NotFound();
+        }
+
+        if (user.Role == UserRole.Admin)
+        {
+            return BadRequest("Admin users always have full permissions and cannot be overridden.");
+        }
+
+        var overrides = new List<(string Permission, bool IsGranted)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in request.Overrides)
+        {
+            if (string.IsNullOrWhiteSpace(item.Permission))
+            {
+                return BadRequest("Permission is required.");
+            }
+
+            if (!Permissions.All.Contains(item.Permission, StringComparer.OrdinalIgnoreCase))
+            {
+                return BadRequest($"Unknown permission '{item.Permission}'.");
+            }
+
+            if (!seen.Add(item.Permission))
+            {
+                continue;
+            }
+
+            switch (item.State)
+            {
+                case PermissionState.Inherit:
+                    continue;
+                case PermissionState.Allow:
+                    overrides.Add((item.Permission, true));
+                    break;
+                case PermissionState.Deny:
+                    overrides.Add((item.Permission, false));
+                    break;
+                default:
+                    return BadRequest("State must be 'inherit', 'allow', or 'deny'.");
+            }
+        }
+
+        await _usersService.ReplaceUserPermissionOverridesAsync(user.Id, overrides);
+
+        var effective = await _usersService.GetEffectivePermissionsAsync(user);
+        var updatedOverrides = await _usersService.GetUserPermissionOverridesAsync(user.Id);
+
+        var overrideDtos = updatedOverrides
+            .Select(o => new UserPermissionOverrideDto(
+                o.Permission,
+                o.IsGranted ? PermissionState.Allow : PermissionState.Deny))
+            .OrderBy(o => o.Permission, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return Ok(new UserPermissionsResponse(
+            Permissions.All.ToArray(),
+            effective.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray(),
+            overrideDtos));
+    }
+
     public sealed record CreateUserRequest
     {
         public string Username { get; init; } = string.Empty;
@@ -148,4 +242,23 @@ public class UsersController : ControllerBase
     {
         public string Role { get; init; } = string.Empty;
     }
+
+    public static class PermissionState
+    {
+        public const string Inherit = "inherit";
+        public const string Allow = "allow";
+        public const string Deny = "deny";
+    }
+
+    public sealed record UserPermissionOverrideDto(string Permission, string State);
+
+    public sealed record UpdateUserPermissionsRequest
+    {
+        public List<UserPermissionOverrideDto> Overrides { get; init; } = [];
+    }
+
+    public sealed record UserPermissionsResponse(
+        string[] AvailablePermissions,
+        string[] EffectivePermissions,
+        List<UserPermissionOverrideDto> Overrides);
 }

@@ -1,6 +1,7 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
+using ManLab.Server.Services.Security;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -47,6 +48,73 @@ public class UsersService
     public async Task<List<User>> GetAllUsersAsync()
     {
         return await _dbContext.Users.OrderBy(u => u.Username).ToListAsync();
+    }
+
+    /// <summary>
+    /// Gets per-user permission overrides.
+    /// </summary>
+    public async Task<List<UserPermission>> GetUserPermissionOverridesAsync(Guid userId)
+    {
+        return await _dbContext.UserPermissions
+            .Where(p => p.UserId == userId)
+            .OrderBy(p => p.Permission)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Computes the effective permissions for a user.
+    /// </summary>
+    public async Task<HashSet<string>> GetEffectivePermissionsAsync(User user)
+    {
+        if (user.Role == UserRole.Admin)
+        {
+            return new HashSet<string>(Permissions.All, StringComparer.OrdinalIgnoreCase);
+        }
+
+        var permissions = new HashSet<string>(Permissions.GetRoleDefaults(user.Role), StringComparer.OrdinalIgnoreCase);
+        var overrides = await GetUserPermissionOverridesAsync(user.Id);
+        foreach (var entry in overrides)
+        {
+            if (entry.IsGranted)
+            {
+                permissions.Add(entry.Permission);
+            }
+            else
+            {
+                permissions.Remove(entry.Permission);
+            }
+        }
+
+        return permissions;
+    }
+
+    /// <summary>
+    /// Replaces a user's permission overrides.
+    /// </summary>
+    public async Task ReplaceUserPermissionOverridesAsync(Guid userId, IEnumerable<(string Permission, bool IsGranted)> overrides)
+    {
+        var existing = await _dbContext.UserPermissions
+            .Where(p => p.UserId == userId)
+            .ToListAsync();
+
+        if (existing.Count > 0)
+        {
+            _dbContext.UserPermissions.RemoveRange(existing);
+        }
+
+        foreach (var overrideEntry in overrides)
+        {
+            _dbContext.UserPermissions.Add(new UserPermission
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                Permission = overrideEntry.Permission,
+                IsGranted = overrideEntry.IsGranted,
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+
+        await _dbContext.SaveChangesAsync();
     }
 
     /// <summary>

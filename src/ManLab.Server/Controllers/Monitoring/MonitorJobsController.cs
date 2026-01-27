@@ -1,5 +1,7 @@
 using ManLab.Server.Data;
 using ManLab.Server.Services.Monitoring;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Quartz;
@@ -8,6 +10,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/monitoring/jobs")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringView)]
 public sealed class MonitorJobsController : ControllerBase
 {
     private readonly DataContext _db;

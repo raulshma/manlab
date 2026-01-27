@@ -7,6 +7,8 @@ using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Commands;
 using ManLab.Server.Services.Audit;
 using ManLab.Shared.Dtos;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +21,7 @@ namespace ManLab.Server.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesView)]
 public class DevicesController : ControllerBase
 {
     private const int MaxCommandPayloadChars = 32_768;
@@ -744,6 +747,7 @@ public class DevicesController : ControllerBase
     /// Upserts one or more per-node settings.
     /// </summary>
     [HttpPost("{id:guid}/settings")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
     public async Task<IActionResult> UpsertNodeSettings(Guid id, [FromBody] List<UpsertNodeSettingRequest> settings)
     {
         var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
@@ -816,6 +820,7 @@ public class DevicesController : ControllerBase
     /// <param name="request">The command request.</param>
     /// <returns>The created command.</returns>
     [HttpPost("{id:guid}/commands")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
     public async Task<ActionResult<CommandDto>> CreateCommand(Guid id, [FromBody] CreateCommandRequest request)
     {
         var node = await _dbContext.Nodes.FindAsync(id);
@@ -1002,6 +1007,7 @@ public class DevicesController : ControllerBase
     /// <param name="id">The node ID.</param>
     /// <returns>No content if deleted, 404 if not found.</returns>
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
     public async Task<IActionResult> Delete(Guid id)
     {
         var node = await _dbContext.Nodes
@@ -1093,6 +1099,7 @@ public class DevicesController : ControllerBase
     /// 503 if the agent is not currently connected.
     /// </returns>
     [HttpPost("{id:guid}/ping")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
     public async Task<IActionResult> RequestPing(Guid id)
     {
         var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
@@ -1144,6 +1151,7 @@ public class DevicesController : ControllerBase
     /// 400 if the node has no MAC address or is already online.
     /// </returns>
     [HttpPost("{id:guid}/wake")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
     public async Task<IActionResult> WakeNode(Guid id)
     {
         var node = await _dbContext.Nodes

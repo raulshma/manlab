@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using ManLab.Server.Services.Network;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ManLab.Server.Controllers;
@@ -10,6 +12,7 @@ namespace ManLab.Server.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/network/history")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkHistoryView)]
 public class NetworkToolHistoryController : ControllerBase
 {
     private readonly INetworkToolHistoryService _historyService;

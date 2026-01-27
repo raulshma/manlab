@@ -47,6 +47,9 @@ public class DataContext : DbContext
     /// <summary>User accounts for the system.</summary>
     public DbSet<User> Users => Set<User>();
 
+    /// <summary>Per-user permission overrides.</summary>
+    public DbSet<UserPermission> UserPermissions => Set<UserPermission>();
+
     // Enhancements
     public DbSet<ServiceMonitorConfig> ServiceMonitorConfigs => Set<ServiceMonitorConfig>();
     public DbSet<ServiceStatusSnapshot> ServiceStatusSnapshots => Set<ServiceStatusSnapshot>();
@@ -180,6 +183,17 @@ public class DataContext : DbContext
             entity.HasIndex(e => e.Username).IsUnique();
             entity.HasIndex(e => e.Role);
             entity.HasIndex(e => e.CreatedAt);
+        });
+
+        modelBuilder.Entity<UserPermission>(entity =>
+        {
+            entity.HasIndex(e => new { e.UserId, e.Permission }).IsUnique();
+            entity.HasIndex(e => e.Permission);
+
+            entity.HasOne(e => e.User)
+                .WithMany(u => u.Permissions)
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // Enhancements: File browser policies

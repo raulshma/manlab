@@ -4,6 +4,8 @@ using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Services.Enhancements;
 using ManLab.Shared.Dtos;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -16,6 +18,7 @@ namespace ManLab.Server.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/devices/{nodeId:guid}/script-runs")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsView)]
 public sealed class ScriptRunsController : ControllerBase
 {
     private readonly DataContext _db;
@@ -66,6 +69,7 @@ public sealed class ScriptRunsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsRun)]
     public async Task<ActionResult<CreateScriptRunResponse>> Create(Guid nodeId, [FromBody] CreateScriptRunRequest request)
     {
         var nodeExists = await _db.Nodes.AnyAsync(n => n.Id == nodeId);
@@ -165,6 +169,7 @@ public sealed class ScriptRunsController : ControllerBase
     /// Cancels a running script by queuing a command.cancel to the agent.
     /// </summary>
     [HttpPost("/api/script-runs/{runId:guid}/cancel")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsRun)]
     public async Task<ActionResult<CancelScriptRunResponse>> Cancel(Guid runId)
     {
         var run = await _db.ScriptRuns

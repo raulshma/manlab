@@ -1,6 +1,8 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Data.Enums;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,6 +10,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/scripts")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsView)]
 public sealed class ScriptsController : ControllerBase
 {
     private const int MaxNameChars = 255;
@@ -63,6 +66,7 @@ public sealed class ScriptsController : ControllerBase
     }
 
     [HttpPost]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
     public async Task<ActionResult<ScriptDto>> Create([FromBody] UpsertScriptRequest request)
     {
         var name = (request.Name ?? string.Empty).Trim();
@@ -132,6 +136,7 @@ public sealed class ScriptsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
     public async Task<ActionResult<ScriptDto>> Update(Guid id, [FromBody] UpsertScriptRequest request)
     {
         var script = await _db.Scripts.FirstOrDefaultAsync(s => s.Id == id);
@@ -226,6 +231,7 @@ public sealed class ScriptsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
     public async Task<IActionResult> Delete(Guid id)
     {
         var script = await _db.Scripts.FirstOrDefaultAsync(s => s.Id == id);

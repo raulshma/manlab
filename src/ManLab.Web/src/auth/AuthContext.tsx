@@ -26,12 +26,14 @@ export interface AuthStatus {
   username: string | null;
   role: string | null;
   passwordMustChange: boolean;
+  permissions: string[];
 }
 
 interface AuthContextValue {
   status: AuthStatus | null;
   loading: boolean;
   token: string | null;
+  hasPermission: (permission: string) => boolean;
   refreshStatus: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
   setup: (username: string, password: string) => Promise<void>;
@@ -67,6 +69,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const status = statusQuery.data ?? null;
   const loading = statusQuery.isLoading;
+  const permissions = status?.permissions ?? [];
+  const permissionSet = useMemo(
+    () => new Set(permissions.map((permission) => permission.toLowerCase())),
+    [permissions]
+  );
+
+  const hasPermission = useCallback(
+    (permission: string) => {
+      if (!status?.authEnabled) {
+        return true;
+      }
+      return permissionSet.has(permission.toLowerCase());
+    },
+    [permissionSet, status?.authEnabled]
+  );
 
   const refreshStatus = useCallback(async () => {
     await statusQuery.refetch();
@@ -86,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (username: string, password: string) => {
-      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean }>(
+      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean; permissions: string[] }>(
         "/api/auth/login",
         { username, password }
       );
@@ -99,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const setup = useCallback(
     async (username: string, password: string) => {
-      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean }>(
+      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean; permissions: string[] }>(
         "/api/auth/setup",
         { username, password }
       );
@@ -112,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const changePassword = useCallback(
     async (currentPassword: string, newPassword: string) => {
-      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean }>(
+      const { data } = await api.post<{ token: string; expiresAtUtc: string; username: string; role: string; passwordMustChange: boolean; permissions: string[] }>(
         "/api/auth/change-password",
         { currentPassword, newPassword }
       );
@@ -135,13 +152,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       loading,
       token,
+      hasPermission,
       refreshStatus,
       login,
       setup,
       changePassword,
       logout,
     }),
-    [status, loading, token, refreshStatus, login, setup, changePassword, logout]
+    [status, loading, token, hasPermission, refreshStatus, login, setup, changePassword, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

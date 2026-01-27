@@ -4,6 +4,8 @@ using ManLab.Server.Data;
 using ManLab.Server.Services.Ssh;
 using ManLab.Server.Services.Enhancements;
 using ManLab.Shared.Dtos;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Net.Http.Headers;
@@ -16,6 +18,7 @@ namespace ManLab.Server.Controllers.Enhancements;
 /// This bypasses the agent's SignalR-based file streaming and uses direct SFTP connections.
 /// </summary>
 [ApiController]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.FileBrowserView)]
 public sealed class SshFileDownloadController : ControllerBase
 {
     private const int DefaultMaxEntries = 5_000;

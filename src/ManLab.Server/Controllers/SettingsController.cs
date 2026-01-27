@@ -1,11 +1,14 @@
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Services;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.SettingsManage)]
 public class SettingsController : ControllerBase
 {
     private readonly ISettingsService _settingsService;

@@ -3,6 +3,8 @@ using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Data.Enums;
 using ManLab.Shared.Dtos;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -11,6 +13,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/devices/{nodeId:guid}/service-monitor-configs")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringView)]
 public sealed class ServiceMonitorConfigsController : ControllerBase
 {
     private const int MaxServiceNameChars = 256;
@@ -50,6 +53,7 @@ public sealed class ServiceMonitorConfigsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult<ServiceMonitorConfigDto>> Create(Guid nodeId, [FromBody] UpsertServiceMonitorConfigRequest request)
     {
         var nodeExists = await _db.Nodes.AnyAsync(n => n.Id == nodeId);
@@ -99,6 +103,7 @@ public sealed class ServiceMonitorConfigsController : ControllerBase
     }
 
     [HttpPut("{configId:guid}")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult<ServiceMonitorConfigDto>> Update(Guid nodeId, Guid configId, [FromBody] UpsertServiceMonitorConfigRequest request)
     {
         var entity = await _db.ServiceMonitorConfigs.FirstOrDefaultAsync(c => c.Id == configId && c.NodeId == nodeId);
@@ -145,6 +150,7 @@ public sealed class ServiceMonitorConfigsController : ControllerBase
     }
 
     [HttpDelete("{configId:guid}")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<IActionResult> Delete(Guid nodeId, Guid configId)
     {
         var entity = await _db.ServiceMonitorConfigs.FirstOrDefaultAsync(c => c.Id == configId && c.NodeId == nodeId);
@@ -164,6 +170,7 @@ public sealed class ServiceMonitorConfigsController : ControllerBase
     /// Payload: { "services": ["nginx", "ssh"] }
     /// </summary>
     [HttpPost("refresh")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult<QueuedCommandResponse>> RequestRefresh(Guid nodeId)
     {
         var nodeExists = await _db.Nodes.AnyAsync(n => n.Id == nodeId);

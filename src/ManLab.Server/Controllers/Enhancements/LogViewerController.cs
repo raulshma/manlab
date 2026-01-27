@@ -3,6 +3,8 @@ using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Services.Enhancements;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +18,7 @@ namespace ManLab.Server.Controllers.Enhancements;
 /// Server-side authorization checks are performed before dispatching commands.
 /// </summary>
 [ApiController]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.LogViewerUse)]
 public sealed class LogViewerController : ControllerBase
 {
     private static readonly TimeSpan DefaultWaitTimeout = TimeSpan.FromSeconds(10);

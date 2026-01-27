@@ -2,6 +2,8 @@ using System.Text.Json;
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Services.Monitoring;
+using ManLab.Server.Services.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Quartz;
@@ -10,6 +12,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/monitoring/network-tools")]
+[Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringView)]
 public sealed class ScheduledNetworkToolsController : ControllerBase
 {
     private static readonly HashSet<string> SupportedToolTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -23,15 +26,18 @@ public sealed class ScheduledNetworkToolsController : ControllerBase
 
     private readonly DataContext _db;
     private readonly MonitorJobScheduler _scheduler;
+    private readonly IAuthorizationService _authorizationService;
     private readonly ILogger<ScheduledNetworkToolsController> _logger;
 
     public ScheduledNetworkToolsController(
         DataContext db,
         MonitorJobScheduler scheduler,
+        IAuthorizationService authorizationService,
         ILogger<ScheduledNetworkToolsController> logger)
     {
         _db = db;
         _scheduler = scheduler;
+        _authorizationService = authorizationService;
         _logger = logger;
     }
 
@@ -64,12 +70,19 @@ public sealed class ScheduledNetworkToolsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult<ScheduledNetworkToolConfigDto>> Create([FromBody] ScheduledNetworkToolConfigRequest request, CancellationToken ct)
     {
         var validationError = ValidateRequest(request);
         if (validationError is not null)
         {
             return BadRequest(validationError);
+        }
+
+        var authorizationResult = await EnsureToolPermissionAsync(request.ToolType);
+        if (authorizationResult is not null)
+        {
+            return authorizationResult;
         }
 
         if (!CronExpression.IsValidExpression(request.Cron))
@@ -98,6 +111,7 @@ public sealed class ScheduledNetworkToolsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult<ScheduledNetworkToolConfigDto>> Update(Guid id, [FromBody] ScheduledNetworkToolConfigRequest request, CancellationToken ct)
     {
         var config = await _db.ScheduledNetworkToolConfigs.FirstOrDefaultAsync(c => c.Id == id, ct).ConfigureAwait(false);
@@ -110,6 +124,12 @@ public sealed class ScheduledNetworkToolsController : ControllerBase
         if (validationError is not null)
         {
             return BadRequest(validationError);
+        }
+
+        var authorizationResult = await EnsureToolPermissionAsync(request.ToolType);
+        if (authorizationResult is not null)
+        {
+            return authorizationResult;
         }
 
         if (!CronExpression.IsValidExpression(request.Cron))
@@ -135,6 +155,7 @@ public sealed class ScheduledNetworkToolsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult> Delete(Guid id, CancellationToken ct)
     {
         var config = await _db.ScheduledNetworkToolConfigs.FirstOrDefaultAsync(c => c.Id == id, ct).ConfigureAwait(false);
@@ -151,12 +172,31 @@ public sealed class ScheduledNetworkToolsController : ControllerBase
     }
 
     [HttpPost("{id:guid}/run")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.MonitoringManage)]
     public async Task<ActionResult> RunNow(Guid id, CancellationToken ct)
     {
         var exists = await _db.ScheduledNetworkToolConfigs.AnyAsync(c => c.Id == id, ct).ConfigureAwait(false);
         if (!exists)
         {
             return NotFound();
+        }
+
+        var toolType = await _db.ScheduledNetworkToolConfigs
+            .AsNoTracking()
+            .Where(c => c.Id == id)
+            .Select(c => c.ToolType)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(toolType))
+        {
+            return NotFound();
+        }
+
+        var authorizationResult = await EnsureToolPermissionAsync(toolType);
+        if (authorizationResult is not null)
+        {
+            return authorizationResult;
         }
 
         try
@@ -188,12 +228,31 @@ public sealed class ScheduledNetworkToolsController : ControllerBase
             return $"ToolType '{request.ToolType}' is not supported.";
         }
 
+        if (!Permissions.TryGetNetworkToolPermission(request.ToolType, out _))
+        {
+            return $"ToolType '{request.ToolType}' does not map to a permission.";
+        }
+
         if (RequiresTarget(request.ToolType) && string.IsNullOrWhiteSpace(request.Target))
         {
             return "Target is required for this tool type.";
         }
 
         return null;
+    }
+
+    private async Task<ActionResult?> EnsureToolPermissionAsync(string toolType)
+    {
+        if (!Permissions.TryGetNetworkToolPermission(toolType, out var permission))
+        {
+            return BadRequest($"ToolType '{toolType}' does not map to a permission.");
+        }
+
+        var result = await _authorizationService.AuthorizeAsync(
+            User,
+            policyName: Permissions.PolicyFor(permission));
+
+        return result.Succeeded ? null : Forbid();
     }
 
     private static bool RequiresTarget(string toolType)
