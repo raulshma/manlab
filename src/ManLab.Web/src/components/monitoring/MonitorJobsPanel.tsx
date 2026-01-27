@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Play, PauseCircle, PlayCircle, Settings } from "lucide-react";
+import { RefreshCw, Play, PauseCircle, PlayCircle, Settings, Cpu, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -23,6 +23,29 @@ function formatDate(value: string | null): string {
   } catch {
     return value;
   }
+}
+
+// Helper function to get job type badge info
+function getJobTypeInfo(type: MonitorJobSummary["type"]): { label: string; variant: "default" | "secondary"; icon?: React.ReactNode } {
+  switch (type) {
+    case "http":
+      return { label: "HTTP", variant: "default" };
+    case "traffic":
+      return { label: "Traffic", variant: "secondary" };
+    case "network-tool":
+      return { label: "Network Tool", variant: "secondary" };
+    case "system-update":
+      return { label: "System Update", variant: "secondary", icon: <Server className="h-3 w-3" /> };
+    case "agent-update":
+      return { label: "Agent Update", variant: "secondary", icon: <Cpu className="h-3 w-3" /> };
+    default:
+      return { label: type, variant: "secondary" };
+  }
+}
+
+// Check if job is a system job (cannot be toggled or managed)
+function isSystemJob(type: MonitorJobSummary["type"]): boolean {
+  return type === "system-update" || type === "agent-update";
 }
 
 export function MonitorJobsPanel({ onManageJob }: { onManageJob?: (type: "http" | "traffic") => void }) {
@@ -77,9 +100,10 @@ export function MonitorJobsPanel({ onManageJob }: { onManageJob?: (type: "http" 
     mutationFn: async (job: MonitorJobSummary) => {
       if (job.type === "http") {
         await runHttpMonitor(job.id);
-      } else {
+      } else if (job.type === "traffic") {
         await runTrafficMonitor();
       }
+      // System jobs and network tools cannot be manually triggered via this UI
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["monitoring", "jobs"] });
@@ -112,15 +136,23 @@ export function MonitorJobsPanel({ onManageJob }: { onManageJob?: (type: "http" 
         <div className="grid grid-cols-1 gap-0 divide-y">
           {(jobs ?? []).map((job) => {
             const enabled = job.enabled;
+            const jobTypeInfo = getJobTypeInfo(job.type);
+            const isSystem = isSystemJob(job.type);
+            const canToggle = job.type === "http" || job.type === "traffic";
+            const canRun = job.type === "http" || job.type === "traffic";
+            const canManage = job.type === "http" || job.type === "traffic";
+
             return (
               <div key={`${job.type}-${job.id}`} className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{job.name}</span>
-                    <Badge variant={job.type === "http" ? "default" : "secondary"}>
-                      {job.type === "http" ? "HTTP" : "Traffic"}
+                    <Badge variant={jobTypeInfo.variant}>
+                      {jobTypeInfo.icon}
+                      <span className={jobTypeInfo.icon ? "ml-1" : ""}>{jobTypeInfo.label}</span>
                     </Badge>
                     {!enabled && <Badge variant="outline">Paused</Badge>}
+                    {isSystem && <Badge variant="outline" className="text-xs">System</Badge>}
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
                     Schedule: {job.schedule}
@@ -131,38 +163,44 @@ export function MonitorJobsPanel({ onManageJob }: { onManageJob?: (type: "http" 
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      checked={enabled}
-                      onCheckedChange={() => {
-                        if (job.type === "http") {
-                          const config = httpMonitorMap.get(job.id);
-                          if (config) {
-                            toggleHttpMutation.mutate(config);
+                  {canToggle && (
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={enabled}
+                        onCheckedChange={() => {
+                          if (job.type === "http") {
+                            const config = httpMonitorMap.get(job.id);
+                            if (config) {
+                              toggleHttpMutation.mutate(config);
+                            }
+                          } else if (traffic) {
+                            toggleTrafficMutation.mutate(traffic);
                           }
-                        } else if (traffic) {
-                          toggleTrafficMutation.mutate(traffic);
-                        }
-                      }}
-                    />
-                    <span className="text-xs text-muted-foreground">{enabled ? "Enabled" : "Paused"}</span>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => runJobMutation.mutate(job)}
-                  >
-                    {enabled ? <Play className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
-                    Run now
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onManageJob?.(job.type)}
-                  >
-                    <Settings className="h-4 w-4" />
-                    Manage
-                  </Button>
+                        }}
+                      />
+                      <span className="text-xs text-muted-foreground">{enabled ? "Enabled" : "Paused"}</span>
+                    </div>
+                  )}
+                  {canRun && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => runJobMutation.mutate(job)}
+                    >
+                      {enabled ? <Play className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
+                      Run now
+                    </Button>
+                  )}
+                  {canManage && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onManageJob?.(job.type)}
+                    >
+                      <Settings className="h-4 w-4" />
+                      Manage
+                    </Button>
+                  )}
                   {enabled ? (
                     <PauseCircle className="h-4 w-4 text-muted-foreground" />
                   ) : (

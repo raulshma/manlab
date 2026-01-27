@@ -478,7 +478,7 @@ export interface TrafficSample {
  */
 export interface MonitorJobSummary {
   id: string;
-  type: "http" | "traffic";
+  type: "http" | "traffic" | "network-tool" | "system-update" | "agent-update";
   name: string;
   schedule: string;
   enabled: boolean;
