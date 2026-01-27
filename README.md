@@ -114,6 +114,8 @@ You can configure the agent via `src/ManLab.Agent/appsettings.json` or environme
 - `MANLAB_SERVER_URL` (must include `/hubs/agent`)
 - `MANLAB_AUTH_TOKEN` (optional)
 
+Additional `MANLAB_*` environment variables map to the `Agent` section (telemetry toggles, rate limits, remote tools, etc.). See `src/ManLab.Agent/appsettings.json` for the full set of supported keys.
+
 Default dev config is:
 
 - `ServerUrl`: `http://localhost:5247/hubs/agent`
@@ -124,12 +126,17 @@ The server exposes a small “binary distribution” API used by the installer s
 
 - `GET /api/binaries/agent` (lists available RIDs)
 - `GET /api/binaries/agent/release-catalog` (lists locally staged versions + optional GitHub tags)
+- `GET /api/binaries/agent/manifest` (describes staged binaries + hashes)
 - `GET /api/binaries/agent/{rid}` (downloads `manlab-agent` / `manlab-agent.exe`)
+- `GET /api/binaries/agent/{rid}/appsettings.json` (serves a staged or generated template)
+- `GET /api/binaries/agent/github-release-info` (GitHub release download URLs)
 
 Binaries are served from the server’s distribution root:
 
-- Default: `src/ManLab.Server/Distribution/agent/{rid}/...`
-- Configurable via `BinaryDistribution:RootPath` (defaults to `{ContentRoot}/Distribution`)
+- Default: `src/ManLab.Server/Distribution/agent/{channel}/{rid}/...`
+- Versioned layout: `src/ManLab.Server/Distribution/agent/{channel}/{version}/{rid}/...`
+- Legacy fallback (if enabled): `src/ManLab.Server/Distribution/agent/{rid}/...`
+- Configurable via `BinaryDistribution:RootPath` (defaults to `{ContentRoot}/Distribution`, default channel is `stable`)
 
 To publish and stage binaries for common RIDs, use the build tool (or the wrapper script):
 
