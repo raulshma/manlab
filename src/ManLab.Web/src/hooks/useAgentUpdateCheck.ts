@@ -44,9 +44,10 @@ export function useAgentUpdateCheck(nodeId: string, currentAgentVersion: string 
     if (catalog.gitHub.enabled && catalog.gitHub.configuredLatestVersion) {
       latestVersion = catalog.gitHub.configuredLatestVersion;
     } else if (catalog.gitHub.enabled && catalog.gitHub.releases?.length > 0) {
-      const nonDraftReleases = catalog.gitHub.releases.filter((r) => !r.draft);
-      if (nonDraftReleases.length > 0) {
-        latestVersion = nonDraftReleases[0].tag;
+      const stableReleases = catalog.gitHub.releases.filter((r) => !r.draft && !r.prerelease);
+      if (stableReleases.length > 0) {
+        stableReleases.sort((a, b) => compareVersions(b.tag, a.tag));
+        latestVersion = stableReleases[0].tag;
       }
     } else if (catalog.local && catalog.local.length > 0) {
       latestVersion = catalog.local[0].version;
@@ -65,4 +66,28 @@ export function useAgentUpdateCheck(nodeId: string, currentAgentVersion: string 
     loading,
     error: error as Error | undefined,
   };
+}
+
+/**
+ * Compare two semver strings (e.g. "v1.0.0", "1.2.3").
+ * Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal.
+ * Ignores prerelease suffixes for comparison (treats 1.0.0-beta as 1.0.0).
+ */
+function compareVersions(v1: string, v2: string): number {
+  const s1 = v1.replace(/^v/, "");
+  const s2 = v2.replace(/^v/, "");
+  
+  const p1 = s1.split(".").map((p) => parseInt(p, 10));
+  const p2 = s2.split(".").map((p) => parseInt(p, 10));
+  
+  const len = Math.max(p1.length, p2.length);
+  
+  for (let i = 0; i < len; i++) {
+    const n1 = p1[i] || 0;
+    const n2 = p2[i] || 0;
+    if (n1 > n2) return 1;
+    if (n1 < n2) return -1;
+  }
+  
+  return 0;
 }
