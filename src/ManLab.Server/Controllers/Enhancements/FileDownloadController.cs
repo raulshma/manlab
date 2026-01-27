@@ -38,7 +38,7 @@ public sealed class FileDownloadController : ControllerBase
     private static readonly TimeSpan StreamingTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan ZipCreationTimeout = TimeSpan.FromHours(2);
     private static readonly TimeSpan FirstChunkTimeout = TimeSpan.FromSeconds(60);
-    
+
     private readonly DataContext _db;
     private readonly FileBrowserSessionService _fileBrowserSessions;
     private readonly DownloadSessionService _downloadSessions;
@@ -232,7 +232,7 @@ public sealed class FileDownloadController : ControllerBase
         {
             _logger.LogInformation("Download {DownloadId} was cancelled", downloadId);
             _downloadSessions.CompleteSession(downloadId, false, "Cancelled.");
-            
+
             if (!Response.HasStarted)
             {
                 Response.StatusCode = 499; // Client closed request
@@ -272,7 +272,7 @@ public sealed class FileDownloadController : ControllerBase
 
         var elapsed = DateTime.UtcNow - session.CreatedAt;
         var speed = elapsed.TotalSeconds > 0 ? session.TransferredBytes / elapsed.TotalSeconds : 0;
-        
+
         int? eta = null;
         if (session.TotalBytes.HasValue && session.TotalBytes > 0 && speed > 0)
         {
@@ -557,7 +557,7 @@ public sealed class FileDownloadController : ControllerBase
         bool isPartial)
     {
         var sanitizedFilename = SanitizeFilename(session.Filename);
-        
+
         Response.Headers.Append(HeaderNames.ContentDisposition, $"attachment; filename=\"{sanitizedFilename}\"");
         Response.ContentType = session.AsZip ? "application/zip" : "application/octet-stream";
         Response.Headers.Append(HeaderNames.AcceptRanges, "bytes");

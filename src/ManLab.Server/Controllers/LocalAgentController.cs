@@ -296,7 +296,7 @@ public sealed class LocalAgentController : ControllerBase
         string? NextRunTime);
 
     public sealed record LocalAgentInstallRequest(
-        bool Force = false, 
+        bool Force = false,
         bool UserMode = false,
         AgentConfigurationRequest? AgentConfig = null);
 

@@ -11,7 +11,7 @@ public interface IOuiDatabase
     /// <param name="macAddress">MAC address in any common format (XX:XX:XX:XX:XX:XX, XX-XX-XX-XX-XX-XX, etc.).</param>
     /// <returns>Vendor name or null if not found.</returns>
     string? LookupVendor(string macAddress);
-    
+
     /// <summary>
     /// Gets the total number of vendors in the database.
     /// </summary>

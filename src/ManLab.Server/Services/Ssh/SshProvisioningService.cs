@@ -612,7 +612,7 @@ public sealed class SshProvisioningService
             var baseUrlToUse = !string.IsNullOrWhiteSpace(selectedGitHubBaseUrl) ? selectedGitHubBaseUrl : githubBaseUrl;
             var versionToUse = !string.IsNullOrWhiteSpace(selectedVersion) ? selectedVersion : githubVersion;
 
-            progress.Report($"GitHub settings read: enabled={githubEnabled}, baseUrl={(string.IsNullOrWhiteSpace(githubBaseUrl) ? "<empty>" : githubBaseUrl.Trim())}, version={(string.IsNullOrWhiteSpace(githubVersion) ? "<empty>" : githubVersion.Trim())}." );
+            progress.Report($"GitHub settings read: enabled={githubEnabled}, baseUrl={(string.IsNullOrWhiteSpace(githubBaseUrl) ? "<empty>" : githubBaseUrl.Trim())}, version={(string.IsNullOrWhiteSpace(githubVersion) ? "<empty>" : githubVersion.Trim())}.");
 
             if (!string.IsNullOrWhiteSpace(selectedGitHubBaseUrl) || !string.IsNullOrWhiteSpace(selectedVersion))
             {
@@ -1058,23 +1058,23 @@ public sealed class SshProvisioningService
                 break;
 
             case PrivateKeyAuth privateKeyAuth:
-            {
-                var keyBytes = Encoding.UTF8.GetBytes(privateKeyAuth.PrivateKeyPem);
-                using var ms = new MemoryStream(keyBytes);
-
-                PrivateKeyFile keyFile;
-                if (!string.IsNullOrEmpty(privateKeyAuth.Passphrase))
                 {
-                    keyFile = new PrivateKeyFile(ms, privateKeyAuth.Passphrase);
-                }
-                else
-                {
-                    keyFile = new PrivateKeyFile(ms);
-                }
+                    var keyBytes = Encoding.UTF8.GetBytes(privateKeyAuth.PrivateKeyPem);
+                    using var ms = new MemoryStream(keyBytes);
 
-                authMethods.Add(new PrivateKeyAuthenticationMethod(options.Username, keyFile));
-                break;
-            }
+                    PrivateKeyFile keyFile;
+                    if (!string.IsNullOrEmpty(privateKeyAuth.Passphrase))
+                    {
+                        keyFile = new PrivateKeyFile(ms, privateKeyAuth.Passphrase);
+                    }
+                    else
+                    {
+                        keyFile = new PrivateKeyFile(ms);
+                    }
+
+                    authMethods.Add(new PrivateKeyAuthenticationMethod(options.Username, keyFile));
+                    break;
+                }
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(options.Auth), "Unknown SSH auth mode");
@@ -1105,23 +1105,23 @@ public sealed class SshProvisioningService
                 break;
 
             case PrivateKeyAuth privateKeyAuth:
-            {
-                var keyBytes = Encoding.UTF8.GetBytes(privateKeyAuth.PrivateKeyPem);
-                using var ms = new MemoryStream(keyBytes);
-
-                PrivateKeyFile keyFile;
-                if (!string.IsNullOrEmpty(privateKeyAuth.Passphrase))
                 {
-                    keyFile = new PrivateKeyFile(ms, privateKeyAuth.Passphrase);
-                }
-                else
-                {
-                    keyFile = new PrivateKeyFile(ms);
-                }
+                    var keyBytes = Encoding.UTF8.GetBytes(privateKeyAuth.PrivateKeyPem);
+                    using var ms = new MemoryStream(keyBytes);
 
-                authMethods.Add(new PrivateKeyAuthenticationMethod(options.Username, keyFile));
-                break;
-            }
+                    PrivateKeyFile keyFile;
+                    if (!string.IsNullOrEmpty(privateKeyAuth.Passphrase))
+                    {
+                        keyFile = new PrivateKeyFile(ms, privateKeyAuth.Passphrase);
+                    }
+                    else
+                    {
+                        keyFile = new PrivateKeyFile(ms);
+                    }
+
+                    authMethods.Add(new PrivateKeyAuthenticationMethod(options.Username, keyFile));
+                    break;
+                }
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(options.Auth), "Unknown SSH auth mode");
@@ -1178,7 +1178,7 @@ public sealed class SshProvisioningService
         {
             // Verify this is a real Unix-like system by checking for /bin/sh or /etc/os-release
             var isRealUnix = Execute(client, "sh -c 'test -f /etc/os-release && echo YES || (test -x /bin/sh && echo YES || echo NO)'", maxChars: 64)?.Trim();
-            
+
             if (string.Equals(isRealUnix, "YES", StringComparison.OrdinalIgnoreCase))
             {
                 var osRelease = Execute(client, "sh -c 'cat /etc/os-release 2>/dev/null || true'", maxChars: 16_384);
@@ -1268,7 +1268,7 @@ public sealed class SshProvisioningService
         return input.Replace(token, "<redacted>", StringComparison.Ordinal);
     }
 
-    private static string? Execute(SshClient client, string commandText, int maxChars)
+    private static string Execute(SshClient client, string commandText, int maxChars)
     {
         var cmd = client.CreateCommand(commandText);
         var result = cmd.Execute();
@@ -1449,4 +1449,27 @@ public sealed class SshProvisioningService
     private static string EscapeSingleQuotes(string s) => s.Replace("'", "'\\''");
 
     private static string EscapeDoubleQuotes(string s) => s.Replace("\"", "\\\"");
+
+    /// <summary>
+    /// Executes an arbitrary command on a remote system via SSH.
+    /// </summary>
+    public async Task<string> ExecuteCommandAsync(
+        ConnectionOptions options,
+        string commandText,
+        CancellationToken cancellationToken = default)
+    {
+        using var client = CreateSshClient(options, out _);
+        try
+        {
+            client.Connect();
+            var result = Execute(client, commandText, maxChars: 500_000);
+            client.Disconnect();
+            return result;
+        }
+        catch
+        {
+            client?.Disconnect();
+            throw;
+        }
+    }
 }

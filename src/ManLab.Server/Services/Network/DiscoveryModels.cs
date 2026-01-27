@@ -9,37 +9,37 @@ public record MdnsDiscoveredDevice
     /// The service instance name (e.g., "My Printer").
     /// </summary>
     public required string Name { get; init; }
-    
+
     /// <summary>
     /// The service type (e.g., "_http._tcp", "_printer._tcp").
     /// </summary>
     public required string ServiceType { get; init; }
-    
+
     /// <summary>
     /// The hostname of the device.
     /// </summary>
     public string? Hostname { get; init; }
-    
+
     /// <summary>
     /// The IP addresses of the device.
     /// </summary>
     public List<string> IpAddresses { get; init; } = [];
-    
+
     /// <summary>
     /// The port the service is running on.
     /// </summary>
     public int Port { get; init; }
-    
+
     /// <summary>
     /// TXT record data (key-value pairs).
     /// </summary>
     public Dictionary<string, string> TxtRecords { get; init; } = [];
-    
+
     /// <summary>
     /// The network interface the device was discovered on.
     /// </summary>
     public string? NetworkInterface { get; init; }
-    
+
     /// <summary>
     /// When this device was discovered.
     /// </summary>
@@ -55,57 +55,57 @@ public record UpnpDiscoveredDevice
     /// The unique service name (USN).
     /// </summary>
     public required string Usn { get; init; }
-    
+
     /// <summary>
     /// The notification type (NT) or search target (ST).
     /// </summary>
     public string? NotificationType { get; init; }
-    
+
     /// <summary>
     /// The location URL of the device description XML.
     /// </summary>
     public string? DescriptionLocation { get; init; }
-    
+
     /// <summary>
     /// The friendly name of the device (from description XML).
     /// </summary>
     public string? FriendlyName { get; init; }
-    
+
     /// <summary>
     /// The manufacturer of the device.
     /// </summary>
     public string? Manufacturer { get; init; }
-    
+
     /// <summary>
     /// The model name of the device.
     /// </summary>
     public string? ModelName { get; init; }
-    
+
     /// <summary>
     /// The model number of the device.
     /// </summary>
     public string? ModelNumber { get; init; }
-    
+
     /// <summary>
     /// The IP address of the device.
     /// </summary>
     public string? IpAddress { get; init; }
-    
+
     /// <summary>
     /// The server header value.
     /// </summary>
     public string? Server { get; init; }
-    
+
     /// <summary>
     /// List of services provided by this device.
     /// </summary>
     public List<string> Services { get; init; } = [];
-    
+
     /// <summary>
     /// When this device was discovered.
     /// </summary>
     public DateTime DiscoveredAt { get; init; } = DateTime.UtcNow;
-    
+
     /// <summary>
     /// When the device cache expires.
     /// </summary>
@@ -121,27 +121,27 @@ public record DiscoveryScanResult
     /// Devices discovered via mDNS.
     /// </summary>
     public List<MdnsDiscoveredDevice> MdnsDevices { get; init; } = [];
-    
+
     /// <summary>
     /// Devices discovered via UPnP/SSDP.
     /// </summary>
     public List<UpnpDiscoveredDevice> UpnpDevices { get; init; } = [];
-    
+
     /// <summary>
     /// When the scan started.
     /// </summary>
     public DateTime StartedAt { get; init; }
-    
+
     /// <summary>
     /// When the scan completed.
     /// </summary>
     public DateTime CompletedAt { get; init; }
-    
+
     /// <summary>
     /// Duration of the scan in milliseconds.
     /// </summary>
     public long DurationMs => (long)(CompletedAt - StartedAt).TotalMilliseconds;
-    
+
     /// <summary>
     /// Total number of devices discovered.
     /// </summary>
@@ -155,19 +155,19 @@ public static class MdnsServiceTypes
 {
     // Meta-query to discover all available service types
     public const string AllServices = "_services._dns-sd._udp";
-    
+
     // Workstation and general
     public const string Workstation = "_workstation._tcp";
     public const string Device = "_device-info._tcp";
     public const string Sleep = "_sleep-proxy._udp";
-    
+
     // Web and network services
     public const string Http = "_http._tcp";
     public const string Https = "_https._tcp";
     public const string HttpAlt = "_http-alt._tcp";
     public const string WebDav = "_webdav._tcp";
     public const string WebDavS = "_webdavs._tcp";
-    
+
     // Remote access
     public const string Ssh = "_ssh._tcp";
     public const string Sftp = "_sftp-ssh._tcp";
@@ -175,12 +175,12 @@ public static class MdnsServiceTypes
     public const string Telnet = "_telnet._tcp";
     public const string Vnc = "_rfb._tcp";
     public const string Rdp = "_rdp._tcp";
-    
+
     // File sharing
     public const string Smb = "_smb._tcp";
     public const string Afp = "_afp._tcp";
     public const string Nfs = "_nfs._tcp";
-    
+
     // Printing
     public const string Printer = "_printer._tcp";
     public const string Ipp = "_ipp._tcp";
@@ -189,7 +189,7 @@ public static class MdnsServiceTypes
     public const string Scanner = "_scanner._tcp";
     public const string Uscan = "_uscan._tcp";
     public const string Uscans = "_uscans._tcp";
-    
+
     // Apple ecosystem
     public const string AirPlay = "_airplay._tcp";
     public const string AirPlay2 = "_airplay2._tcp";
@@ -200,7 +200,7 @@ public static class MdnsServiceTypes
     public const string TimeMachine = "_adisk._tcp";
     public const string AirDrop = "_airdrop._tcp";
     public const string Companion = "_companion-link._tcp";
-    
+
     // Media and streaming
     public const string GoogleCast = "_googlecast._tcp";
     public const string Spotify = "_spotify-connect._tcp";
@@ -213,7 +213,7 @@ public static class MdnsServiceTypes
     public const string Roku = "_roku._tcp";
     public const string AmazonEcho = "_amzn-wplay._tcp";
     public const string Kodi = "_xbmc-jsonrpc._tcp";
-    
+
     // Smart home and IoT
     public const string HomeKit = "_hap._tcp";
     public const string HomeAssistant = "_home-assistant._tcp";
@@ -226,13 +226,13 @@ public static class MdnsServiceTypes
     public const string Matter = "_matter._tcp";
     public const string MatterCommissioning = "_matterc._udp";
     public const string Thread = "_meshcop._udp";
-    
+
     // Cameras and security
     public const string Onvif = "_onvif-bnep._udp";
     public const string Rtsp = "_rtsp._tcp";
     public const string Camera = "_axis-video._tcp";
     public const string NestCam = "_nest-cam._tcp";
-    
+
     // Network infrastructure
     public const string Dns = "_dns._udp";
     public const string DnsLlq = "_dns-llq._udp";
@@ -240,17 +240,17 @@ public static class MdnsServiceTypes
     public const string Ntp = "_ntp._udp";
     public const string Snmp = "_snmp._udp";
     public const string Syslog = "_syslog._udp";
-    
+
     // Gaming
     public const string Steam = "_steam-streaming._tcp";
     public const string Xbox = "_xbox._tcp";
     public const string PlayStation = "_playstation._tcp";
     public const string NintendoSwitch = "_nintendo._tcp";
-    
+
     // Communication
     public const string Sip = "_sip._udp";
     public const string Xmpp = "_xmpp-client._tcp";
-    
+
     /// <summary>
     /// Gets the comprehensive service types for network device discovery.
     /// Note: AllServices meta-query is not included as Tmds.MDns library doesn't support it properly.
@@ -310,7 +310,7 @@ public static class MdnsServiceTypes
         Rtsp,
         Camera,
     ];
-    
+
     /// <summary>
     /// Extended service types for thorough discovery (includes less common types).
     /// </summary>

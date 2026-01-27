@@ -31,6 +31,7 @@ import {
   approvePendingUpdate,
   disableAutoUpdate,
 } from "@/api";
+import type { UpdateAutoUpdateSettingsRequest } from "@/types";
 
 interface AutoUpdateSettingsPanelProps {
   nodeId: string;
@@ -213,7 +214,7 @@ export function AutoUpdateSettingsPanel({ nodeId }: AutoUpdateSettingsPanelProps
           {/* Channel selection */}
           <div className="space-y-2">
             <Label htmlFor="channel">Update Channel</Label>
-            <Select value={channel} onValueChange={setChannel}>
+            <Select value={channel} onValueChange={(v) => setChannel(v ?? "stable")}>
               <SelectTrigger id="channel">
                 <SelectValue />
               </SelectTrigger>

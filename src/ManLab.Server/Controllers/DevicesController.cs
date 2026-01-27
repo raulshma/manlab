@@ -1024,7 +1024,7 @@ public class DevicesController : ControllerBase
         if (_connectionRegistry.TryGet(id, out var connectionId))
         {
             _logger.SendingUninstallCommand(id);
-            
+
             // Queue the uninstall command
             var uninstallCommand = new Data.Entities.CommandQueueItem
             {

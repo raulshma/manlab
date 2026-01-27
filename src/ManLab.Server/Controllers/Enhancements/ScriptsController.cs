@@ -66,7 +66,7 @@ public sealed class ScriptsController : ControllerBase
     }
 
     [HttpPost]
-[Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
     public async Task<ActionResult<ScriptDto>> Create([FromBody] UpsertScriptRequest request)
     {
         var name = (request.Name ?? string.Empty).Trim();
@@ -136,7 +136,7 @@ public sealed class ScriptsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-[Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
     public async Task<ActionResult<ScriptDto>> Update(Guid id, [FromBody] UpsertScriptRequest request)
     {
         var script = await _db.Scripts.FirstOrDefaultAsync(s => s.Id == id);
@@ -231,7 +231,7 @@ public sealed class ScriptsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-[Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.ScriptsManage)]
     public async Task<IActionResult> Delete(Guid id)
     {
         var script = await _db.Scripts.FirstOrDefaultAsync(s => s.Id == id);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "@/api";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
@@ -180,16 +180,6 @@ export function UsersPage() {
     enabled: permissionsDialogOpen && !!userToEditPermissions,
   });
 
-  useEffect(() => {
-    if (!permissionsQuery.data) {
-      return;
-    }
-    const overrides = Object.fromEntries(
-      permissionsQuery.data.overrides.map((override) => [override.permission, override.state])
-    );
-    setPermissionOverrides(overrides);
-  }, [permissionsQuery.data]);
-
   if (!canManageUsers) {
     return (
       <div className="container mx-auto py-8">
@@ -271,7 +261,6 @@ export function UsersPage() {
     setPermissionsDialogOpen(open);
     if (!open) {
       setUserToEditPermissions(null);
-      setPermissionOverrides({});
     }
   };
 
@@ -524,7 +513,7 @@ export function UsersPage() {
       </Dialog>
 
       {/* Permissions Dialog */}
-      <Dialog open={permissionsDialogOpen} onOpenChange={handlePermissionsDialogChange}>
+      <Dialog key={userToEditPermissions?.id ?? "closed"} open={permissionsDialogOpen} onOpenChange={handlePermissionsDialogChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Permissions</DialogTitle>

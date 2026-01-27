@@ -652,7 +652,7 @@ public sealed class OnboardingController : ControllerBase
                     agentSource = request.AgentSource,
                     agentChannel = request.AgentChannel,
                     agentVersion = request.AgentVersion
-                }))); 
+                })));
         }
 
         return Accepted(new StartInstallResponse(machine.Id, machine.Status.ToString()));

@@ -83,7 +83,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
             cts.CancelAfter(TimeSpan.FromSeconds(scanDurationSeconds));
 
             var browsers = new List<ServiceBrowser>();
-            
+
             // Track which service types we've already started browsing to avoid duplicates
             var browsedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -93,7 +93,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                 try
                 {
                     var key = $"{e.Announcement.Hostname}:{e.Announcement.Port}:{e.Announcement.Type}";
-                    
+
                     var device = new MdnsDiscoveredDevice
                     {
                         Name = e.Announcement.Instance,
@@ -101,7 +101,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                         Hostname = e.Announcement.Hostname,
                         IpAddresses = e.Announcement.Addresses?.Select(a => a.ToString()).ToList() ?? [],
                         Port = e.Announcement.Port,
-                        TxtRecords = e.Announcement.Txt?.ToDictionary(t => 
+                        TxtRecords = e.Announcement.Txt?.ToDictionary(t =>
                             t.Contains('=') ? t.Split('=')[0] : t,
                             t => t.Contains('=') ? t.Split('=', 2)[1] : string.Empty) ?? [],
                         NetworkInterface = e.Announcement.NetworkInterface?.Name,
@@ -112,7 +112,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                     {
                         _ = SafeInvokeAsync(onDeviceFound, device, "mDNS device");
                     }
-                    
+
                     _logger.LogDebug(
                         "mDNS: Discovered {Name} ({Type}) at {Host}:{Port}",
                         device.Name,
@@ -131,7 +131,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
             {
                 if (!browsedTypes.Add(serviceType))
                     continue;
-                    
+
                 var browser = new ServiceBrowser();
                 browser.ServiceAdded += HandleServiceAdded;
                 browser.StartBrowse(serviceType);
@@ -196,7 +196,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
             cts.CancelAfter(TimeSpan.FromSeconds(scanDurationSeconds));
 
             using var locator = new SsdpDeviceLocator();
-            
+
             // Handle device discovery events
             locator.DeviceAvailable += async (s, e) =>
             {
@@ -209,7 +209,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                         {
                             _ = SafeInvokeAsync(onDeviceFound, device, "UPnP device");
                         }
-                        
+
                         _logger.LogDebug(
                             "UPnP: Discovered {Name} ({Type}) at {Location}",
                             device.FriendlyName ?? device.Usn,
@@ -295,8 +295,8 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
             NotificationType = ssdpDevice.NotificationType,
             DescriptionLocation = ssdpDevice.DescriptionLocation?.ToString(),
             IpAddress = ExtractIpAddress(ssdpDevice.DescriptionLocation),
-            CacheExpires = ssdpDevice.CacheLifetime != TimeSpan.Zero 
-                ? DateTime.UtcNow.Add(ssdpDevice.CacheLifetime) 
+            CacheExpires = ssdpDevice.CacheLifetime != TimeSpan.Zero
+                ? DateTime.UtcNow.Add(ssdpDevice.CacheLifetime)
                 : null,
             DiscoveredAt = DateTime.UtcNow
         };
@@ -321,7 +321,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Failed to fetch device description from {Location}", 
+                _logger.LogDebug(ex, "Failed to fetch device description from {Location}",
                     ssdpDevice.DescriptionLocation);
             }
         }
@@ -345,11 +345,11 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         {
             var response = await _httpClient.GetStringAsync(location, ct);
             var doc = XDocument.Parse(response);
-            
+
             // UPnP device description namespace
             XNamespace ns = "urn:schemas-upnp-org:device-1-0";
             var deviceElement = doc.Descendants(ns + "device").FirstOrDefault();
-            
+
             if (deviceElement == null)
             {
                 // Try without namespace
@@ -408,13 +408,13 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
     private static string? ExtractIpAddress(Uri? uri)
     {
         if (uri == null) return null;
-        
+
         var host = uri.Host;
         if (IPAddress.TryParse(host, out _))
         {
             return host;
         }
-        
+
         return null;
     }
 

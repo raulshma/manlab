@@ -15,9 +15,8 @@ public sealed class LocalBypassAuthenticationHandler : AuthenticationHandler<Aut
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
         UrlEncoder encoder,
-        ISystemClock clock,
         LocalBypassEvaluator evaluator)
-        : base(options, logger, encoder, clock)
+        : base(options, logger, encoder)
     {
         _evaluator = evaluator;
     }

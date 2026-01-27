@@ -12,7 +12,7 @@ public sealed class AgentConnectionRegistry
 {
     private readonly ConcurrentDictionary<Guid, string> _nodeToConnectionId = new();
     private readonly ConcurrentDictionary<string, Guid> _connectionIdToNode = new(StringComparer.Ordinal);
-    
+
     // Cached snapshot with TTL.
     // NOTE: Snapshot caching must be versioned; otherwise a concurrent Clear() can race with
     // snapshot generation and leave a stale non-empty cached array even after the dictionaries are empty.
@@ -28,7 +28,7 @@ public sealed class AgentConnectionRegistry
         _connectionIdToNode[connectionId] = nodeId;
 
         Interlocked.Increment(ref _mutationVersion);
-        
+
         // Invalidate cache when connection changes
         Volatile.Write(ref _cachedSnapshot, null);
     }

@@ -183,4 +183,77 @@ public static class SettingKeys
         public const string TopologyIncludeDiscovery = "Network.TopologyIncludeDiscovery";
         public const string TopologyDiscoveryDuration = "Network.TopologyDiscoveryDuration";
     }
+
+    public static class SystemUpdate
+    {
+        /// <summary>
+        /// Whether system updates are enabled for this node.
+        /// </summary>
+        public const string Enabled = "SystemUpdate.Enabled";
+
+        /// <summary>
+        /// Maintenance window for system updates (format: "HH:MM-HH:MM" in UTC).
+        /// </summary>
+        public const string MaintenanceWindow = "SystemUpdate.MaintenanceWindow";
+
+        /// <summary>
+        /// Day of week for scheduled updates (0-6, where 0=Monday, or null for any day).
+        /// </summary>
+        public const string ScheduledDayOfWeek = "SystemUpdate.ScheduledDayOfWeek";
+
+        /// <summary>
+        /// Auto-check interval in minutes (default: 360 = 6 hours).
+        /// </summary>
+        public const string CheckIntervalMinutes = "SystemUpdate.CheckIntervalMinutes";
+
+        /// <summary>
+        /// Whether to include security updates automatically.
+        /// </summary>
+        public const string IncludeSecurityUpdates = "SystemUpdate.IncludeSecurityUpdates";
+
+        /// <summary>
+        /// Whether to include feature updates.
+        /// </summary>
+        public const string IncludeFeatureUpdates = "SystemUpdate.IncludeFeatureUpdates";
+
+        /// <summary>
+        /// Whether to include driver updates.
+        /// </summary>
+        public const string IncludeDriverUpdates = "SystemUpdate.IncludeDriverUpdates";
+
+        /// <summary>
+        /// Whether to auto-approve updates (default: false for manual approval).
+        /// </summary>
+        public const string AutoApproveUpdates = "SystemUpdate.AutoApproveUpdates";
+
+        /// <summary>
+        /// Whether to auto-reboot after updates if needed (default: false).
+        /// </summary>
+        public const string AutoRebootIfNeeded = "SystemUpdate.AutoRebootIfNeeded";
+
+        /// <summary>
+        /// Timestamp of the last system update check.
+        /// </summary>
+        public const string LastCheckAt = "SystemUpdate.LastCheckAt";
+
+        /// <summary>
+        /// Timestamp of the last successful system update.
+        /// </summary>
+        public const string LastUpdateAt = "SystemUpdate.LastUpdateAt";
+
+        /// <summary>
+        /// Number of consecutive system update failures.
+        /// </summary>
+        public const string FailureCount = "SystemUpdate.FailureCount";
+
+        /// <summary>
+        /// Current pending system update ID awaiting approval.
+        /// </summary>
+        public const string PendingUpdateId = "SystemUpdate.PendingUpdateId";
+
+        /// <summary>
+        /// Package manager to use (auto-detect if empty: apt, yum, dnf, pacman, zypper, windows-update).
+        /// </summary>
+        public const string PackageManager = "SystemUpdate.PackageManager";
+    }
 }

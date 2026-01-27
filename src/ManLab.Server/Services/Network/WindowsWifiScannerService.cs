@@ -32,12 +32,12 @@ public sealed class WindowsWifiScannerService : IWifiScannerService
         return await Task.Run(() =>
         {
             var adapters = new List<WifiAdapter>();
-            
+
             try
             {
                 var clientHandle = IntPtr.Zero;
                 uint negotiatedVersion;
-                
+
                 var result = WlanOpenHandle(2, IntPtr.Zero, out negotiatedVersion, out clientHandle);
                 if (result != 0)
                 {
@@ -59,12 +59,12 @@ public sealed class WindowsWifiScannerService : IWifiScannerService
                     {
                         var header = Marshal.PtrToStructure<WLAN_INTERFACE_INFO_LIST>(interfaceList);
                         var offset = Marshal.OffsetOf<WLAN_INTERFACE_INFO_LIST>("InterfaceInfo").ToInt32();
-                        
+
                         for (int i = 0; i < header.dwNumberOfItems; i++)
                         {
                             var infoPtr = IntPtr.Add(interfaceList, offset + i * Marshal.SizeOf<WLAN_INTERFACE_INFO>());
                             var info = Marshal.PtrToStructure<WLAN_INTERFACE_INFO>(infoPtr);
-                            
+
                             adapters.Add(new WifiAdapter
                             {
                                 Name = info.strInterfaceDescription,
@@ -99,7 +99,7 @@ public sealed class WindowsWifiScannerService : IWifiScannerService
     public async Task<WifiScanResult> ScanAsync(string? adapterName = null, CancellationToken ct = default)
     {
         var startedAt = DateTime.UtcNow;
-        
+
         if (!OperatingSystem.IsWindows())
         {
             return new WifiScanResult
@@ -155,7 +155,7 @@ public sealed class WindowsWifiScannerService : IWifiScannerService
                     try
                     {
                         var header = Marshal.PtrToStructure<WLAN_INTERFACE_INFO_LIST>(interfaceList);
-                        
+
                         if (header.dwNumberOfItems == 0)
                         {
                             return new WifiScanResult
@@ -178,7 +178,7 @@ public sealed class WindowsWifiScannerService : IWifiScannerService
                             var infoPtr = IntPtr.Add(interfaceList, offset + i * Marshal.SizeOf<WLAN_INTERFACE_INFO>());
                             var info = Marshal.PtrToStructure<WLAN_INTERFACE_INFO>(infoPtr);
 
-                            if (string.IsNullOrEmpty(adapterName) || 
+                            if (string.IsNullOrEmpty(adapterName) ||
                                 info.strInterfaceDescription.Contains(adapterName, StringComparison.OrdinalIgnoreCase))
                             {
                                 selectedInterface = info;
@@ -202,7 +202,7 @@ public sealed class WindowsWifiScannerService : IWifiScannerService
                                 StartedAt = startedAt,
                                 CompletedAt = DateTime.UtcNow,
                                 Success = false,
-                                ErrorMessage = adapterName != null 
+                                ErrorMessage = adapterName != null
                                     ? $"WiFi adapter '{adapterName}' not found"
                                     : "No suitable WiFi adapter found",
                                 Platform = "Windows"

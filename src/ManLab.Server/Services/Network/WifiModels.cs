@@ -9,62 +9,62 @@ public record WifiNetwork
     /// The SSID (network name).
     /// </summary>
     public required string Ssid { get; init; }
-    
+
     /// <summary>
     /// The BSSID (MAC address of the access point).
     /// </summary>
     public string? Bssid { get; init; }
-    
+
     /// <summary>
     /// Signal strength in dBm (typically -30 to -90).
     /// </summary>
     public int? SignalStrengthDbm { get; init; }
-    
+
     /// <summary>
     /// Signal quality as a percentage (0-100).
     /// </summary>
     public int? SignalQualityPercent { get; init; }
-    
+
     /// <summary>
     /// The channel the network is broadcasting on.
     /// </summary>
     public int? Channel { get; init; }
-    
+
     /// <summary>
     /// The frequency in MHz (e.g., 2412 for channel 1, 5180 for channel 36).
     /// </summary>
     public int? FrequencyMhz { get; init; }
-    
+
     /// <summary>
     /// The WiFi band (2.4 GHz, 5 GHz, or 6 GHz).
     /// </summary>
     public string? Band { get; init; }
-    
+
     /// <summary>
     /// The security type(s) of the network.
     /// </summary>
     public List<string> Security { get; init; } = [];
-    
+
     /// <summary>
     /// Whether the network is secured (has authentication).
     /// </summary>
     public bool IsSecured { get; init; }
-    
+
     /// <summary>
     /// Network mode (Infrastructure, Ad-hoc, etc.).
     /// </summary>
     public string? NetworkType { get; init; }
-    
+
     /// <summary>
     /// Whether this is the currently connected network.
     /// </summary>
     public bool IsConnected { get; init; }
-    
+
     /// <summary>
     /// The 802.11 standard (a, b, g, n, ac, ax).
     /// </summary>
     public string? Standard { get; init; }
-    
+
     /// <summary>
     /// When this network was discovered.
     /// </summary>
@@ -80,27 +80,27 @@ public record WifiAdapter
     /// The interface name (e.g., "wlan0", "Wi-Fi").
     /// </summary>
     public required string Name { get; init; }
-    
+
     /// <summary>
     /// A description of the adapter.
     /// </summary>
     public string? Description { get; init; }
-    
+
     /// <summary>
     /// The GUID/ID of the interface (Windows).
     /// </summary>
     public string? Id { get; init; }
-    
+
     /// <summary>
     /// The current state of the interface.
     /// </summary>
     public string? State { get; init; }
-    
+
     /// <summary>
     /// Whether this adapter supports scanning.
     /// </summary>
     public bool CanScan { get; init; }
-    
+
     /// <summary>
     /// MAC address of the adapter.
     /// </summary>
@@ -116,37 +116,37 @@ public record WifiScanResult
     /// The adapter used for scanning.
     /// </summary>
     public WifiAdapter? Adapter { get; init; }
-    
+
     /// <summary>
     /// List of discovered networks.
     /// </summary>
     public List<WifiNetwork> Networks { get; init; } = [];
-    
+
     /// <summary>
     /// When the scan started.
     /// </summary>
     public DateTime StartedAt { get; init; }
-    
+
     /// <summary>
     /// When the scan completed.
     /// </summary>
     public DateTime CompletedAt { get; init; }
-    
+
     /// <summary>
     /// Duration of the scan in milliseconds.
     /// </summary>
     public long DurationMs => (long)(CompletedAt - StartedAt).TotalMilliseconds;
-    
+
     /// <summary>
     /// Whether the scan was successful.
     /// </summary>
     public bool Success { get; init; }
-    
+
     /// <summary>
     /// Error message if the scan failed.
     /// </summary>
     public string? ErrorMessage { get; init; }
-    
+
     /// <summary>
     /// Platform-specific details about the scan.
     /// </summary>
@@ -172,7 +172,7 @@ public static class WifiHelpers
         {
             return 2484;
         }
-        
+
         // 5 GHz band
         if (channel >= 36 && channel <= 64)
         {
@@ -186,16 +186,16 @@ public static class WifiHelpers
         {
             return 5745 + (channel - 149) * 5;
         }
-        
+
         // 6 GHz band (WiFi 6E)
         if (channel >= 1 && channel <= 233)
         {
             return 5955 + channel * 5;
         }
-        
+
         return 0;
     }
-    
+
     /// <summary>
     /// Converts a frequency in MHz to a channel number.
     /// </summary>
@@ -210,7 +210,7 @@ public static class WifiHelpers
         {
             return 14;
         }
-        
+
         // 5 GHz band
         if (frequencyMhz >= 5180 && frequencyMhz <= 5320)
         {
@@ -224,16 +224,16 @@ public static class WifiHelpers
         {
             return (frequencyMhz - 5745) / 5 + 149;
         }
-        
+
         // 6 GHz band
         if (frequencyMhz >= 5955 && frequencyMhz <= 7115)
         {
             return (frequencyMhz - 5955) / 5;
         }
-        
+
         return 0;
     }
-    
+
     /// <summary>
     /// Gets the band name for a frequency.
     /// </summary>
@@ -253,7 +253,7 @@ public static class WifiHelpers
         }
         return "Unknown";
     }
-    
+
     /// <summary>
     /// Converts signal strength from percentage to dBm (approximate).
     /// </summary>
@@ -262,7 +262,7 @@ public static class WifiHelpers
         // Common approximation: dBm = (percentage / 2) - 100
         return (percent / 2) - 100;
     }
-    
+
     /// <summary>
     /// Converts signal strength from dBm to percentage (approximate).
     /// </summary>

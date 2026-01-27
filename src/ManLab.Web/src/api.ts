@@ -60,6 +60,17 @@ import type {
   TrafficSample,
   MonitorJobSummary,
   ProcessTelemetry,
+  // System update types
+  SystemUpdateSettings,
+  SystemUpdateAvailability,
+  SystemUpdateDetails,
+  SystemUpdateHistory,
+  SystemUpdateLog,
+  CreateSystemUpdateRequest,
+  // Auto-update types
+  AutoUpdateSettings,
+  UpdateAutoUpdateSettingsRequest,
+  NodeAutoUpdateStatus,
 } from "./types";
 
 const API_BASE = "/api";
@@ -2008,4 +2019,150 @@ export async function fetchAutoUpdateStatus(): Promise<NodeAutoUpdateStatus[]> {
     throw new Error(`Failed to fetch auto-update status: ${response.statusText}`);
   }
   return response.json();
+}
+
+// ============================================================================
+// System Update API Functions
+// ============================================================================
+
+/**
+ * Gets system update settings for a node.
+ */
+export async function fetchSystemUpdateSettings(nodeId: string): Promise<SystemUpdateSettings> {
+  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch system update settings: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Updates system update settings for a node.
+ */
+export async function updateSystemUpdateSettings(
+  nodeId: string,
+  settings: SystemUpdateSettings
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to update system update settings: ${response.statusText}`);
+  }
+}
+
+/**
+ * Checks for available system updates on a node.
+ */
+export async function checkSystemUpdates(nodeId: string): Promise<SystemUpdateAvailability> {
+  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}/check`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to check for system updates: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Creates a pending system update.
+ */
+export async function createSystemUpdate(
+  nodeId: string,
+  options: CreateSystemUpdateRequest
+): Promise<{ updateId: string }> {
+  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to create system update: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Gets details of a specific system update.
+ */
+export async function getSystemUpdateDetails(updateId: string): Promise<SystemUpdateDetails> {
+  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Update not found");
+    throw new Error(`Failed to get update details: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Approves and executes a pending system update.
+ */
+export async function approveSystemUpdate(updateId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/approve`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Update not found");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to approve update: ${response.statusText}`);
+  }
+}
+
+/**
+ * Rejects a pending system update.
+ */
+export async function rejectSystemUpdate(updateId: string, reason?: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Update not found");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to reject update: ${response.statusText}`);
+  }
+}
+
+/**
+ * Gets system update history for a node.
+ */
+export async function getSystemUpdateHistory(nodeId: string, limit = 50): Promise<SystemUpdateHistory[]> {
+  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}/history?limit=${limit}`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to get update history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Gets detailed logs for a system update.
+ */
+export async function getSystemUpdateLogs(updateId: string): Promise<SystemUpdateLog[]> {
+  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/logs`);
+  if (!response.ok) {
+    throw new Error(`Failed to get update logs: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Approves and executes a reboot for an update that requires it.
+ */
+export async function approveSystemReboot(updateId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/reboot/approve`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Update not found");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to approve reboot: ${response.statusText}`);
+  }
 }

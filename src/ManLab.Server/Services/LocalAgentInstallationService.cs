@@ -27,7 +27,7 @@ public sealed class LocalAgentInstallationService
     private const string SystemTaskName = "ManLab Agent";
     private const string UserTaskName = "ManLab Agent User";
     private const string SystemInstallDir = @"C:\ProgramData\ManLab\Agent";
-    private static readonly string UserInstallDir = 
+    private static readonly string UserInstallDir =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ManLab", "Agent");
     private static readonly TimeSpan ProcessTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RegistrationTimeout = TimeSpan.FromMinutes(3);
@@ -104,12 +104,12 @@ public sealed class LocalAgentInstallationService
             var systemTaskExists = CheckScheduledTaskExists(SystemTaskName);
             var userTaskExists = CheckScheduledTaskExists(UserTaskName);
             var userRunEntryExists = CheckUserRunEntryExists(UserTaskName);
-            
+
             // Determine install mode (user mode takes precedence if both exist)
             string? installMode = null;
             bool isInstalled = false;
             string taskName = SystemTaskName;
-            
+
             if (userBinaryExists && userTaskExists)
             {
                 installMode = "User";
@@ -189,11 +189,11 @@ public sealed class LocalAgentInstallationService
             // Check for leftover files even if not properly installed
             var hasSystemFiles = Directory.Exists(SystemInstallDir) && Directory.EnumerateFileSystemEntries(SystemInstallDir).Any();
             var hasUserFiles = Directory.Exists(UserInstallDir) && Directory.EnumerateFileSystemEntries(UserInstallDir).Any();
-            
+
             // Check for orphaned tasks (task exists without proper installation)
             var hasSystemTask = systemTaskExists;
             var hasUserTask = userTaskExists;
-            
+
             // Build detailed orphaned resources info
             var orphanedResources = GetOrphanedResourcesInfo(
                 hasSystemFiles, hasUserFiles, hasSystemTask, hasUserTask);
@@ -316,7 +316,7 @@ public sealed class LocalAgentInstallationService
                 await PublishStatusAsync("Failed", error);
                 return;
             }
-            
+
             if (userMode)
             {
                 await PublishLogAsync("User mode: installing to local app data (no admin required).");
@@ -374,10 +374,10 @@ public sealed class LocalAgentInstallationService
             }
 
             // Add agent configuration parameters if provided or available in settings
-            int heartbeatInterval = agentConfig?.HeartbeatIntervalSeconds 
+            int heartbeatInterval = agentConfig?.HeartbeatIntervalSeconds
                 ?? await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.HeartbeatIntervalSeconds, 10);
-            
-            int maxReconnectDelay = agentConfig?.MaxReconnectDelaySeconds 
+
+            int maxReconnectDelay = agentConfig?.MaxReconnectDelaySeconds
                 ?? await _settingsService.GetValueAsync(Constants.SettingKeys.Agent.MaxReconnectDelaySeconds, 120);
 
             args += $" -HeartbeatIntervalSeconds {heartbeatInterval}";
@@ -451,7 +451,7 @@ public sealed class LocalAgentInstallationService
     private async Task RunUninstallAsync(bool userMode)
     {
         Guid? linkedNodeId = null;
-        
+
         try
         {
             var modeLabel = userMode ? "user" : "system";
@@ -466,7 +466,7 @@ public sealed class LocalAgentInstallationService
                 await PublishStatusAsync("Failed", error);
                 return;
             }
-            
+
             if (userMode)
             {
                 await PublishLogAsync("User mode: uninstalling from local app data (no admin required).");
@@ -483,7 +483,7 @@ public sealed class LocalAgentInstallationService
                 .Where(n => n.Hostname == Environment.MachineName)
                 .OrderByDescending(n => n.LastSeen)
                 .FirstOrDefaultAsync();
-            
+
             if (linkedNode is not null)
             {
                 linkedNodeId = linkedNode.Id;
@@ -524,25 +524,25 @@ public sealed class LocalAgentInstallationService
             if (exitCode == 0)
             {
                 await PublishLogAsync("Uninstallation completed successfully.");
-                
+
                 // Delete the linked node from the database
                 if (linkedNodeId.HasValue)
                 {
                     await PublishLogAsync($"Removing node from database: {linkedNodeId}");
-                    
+
                     try
                     {
                         var nodeToDelete = await db.Nodes
                             .Include(n => n.TelemetrySnapshots)
                             .Include(n => n.Commands)
                             .FirstOrDefaultAsync(n => n.Id == linkedNodeId.Value);
-                        
+
                         if (nodeToDelete is not null)
                         {
                             db.Nodes.Remove(nodeToDelete);
                             await db.SaveChangesAsync();
                             await PublishLogAsync($"Node {nodeToDelete.Hostname} removed from database.");
-                            
+
                             // Notify connected clients
                             await _hub.Clients.All.SendAsync("NodeDeleted", linkedNodeId.Value);
                         }
@@ -553,7 +553,7 @@ public sealed class LocalAgentInstallationService
                         // Don't fail the uninstall just because node deletion failed
                     }
                 }
-                
+
                 await PublishStatusAsync("NotInstalled", null);
             }
             else
@@ -852,7 +852,7 @@ public sealed class LocalAgentInstallationService
 
             var files = Directory.GetFiles(path, "*", SearchOption.AllDirectories);
             var totalSize = files.Sum(f => new FileInfo(f).Length);
-            
+
             // Get relative file names, limited to 20 files
             var fileNames = files
                 .Select(f => Path.GetRelativePath(path, f))

@@ -179,20 +179,20 @@ public sealed class CommandDispatchService : BackgroundService
         {
             cmd.Status = CommandStatus.Failed;
             cmd.ExecutedAt = now;
-                        _audit.TryEnqueue(new AuditEvent
-                        {
-                            Kind = "audit",
-                            EventName = "command.dispatch.failed",
-                            Category = "commands",
-                            Source = "system",
-                            ActorType = "system",
-                            ActorName = nameof(CommandDispatchService),
-                            NodeId = cmd.NodeId,
-                            CommandId = cmd.Id,
-                            Success = false,
-                            Message = "Command expired in queue",
-                            DataJson = JsonSerializer.Serialize(new { maxQueueAgeHours = MaxQueueAge.TotalHours })
-                        });
+            _audit.TryEnqueue(new AuditEvent
+            {
+                Kind = "audit",
+                EventName = "command.dispatch.failed",
+                Category = "commands",
+                Source = "system",
+                ActorType = "system",
+                ActorName = nameof(CommandDispatchService),
+                NodeId = cmd.NodeId,
+                CommandId = cmd.Id,
+                Success = false,
+                Message = "Command expired in queue",
+                DataJson = JsonSerializer.Serialize(new { maxQueueAgeHours = MaxQueueAge.TotalHours })
+            });
             if (ShouldAppendOperationalLogs(cmd.CommandType))
             {
                 cmd.OutputLog = AppendLog(cmd.OutputLog, $"Dispatch failed: command expired in queue after {MaxQueueAge.TotalHours:0}h.");
@@ -236,20 +236,20 @@ public sealed class CommandDispatchService : BackgroundService
             {
                 cmd.Status = CommandStatus.Failed;
                 cmd.ExecutedAt = DateTime.UtcNow;
-                                _audit.TryEnqueue(new AuditEvent
-                                {
-                                    Kind = "audit",
-                                    EventName = "command.dispatch.unsupported",
-                                    Category = "commands",
-                                    Source = "system",
-                                    ActorType = "system",
-                                    ActorName = nameof(CommandDispatchService),
-                                    NodeId = cmd.NodeId,
-                                    CommandId = cmd.Id,
-                                    Success = false,
-                                    Message = "Server cannot dispatch command type",
-                                    DataJson = JsonSerializer.Serialize(new { commandType = cmd.CommandType.ToString() })
-                                });
+                _audit.TryEnqueue(new AuditEvent
+                {
+                    Kind = "audit",
+                    EventName = "command.dispatch.unsupported",
+                    Category = "commands",
+                    Source = "system",
+                    ActorType = "system",
+                    ActorName = nameof(CommandDispatchService),
+                    NodeId = cmd.NodeId,
+                    CommandId = cmd.Id,
+                    Success = false,
+                    Message = "Server cannot dispatch command type",
+                    DataJson = JsonSerializer.Serialize(new { commandType = cmd.CommandType.ToString() })
+                });
                 cmd.OutputLog = AppendLog(cmd.OutputLog,
                     $"Server cannot dispatch command type '{cmd.CommandType}'. (Not supported yet)");
 

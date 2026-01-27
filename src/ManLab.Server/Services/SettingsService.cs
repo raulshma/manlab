@@ -39,7 +39,7 @@ public class SettingsService : ISettingsService
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
-        
+
         var setting = await db.SystemSettings.FindAsync(key);
         var value = setting?.Value;
 

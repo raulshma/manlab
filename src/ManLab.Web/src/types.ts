@@ -1317,4 +1317,112 @@ export interface NodeAutoUpdateStatus {
   lastError: string | null;
 }
 
+// ============================================================================
+// System Update Types
+// ============================================================================
+
+/**
+ * System update settings for a node.
+ */
+export interface SystemUpdateSettings {
+  enabled: boolean;
+  maintenanceWindow: string | null;
+  scheduledDayOfWeek: number | null;
+  checkIntervalMinutes: number;
+  includeSecurityUpdates: boolean;
+  includeFeatureUpdates: boolean;
+  includeDriverUpdates: boolean;
+  autoApproveUpdates: boolean;
+  autoRebootIfNeeded: boolean;
+  packageManager: string | null;
+}
+
+/**
+ * System update availability information.
+ */
+export interface SystemUpdateAvailability {
+  hasUpdates: boolean;
+  packages: SystemPackage[];
+  securityUpdates: number;
+  rebootRequired: boolean;
+  checkedAt: string;
+}
+
+/**
+ * System package that can be updated.
+ */
+export interface SystemPackage {
+  name: string;
+  version: string;
+  newVersion?: string;
+  size?: number;
+  type: 'security' | 'feature' | 'driver' | 'other';
+}
+
+/**
+ * Request to create a system update.
+ */
+export interface CreateSystemUpdateRequest {
+  includeSecurityUpdates?: boolean;
+  includeFeatureUpdates?: boolean;
+  includeDriverUpdates?: boolean;
+}
+
+/**
+ * Detailed system update information.
+ */
+export interface SystemUpdateDetails {
+  id: string;
+  nodeId: string;
+  nodeHostname: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  scheduledAt: string | null;
+  status: string;
+  updateType: string | null;
+  packages: SystemPackage[];
+  rebootRequired: boolean;
+  rebootApproved: boolean;
+  rebootedAt: string | null;
+  actorType: string | null;
+  actorId: string | null;
+  logCount: number;
+  outputLog: string | null;
+  errorMessage: string | null;
+}
+
+/**
+ * System update history item (summary).
+ */
+export interface SystemUpdateHistory {
+  id: string;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  updateType: string | null;
+  packages: SystemPackage[];
+  rebootRequired: boolean;
+  rebootApproved: boolean;
+  rebootedAt: string | null;
+  errorMessage: string | null;
+}
+
+/**
+ * System update log item.
+ */
+export interface SystemUpdateLog {
+  id: string;
+  timestampUtc: string;
+  level: string;
+  message: string;
+  details: string | null;
+}
+
+/**
+ * Request to reject a system update.
+ */
+export interface RejectUpdateRequest {
+  reason?: string;
+}
+
 // not a JSON initiation response. See `downloadSshZip()` in `api.ts`.

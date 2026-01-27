@@ -13,7 +13,7 @@ public interface INetworkScannerService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The ping result.</returns>
     Task<PingResult> PingAsync(string host, int timeout = 1000, CancellationToken ct = default);
-    
+
     /// <summary>
     /// Scans a subnet for active hosts, streaming results as they are discovered.
     /// </summary>
@@ -27,7 +27,7 @@ public interface INetworkScannerService
         int concurrencyLimit = 100,
         int timeout = 500,
         CancellationToken ct = default);
-    
+
     /// <summary>
     /// Traces the route to a remote host.
     /// </summary>
@@ -42,7 +42,7 @@ public interface INetworkScannerService
         int timeout = 1000,
         CancellationToken ct = default,
         Func<TracerouteHop, int, Task>? onHop = null);
-    
+
     /// <summary>
     /// Scans ports on a target host.
     /// </summary>
@@ -58,7 +58,7 @@ public interface INetworkScannerService
         int concurrency = 50,
         int timeout = 2000,
         CancellationToken ct = default);
-    
+
     /// <summary>
     /// Gets device information for an IP address.
     /// </summary>
@@ -125,7 +125,7 @@ public interface INetworkScannerService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Public IP lookup result.</returns>
     Task<PublicIpResult> GetPublicIpAsync(CancellationToken ct = default);
-    
+
     /// <summary>
     /// Parses a CIDR notation string and returns the IP range.
     /// </summary>

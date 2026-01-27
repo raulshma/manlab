@@ -95,7 +95,7 @@ public sealed class TerminalSessionService
             AbsoluteExpiration = expiresAt
         });
 
-        _logger.LogInformation("Terminal session created {SessionId} for node {NodeId} by {RequestedBy}", 
+        _logger.LogInformation("Terminal session created {SessionId} for node {NodeId} by {RequestedBy}",
             sessionId, nodeId, requestedBy ?? "unknown");
 
         _audit.TryEnqueue(new ManLab.Server.Data.Entities.AuditEvent

@@ -74,58 +74,58 @@ public sealed class ScheduledNetworkToolJob : IJob
             switch (config.ToolType.ToLowerInvariant())
             {
                 case "ping":
-                {
-                    var target = RequireTarget(config);
-                    var parameters = ReadParameters<PingParameters>(config.ParametersJson);
-                    var timeout = Math.Clamp(parameters?.TimeoutMs ?? 1000, 100, 10000);
-                    var response = await _scanner.PingAsync(target, timeout, context.CancellationToken)
-                        .ConfigureAwait(false);
-                    success = response.IsSuccess;
-                    result = response;
-                    break;
-                }
+                    {
+                        var target = RequireTarget(config);
+                        var parameters = ReadParameters<PingParameters>(config.ParametersJson);
+                        var timeout = Math.Clamp(parameters?.TimeoutMs ?? 1000, 100, 10000);
+                        var response = await _scanner.PingAsync(target, timeout, context.CancellationToken)
+                            .ConfigureAwait(false);
+                        success = response.IsSuccess;
+                        result = response;
+                        break;
+                    }
                 case "dns-lookup":
-                {
-                    var target = RequireTarget(config);
-                    var parameters = ReadParameters<DnsParameters>(config.ParametersJson);
-                    var includeReverse = parameters?.IncludeReverse ?? true;
-                    var response = await _scanner.DnsLookupAsync(target, includeReverse, context.CancellationToken)
-                        .ConfigureAwait(false);
-                    success = true;
-                    result = response;
-                    break;
-                }
+                    {
+                        var target = RequireTarget(config);
+                        var parameters = ReadParameters<DnsParameters>(config.ParametersJson);
+                        var includeReverse = parameters?.IncludeReverse ?? true;
+                        var response = await _scanner.DnsLookupAsync(target, includeReverse, context.CancellationToken)
+                            .ConfigureAwait(false);
+                        success = true;
+                        result = response;
+                        break;
+                    }
                 case "ssl-inspect":
-                {
-                    var target = RequireTarget(config);
-                    var parameters = ReadParameters<SslParameters>(config.ParametersJson);
-                    var port = Math.Clamp(parameters?.Port ?? 443, 1, 65535);
-                    var response = await _scanner.InspectCertificateAsync(target, port, context.CancellationToken)
-                        .ConfigureAwait(false);
-                    success = true;
-                    result = response;
-                    break;
-                }
+                    {
+                        var target = RequireTarget(config);
+                        var parameters = ReadParameters<SslParameters>(config.ParametersJson);
+                        var port = Math.Clamp(parameters?.Port ?? 443, 1, 65535);
+                        var response = await _scanner.InspectCertificateAsync(target, port, context.CancellationToken)
+                            .ConfigureAwait(false);
+                        success = true;
+                        result = response;
+                        break;
+                    }
                 case "public-ip":
-                {
-                    var response = await _scanner.GetPublicIpAsync(context.CancellationToken)
-                        .ConfigureAwait(false);
-                    success = true;
-                    result = response;
-                    break;
-                }
+                    {
+                        var response = await _scanner.GetPublicIpAsync(context.CancellationToken)
+                            .ConfigureAwait(false);
+                        success = true;
+                        result = response;
+                        break;
+                    }
                 case "traceroute":
-                {
-                    var target = RequireTarget(config);
-                    var parameters = ReadParameters<TracerouteParameters>(config.ParametersJson);
-                    var maxHops = Math.Clamp(parameters?.MaxHops ?? 30, 1, 64);
-                    var timeout = Math.Clamp(parameters?.TimeoutMs ?? 1000, 100, 5000);
-                    var response = await _scanner.TraceRouteAsync(target, maxHops, timeout, context.CancellationToken)
-                        .ConfigureAwait(false);
-                    success = response.ReachedDestination;
-                    result = response;
-                    break;
-                }
+                    {
+                        var target = RequireTarget(config);
+                        var parameters = ReadParameters<TracerouteParameters>(config.ParametersJson);
+                        var maxHops = Math.Clamp(parameters?.MaxHops ?? 30, 1, 64);
+                        var timeout = Math.Clamp(parameters?.TimeoutMs ?? 1000, 100, 5000);
+                        var response = await _scanner.TraceRouteAsync(target, maxHops, timeout, context.CancellationToken)
+                            .ConfigureAwait(false);
+                        success = response.ReachedDestination;
+                        result = response;
+                        break;
+                    }
             }
         }
         catch (Exception ex)

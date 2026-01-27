@@ -69,18 +69,18 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
     {
         _logger = logger;
         _httpClientFactory = httpClientFactory;
-        
+
         // Get database path from configuration or use default
         _dataPath = configuration["Geolocation:DataPath"]
             ?? configuration["GeoLocation:DataPath"]
             ?? configuration["DataPath"]
             ?? GetDefaultDataPath();
         _logger.LogInformation("Geolocation database path set to {Path}", _dataPath);
-        
+
         // Load active source ID
         _activeSourceId = LoadActiveSourceId() ?? DefaultSourceId;
         _databasePath = GetDatabasePath(_activeSourceId);
-        
+
         // Initialize reader if database exists
         InitializeReader();
     }
@@ -106,7 +106,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
         return Path.Combine(appData, "ManLab");
     }
 
-    private string GetDatabasePath(string sourceId) => 
+    private string GetDatabasePath(string sourceId) =>
         Path.Combine(_dataPath, $"{sourceId}.mmdb");
 
     private string? LoadActiveSourceId()
@@ -168,7 +168,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
     public Task<GeoDatabaseStatus> GetStatusAsync(CancellationToken ct = default)
     {
         var fileInfo = File.Exists(_databasePath) ? new FileInfo(_databasePath) : null;
-        
+
         GeoDatabaseInfo? metadata = null;
         if (_reader is not null)
         {
@@ -184,7 +184,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
             }
             catch { }
         }
-        
+
         return Task.FromResult(new GeoDatabaseStatus
         {
             IsAvailable = _reader is not null,
@@ -213,15 +213,15 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
         try
         {
             _logger.LogInformation("Starting geolocation database download from {Source} ({Url})", source.Name, source.DownloadUrl);
-            
+
             // Ensure directory exists
             Directory.CreateDirectory(_dataPath);
-            
+
             var targetPath = GetDatabasePath(sourceId);
 
             using var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromMinutes(5);
-            
+
             using var response = await client.GetAsync(source.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
             response.EnsureSuccessStatusCode();
 
@@ -254,13 +254,13 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
                 File.Delete(targetPath);
             }
             File.Move(tempPath, targetPath);
-            
+
             // Update active source and reinitialize reader
             _activeSourceId = sourceId;
             _databasePath = targetPath;
             SaveActiveSourceId(sourceId);
             InitializeReader();
-            
+
             _logger.LogInformation("Successfully downloaded {Source} database to {Path}", source.Name, targetPath);
             progress?.Report(100);
             return true;
@@ -358,7 +358,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
     }
 
     public async Task<IReadOnlyList<GeoLocationResult>> LookupBatchAsync(
-        IEnumerable<string> ipAddresses, 
+        IEnumerable<string> ipAddresses,
         CancellationToken ct = default)
     {
         if (_reader is null)
@@ -367,7 +367,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
         }
 
         var results = new ConcurrentBag<GeoLocationResult>();
-        
+
         await Parallel.ForEachAsync(ipAddresses, ct, async (ip, token) =>
         {
             var result = await LookupAsync(ip, token);
@@ -384,7 +384,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
     {
         // MMDB structure varies by database type
         // ip-location-db simplified format: country_code, state1, state2, city, postcode, latitude, longitude, timezone
-        
+
         string? countryCode = null;
         string? country = null;
         string? state = null;
@@ -407,7 +407,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
                     country = enName?.ToString();
             }
         }
-        
+
         // Fallback for simpler format
         if (countryCode is null && data.TryGetValue("country_code", out var cc))
             countryCode = cc?.ToString();
@@ -424,7 +424,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
                 }
             }
         }
-        
+
         // Fallback for simpler format
         if (state is null && data.TryGetValue("state1", out var s1))
             state = s1?.ToString();
@@ -527,7 +527,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
             return true;
 
         var bytes = ip.GetAddressBytes();
-        
+
         // IPv4
         if (bytes.Length == 4)
         {
@@ -544,7 +544,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
             if (bytes[0] == 169 && bytes[1] == 254)
                 return true;
         }
-        
+
         return false;
     }
 
@@ -552,7 +552,7 @@ public sealed class IpGeolocationService : IIpGeolocationService, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        
+
         lock (_readerLock)
         {
             _reader?.Dispose();

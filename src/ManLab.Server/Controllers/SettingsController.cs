@@ -20,7 +20,7 @@ public class SettingsController : ControllerBase
         ILogger<SettingsController> logger,
         // Using concrete type here to access the test method we'll add, 
         // or we could add SendTestMessage to INotificationService
-        DiscordWebhookNotificationService discordService) 
+        DiscordWebhookNotificationService discordService)
     {
         _settingsService = settingsService;
         _logger = logger;
@@ -42,7 +42,7 @@ public class SettingsController : ControllerBase
         }
         return Ok();
     }
-    
+
     [HttpPost("test-discord")]
     public async Task<ActionResult> TestDiscord([FromBody] string webhookUrl)
     {

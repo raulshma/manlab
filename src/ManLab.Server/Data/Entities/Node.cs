@@ -95,4 +95,7 @@ public class Node
 
     public ICollection<FileBrowserPolicy> FileBrowserPolicies { get; set; } = [];
     public ICollection<TerminalSession> TerminalSessions { get; set; } = [];
+
+    // System update navigation properties
+    public ICollection<SystemUpdateHistory> SystemUpdateHistories { get; set; } = [];
 }

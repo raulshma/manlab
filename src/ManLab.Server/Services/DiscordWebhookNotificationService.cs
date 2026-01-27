@@ -52,7 +52,7 @@ public sealed class DiscordWebhookNotificationService : INotificationService
 
         await SendMessageInternalAsync(webhookUrl, content, cancellationToken);
     }
-    
+
     public async Task SendTestMessageAsync(string webhookUrl, CancellationToken cancellationToken = default)
     {
         await SendMessageInternalAsync(webhookUrl, "✅ **ManLab Test Alert**\nThis is a test notification from your ManLab dashboard.", cancellationToken);

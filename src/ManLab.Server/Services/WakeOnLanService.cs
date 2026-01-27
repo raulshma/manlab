@@ -57,7 +57,7 @@ public sealed class WakeOnLanService : IWakeOnLanService
 
             // Send to the broadcast address on the standard WoL port
             var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, WolPort);
-            
+
             await udpClient.SendAsync(magicPacket, magicPacket.Length, broadcastEndpoint)
                 .ConfigureAwait(false);
 
@@ -110,7 +110,7 @@ public sealed class WakeOnLanService : IWakeOnLanService
     {
         // Magic packet: 6 bytes of 0xFF + 16 * 6 bytes of MAC address = 102 bytes
         var packet = new byte[6 + (16 * 6)];
-        
+
         // Fill first 6 bytes with 0xFF
         for (int i = 0; i < 6; i++)
         {

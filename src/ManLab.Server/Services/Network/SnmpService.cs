@@ -287,7 +287,7 @@ public sealed class SnmpService : ISnmpService
 
     private static (IAuthenticationProvider auth, IPrivacyProvider privacy) CreateV3Providers(SnmpV3Credentials creds)
     {
-        #pragma warning disable CS0618
+#pragma warning disable CS0618
         IAuthenticationProvider authProvider = creds.AuthProtocol switch
         {
             SnmpAuthProtocol.Md5 => new MD5AuthenticationProvider(new OctetString(RequireAuthPassword(creds))),
@@ -301,7 +301,7 @@ public sealed class SnmpService : ISnmpService
             SnmpPrivacyProtocol.Aes128 => (authProvider, (IPrivacyProvider)new AESPrivacyProvider(new OctetString(RequirePrivacyPassword(creds)), authProvider)),
             _ => (authProvider, (IPrivacyProvider)new DefaultPrivacyProvider(authProvider))
         };
-        #pragma warning restore CS0618
+#pragma warning restore CS0618
         return providers;
     }
 

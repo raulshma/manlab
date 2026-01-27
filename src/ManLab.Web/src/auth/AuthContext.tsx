@@ -69,10 +69,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const status = statusQuery.data ?? null;
   const loading = statusQuery.isLoading;
-  const permissions = status?.permissions ?? [];
   const permissionSet = useMemo(
-    () => new Set(permissions.map((permission) => permission.toLowerCase())),
-    [permissions]
+    () => new Set((status?.permissions ?? []).map((permission) => permission.toLowerCase())),
+    [status?.permissions]
   );
 
   const hasPermission = useCallback(

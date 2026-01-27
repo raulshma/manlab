@@ -90,7 +90,7 @@ public sealed class NetworkScannerService : INetworkScannerService
         {
             using var ping = new Ping();
             var reply = await ping.SendPingAsync(host, timeout);
-            
+
             return new PingResult
             {
                 Address = host,
@@ -141,21 +141,21 @@ public sealed class NetworkScannerService : INetworkScannerService
             try
             {
                 var tasks = new List<Task>();
-            var enrichmentTasks = new ConcurrentBag<Task>();
-                
+                var enrichmentTasks = new ConcurrentBag<Task>();
+
                 foreach (var ip in ipRange)
                 {
                     if (ct.IsCancellationRequested) break;
-                    
+
                     await semaphore.WaitAsync(ct);
-                    
+
                     var task = Task.Run(async () =>
                     {
                         try
                         {
                             using var ping = new Ping();
                             var reply = await ping.SendPingAsync(ip, timeout);
-                            
+
                             if (reply.Status == IPStatus.Success)
                             {
                                 var host = new DiscoveredHost
@@ -199,7 +199,7 @@ public sealed class NetworkScannerService : INetworkScannerService
                             semaphore.Release();
                         }
                     }, ct);
-                    
+
                     tasks.Add(task);
                 }
 
@@ -224,9 +224,9 @@ public sealed class NetworkScannerService : INetworkScannerService
         {
             yield return host;
         }
-        
+
         await scanTask;
-        
+
         _logger.LogInformation("Subnet scan of {Cidr} completed", cidr);
     }
 
@@ -568,7 +568,7 @@ public sealed class NetworkScannerService : INetworkScannerService
             DurationMs = stopwatch.ElapsedMilliseconds
         };
 
-        _logger.LogInformation("Port scan of {Host} completed: {OpenCount} open ports found in {Duration}ms", 
+        _logger.LogInformation("Port scan of {Host} completed: {OpenCount} open ports found in {Duration}ms",
             host, result.OpenPorts.Count, result.DurationMs);
 
         return result;
@@ -583,7 +583,7 @@ public sealed class NetworkScannerService : INetworkScannerService
         }
 
         var info = new DeviceInfo { IpAddress = ip };
-        
+
         // Hostname (best effort)
         try
         {
@@ -612,7 +612,7 @@ public sealed class NetworkScannerService : INetworkScannerService
                 if (mac is not null)
                 {
                     info = info with { MacAddress = mac };
-                    
+
                     // Vendor lookup
                     if (_ouiDatabase is not null)
                     {

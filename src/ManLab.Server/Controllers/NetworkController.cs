@@ -2160,10 +2160,10 @@ public class NetworkController : ControllerBase
     [HttpGet("wifi/supported")]
     public ActionResult<object> IsWifiSupported()
     {
-        return Ok(new 
-        { 
+        return Ok(new
+        {
             IsSupported = _wifiScanner.IsSupported,
-            Platform = OperatingSystem.IsWindows() ? "Windows" : 
+            Platform = OperatingSystem.IsWindows() ? "Windows" :
                        OperatingSystem.IsLinux() ? "Linux" : "Unsupported"
         });
     }
@@ -2219,7 +2219,7 @@ public class NetworkController : ControllerBase
                 CompletedAt = DateTime.UtcNow,
                 Success = false,
                 ErrorMessage = "WiFi scanning is not supported on this platform",
-                Platform = OperatingSystem.IsWindows() ? "Windows" : 
+                Platform = OperatingSystem.IsWindows() ? "Windows" :
                            OperatingSystem.IsLinux() ? "Linux" : "Unsupported"
             });
         }
@@ -2235,7 +2235,7 @@ public class NetworkController : ControllerBase
                 success: result.Success,
                 statusCode: 200,
                 category: "network",
-                message: result.Success 
+                message: result.Success
                     ? $"WiFi scan: {result.Networks.Count} networks found"
                     : $"WiFi scan failed: {result.ErrorMessage}"));
 
@@ -2290,7 +2290,7 @@ public class NetworkController : ControllerBase
         {
             _logger.LogInformation("Starting geolocation database download");
             var success = await _geolocation.DownloadDatabaseAsync(null, ct);
-            
+
             _audit.TryEnqueue(AuditEventFactory.CreateHttp(
                 kind: "activity",
                 eventName: "network.geolocation.download",
@@ -2337,7 +2337,7 @@ public class NetworkController : ControllerBase
         {
             _logger.LogInformation("Starting geolocation database download from {SourceId}", sourceId);
             var success = await _geolocation.DownloadDatabaseAsync(sourceId, null, ct);
-            
+
             _audit.TryEnqueue(AuditEventFactory.CreateHttp(
                 kind: "activity",
                 eventName: "network.geolocation.download",
@@ -2373,7 +2373,7 @@ public class NetworkController : ControllerBase
         {
             _logger.LogInformation("Starting geolocation database update");
             var success = await _geolocation.UpdateDatabaseAsync(null, ct);
-            
+
             _audit.TryEnqueue(AuditEventFactory.CreateHttp(
                 kind: "activity",
                 eventName: "network.geolocation.update",
@@ -2409,7 +2409,7 @@ public class NetworkController : ControllerBase
         {
             _logger.LogInformation("Deleting geolocation database");
             var success = await _geolocation.DeleteDatabaseAsync(ct);
-            
+
             _audit.TryEnqueue(AuditEventFactory.CreateHttp(
                 kind: "activity",
                 eventName: "network.geolocation.delete",
@@ -2441,7 +2441,7 @@ public class NetworkController : ControllerBase
     [Authorize(Policy = Permissions.PolicyPrefix + Permissions.NetworkToolsGeolocation)]
     [HttpPost("geolocation/lookup")]
     public async Task<ActionResult<IReadOnlyList<GeoLocationResult>>> LookupGeolocation(
-        [FromBody] GeoLookupRequest request, 
+        [FromBody] GeoLookupRequest request,
         CancellationToken ct)
     {
         if (request.Ips is null || request.Ips.Length == 0)
@@ -2524,7 +2524,7 @@ public class NetworkController : ControllerBase
         }
 
         var bytes = ip.GetAddressBytes();
-        
+
         // 10.0.0.0/8
         if (bytes[0] == 10)
         {
@@ -2571,16 +2571,16 @@ public class NetworkController : ControllerBase
         if (IPAddress.TryParse(host, out var ip))
         {
             var bytes = ip.GetAddressBytes();
-            
+
             // 10.0.0.0/8
             if (bytes[0] == 10) return true;
-            
+
             // 172.16.0.0/12
             if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
-            
+
             // 192.168.0.0/16
             if (bytes[0] == 192 && bytes[1] == 168) return true;
-            
+
             // 127.0.0.0/8
             if (bytes[0] == 127) return true;
         }
@@ -2685,7 +2685,7 @@ public record PingRequest
     /// Hostname or IP address to ping.
     /// </summary>
     public string Host { get; init; } = string.Empty;
-    
+
     /// <summary>
     /// Timeout in milliseconds (default: 1000, max: 10000).
     /// </summary>
@@ -2762,12 +2762,12 @@ public record SubnetScanRequest
     /// CIDR notation of subnet to scan (e.g., 192.168.1.0/24).
     /// </summary>
     public string Cidr { get; init; } = string.Empty;
-    
+
     /// <summary>
     /// Maximum concurrent pings (default: 100, max: 200).
     /// </summary>
     public int? ConcurrencyLimit { get; init; }
-    
+
     /// <summary>
     /// Timeout per host in milliseconds (default: 500, max: 5000).
     /// </summary>
@@ -2783,12 +2783,12 @@ public record TracerouteRequest
     /// Target hostname or IP address.
     /// </summary>
     public string Host { get; init; } = string.Empty;
-    
+
     /// <summary>
     /// Maximum number of hops (default: 30, max: 64).
     /// </summary>
     public int? MaxHops { get; init; }
-    
+
     /// <summary>
     /// Timeout per hop in milliseconds (default: 1000, max: 5000).
     /// </summary>
@@ -2804,17 +2804,17 @@ public record PortScanRequest
     /// Target hostname or IP address.
     /// </summary>
     public string Host { get; init; } = string.Empty;
-    
+
     /// <summary>
     /// Specific ports to scan (null for common ports).
     /// </summary>
     public int[]? Ports { get; init; }
-    
+
     /// <summary>
     /// Maximum concurrent connections (default: 50, max: 100).
     /// </summary>
     public int? Concurrency { get; init; }
-    
+
     /// <summary>
     /// Timeout per port in milliseconds (default: 2000, max: 10000).
     /// </summary>
@@ -2968,7 +2968,7 @@ public record MdnsDiscoveryRequest
     /// How long to scan for devices in seconds (default: 5, max: 30).
     /// </summary>
     public int? ScanDurationSeconds { get; init; }
-    
+
     /// <summary>
     /// Service types to search for (null for common types).
     /// Examples: "_http._tcp", "_ssh._tcp", "_printer._tcp"
@@ -2985,7 +2985,7 @@ public record UpnpDiscoveryRequest
     /// How long to scan for devices in seconds (default: 5, max: 30).
     /// </summary>
     public int? ScanDurationSeconds { get; init; }
-    
+
     /// <summary>
     /// SSDP search target (default: "ssdp:all").
     /// Examples: "ssdp:all", "upnp:rootdevice", "urn:schemas-upnp-org:device:MediaRenderer:1"

@@ -134,7 +134,7 @@ public class NetworkHub : Hub
     public async Task<NetworkScanStartResult> StartSubnetScan(string cidr, int concurrencyLimit = 100, int timeout = 500)
     {
         var scanId = Guid.NewGuid().ToString("N");
-        
+
         // Check rate limit
         var (isLimited, retryAfter) = _rateLimit.CheckRateLimit(Context.ConnectionId, "subnet");
         if (isLimited)
@@ -146,7 +146,7 @@ public class NetworkHub : Hub
                 ErrorMessage = $"Rate limit exceeded. Please wait {retryAfter} seconds before retrying."
             };
         }
-        
+
         // Check concurrent scan limit
         if (!_rateLimit.TryStartScan(Context.ConnectionId))
         {
@@ -157,7 +157,7 @@ public class NetworkHub : Hub
                 ErrorMessage = "A scan is already in progress. Please wait for it to complete."
             };
         }
-        
+
         // Validate CIDR
         if (string.IsNullOrWhiteSpace(cidr))
         {
@@ -264,10 +264,10 @@ public class NetworkHub : Hub
 
         timeout = Math.Clamp(timeout, 100, 10000);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        
+
         var result = await _scanner.PingAsync(host, timeout);
         sw.Stop();
-        
+
         // Record to history
         _ = _history.RecordAsync(
             toolType: "ping",
@@ -277,10 +277,10 @@ public class NetworkHub : Hub
             success: result.IsSuccess,
             durationMs: (int)sw.ElapsedMilliseconds,
             connectionId: Context.ConnectionId);
-        
+
         // Broadcast result to all clients for real-time dashboard updates
         await Clients.All.SendAsync("PingCompleted", result);
-        
+
         return result;
     }
 
@@ -480,7 +480,7 @@ public class NetworkHub : Hub
                 Success = false,
                 ErrorMessage = "WiFi scanning is not supported on this platform"
             };
-            
+
             await Clients.Group(GetScanGroup(scanId)).SendAsync("WifiScanCompleted", unsupportedResult);
             return unsupportedResult;
         }
@@ -711,10 +711,10 @@ public class NetworkHub : Hub
         var lastBatchFlush = DateTime.UtcNow;
         const int hostBatchSize = 25;
         const int hostBatchIntervalMs = 150;
-        
+
         // Record the request for rate limiting
         _rateLimit.RecordRequest(connectionId, "subnet");
-        
+
         // Estimate scan duration for progress tracking
         // Each host takes roughly (timeout / concurrency) ms on average, plus overhead
         var estimatedTotalTimeMs = (double)totalHosts * timeout / concurrencyLimit + 2000;
@@ -752,7 +752,7 @@ public class NetworkHub : Hub
                     // Estimate how many hosts have been scanned based on elapsed time
                     var elapsedMs = (now - startedAt).TotalMilliseconds;
                     var estimatedScannedHosts = Math.Min(totalHosts, (int)(elapsedMs / estimatedTotalTimeMs * totalHosts));
-                    
+
                     await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("ScanProgress", new ScanProgressUpdate
                     {
                         ScanId = scanId,
@@ -789,7 +789,7 @@ public class NetworkHub : Hub
                 CompletedAt = DateTime.UtcNow
             });
 
-            _logger.LogInformation("Subnet scan {ScanId} completed: {HostsFound}/{TotalHosts} hosts found", 
+            _logger.LogInformation("Subnet scan {ScanId} completed: {HostsFound}/{TotalHosts} hosts found",
                 scanId, foundHosts.Count, totalHosts);
 
             // Record to history
@@ -832,19 +832,19 @@ public class NetworkHub : Hub
         }
 
         var bytes = ip.GetAddressBytes();
-        
+
         // 10.0.0.0/8
         if (bytes[0] == 10) return true;
-        
+
         // 172.16.0.0/12
         if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
-        
+
         // 192.168.0.0/16
         if (bytes[0] == 192 && bytes[1] == 168) return true;
-        
+
         // 127.0.0.0/8
         if (bytes[0] == 127) return true;
-        
+
         // 169.254.0.0/16 (link-local)
         if (bytes[0] == 169 && bytes[1] == 254) return true;
 
@@ -894,7 +894,7 @@ public class NetworkHub : Hub
         if (System.Net.IPAddress.TryParse(host, out var ip))
         {
             var bytes = ip.GetAddressBytes();
-            
+
             if (bytes[0] == 10) return true;
             if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
             if (bytes[0] == 192 && bytes[1] == 168) return true;
@@ -940,7 +940,7 @@ public class NetworkHub : Hub
 
     private static int[] GetCommonPorts()
     {
-        return [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 
+        return [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995,
                 3306, 3389, 5432, 5900, 6379, 8080, 8443, 27017];
     }
 
@@ -1000,17 +1000,17 @@ public record NetworkScanStartResult
     /// The scan operation ID (use to subscribe for updates).
     /// </summary>
     public required string ScanId { get; init; }
-    
+
     /// <summary>
     /// Whether the scan was started successfully.
     /// </summary>
     public bool Success { get; init; }
-    
+
     /// <summary>
     /// Error message if the scan failed to start.
     /// </summary>
     public string? ErrorMessage { get; init; }
-    
+
     /// <summary>
     /// Total number of hosts to be scanned.
     /// </summary>
@@ -1026,37 +1026,37 @@ public record ScanProgressUpdate
     /// The scan operation ID.
     /// </summary>
     public required string ScanId { get; init; }
-    
+
     /// <summary>
     /// The CIDR being scanned.
     /// </summary>
     public string? Cidr { get; init; }
-    
+
     /// <summary>
     /// Total hosts to scan.
     /// </summary>
     public int TotalHosts { get; init; }
-    
+
     /// <summary>
     /// Number of hosts scanned so far.
     /// </summary>
     public int ScannedHosts { get; init; }
-    
+
     /// <summary>
     /// Number of responsive hosts found.
     /// </summary>
     public int HostsFound { get; init; }
-    
+
     /// <summary>
     /// Current status (started, scanning, completed, failed).
     /// </summary>
     public required string Status { get; init; }
-    
+
     /// <summary>
     /// When the scan started.
     /// </summary>
     public DateTime StartedAt { get; init; }
-    
+
     /// <summary>
     /// Estimated percentage complete.
     /// </summary>

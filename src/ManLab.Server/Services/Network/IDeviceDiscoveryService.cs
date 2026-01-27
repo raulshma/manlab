@@ -18,7 +18,7 @@ public interface IDeviceDiscoveryService
         Func<MdnsDiscoveredDevice, Task>? onMdnsDeviceFound = null,
         Func<UpnpDiscoveredDevice, Task>? onUpnpDeviceFound = null,
         CancellationToken ct = default);
-    
+
     /// <summary>
     /// Discovers devices via mDNS (Multicast DNS / Bonjour / Avahi).
     /// </summary>
@@ -30,7 +30,7 @@ public interface IDeviceDiscoveryService
         string[]? serviceTypes = null,
         int scanDurationSeconds = 5,
         CancellationToken ct = default);
-    
+
     /// <summary>
     /// Discovers devices via UPnP/SSDP (Simple Service Discovery Protocol).
     /// </summary>

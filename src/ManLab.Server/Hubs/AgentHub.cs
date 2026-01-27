@@ -368,14 +368,14 @@ public class AgentHub : Hub
             AgentThreadCount = data.AgentThreadCount,
 
             // Enhanced telemetry (stored as JSON)
-            EnhancedNetworkJson = data.Network != null 
-                ? System.Text.Json.JsonSerializer.Serialize(data.Network) 
+            EnhancedNetworkJson = data.Network != null
+                ? System.Text.Json.JsonSerializer.Serialize(data.Network)
                 : null,
-            EnhancedGpuJson = data.EnhancedGpus is { Count: > 0 } 
-                ? System.Text.Json.JsonSerializer.Serialize(data.EnhancedGpus) 
+            EnhancedGpuJson = data.EnhancedGpus is { Count: > 0 }
+                ? System.Text.Json.JsonSerializer.Serialize(data.EnhancedGpus)
                 : null,
-            ApmJson = data.Apm != null 
-                ? System.Text.Json.JsonSerializer.Serialize(data.Apm) 
+            ApmJson = data.Apm != null
+                ? System.Text.Json.JsonSerializer.Serialize(data.Apm)
                 : null,
 
             ProcessTelemetryJson = data.TopProcesses is { Count: > 0 }
@@ -1120,7 +1120,7 @@ public class AgentHub : Hub
                 _logger.LogInformation(
                     "Updated download session {DownloadId} with TotalBytes={ArchiveBytes}",
                     downloadId, archiveBytes);
-                
+
                 _downloadSessions.SetTempFilePath(downloadId, tempFilePath);
                 _logger.LogInformation(
                     "Updated download session {DownloadId} with TempFilePath={TempFilePath}",
@@ -1226,7 +1226,7 @@ public class AgentHub : Hub
             // Send progress update to client using individual parameters
             if (!string.IsNullOrEmpty(session.ClientConnectionId))
             {
-                await Clients.Client(session.ClientConnectionId).SendAsync("DownloadProgress", 
+                await Clients.Client(session.ClientConnectionId).SendAsync("DownloadProgress",
                     downloadId.ToString(),
                     0L,                    // bytesTransferred - not applicable during zip creation
                     0L,                    // totalBytes

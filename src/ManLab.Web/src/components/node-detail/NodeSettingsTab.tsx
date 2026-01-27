@@ -21,6 +21,8 @@ import {
 import { useSignalR } from "../../SignalRContext";
 import { ConfirmationModal } from "../ConfirmationModal";
 import { AutoUpdateSettingsPanel } from "../autoupdate/AutoUpdateSettingsPanel";
+import { SystemUpdateSettingsPanel } from "../systemupdate/SystemUpdateSettingsPanel";
+import { SystemUpdateHistoryPanel } from "../systemupdate/SystemUpdateHistoryPanel";
 import {
   Card,
   CardContent,
@@ -545,6 +547,32 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
         </CardHeader>
         <CardContent>
           <AutoUpdateSettingsPanel nodeId={nodeId} />
+        </CardContent>
+      </Card>
+
+      {/* System Update Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">System Update Settings</CardTitle>
+          <CardDescription>
+            Configure automatic operating system updates for this node
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SystemUpdateSettingsPanel nodeId={nodeId} />
+        </CardContent>
+      </Card>
+
+      {/* System Update History */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">System Update History</CardTitle>
+          <CardDescription>
+            Recent system update history for this node
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SystemUpdateHistoryPanel nodeId={nodeId} />
         </CardContent>
       </Card>
 

@@ -14,7 +14,7 @@ public interface IArpService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The MAC address in format XX:XX:XX:XX:XX:XX, or null if not found.</returns>
     Task<string?> GetMacAddressAsync(IPAddress ip, CancellationToken ct = default);
-    
+
     /// <summary>
     /// Gets the current ARP table.
     /// </summary>

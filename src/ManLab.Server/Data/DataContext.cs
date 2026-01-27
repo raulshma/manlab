@@ -76,6 +76,12 @@ public class DataContext : DbContext
     /// <summary>Network tool execution history for analytics.</summary>
     public DbSet<NetworkToolHistoryEntry> NetworkToolHistory => Set<NetworkToolHistoryEntry>();
 
+    /// <summary>System update history records.</summary>
+    public DbSet<SystemUpdateHistory> SystemUpdateHistories => Set<SystemUpdateHistory>();
+
+    /// <summary>Detailed system update logs.</summary>
+    public DbSet<SystemUpdateLog> SystemUpdateLogs => Set<SystemUpdateLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -102,13 +108,13 @@ public class DataContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-            // TelemetryRollup configuration
-            modelBuilder.Entity<TelemetryRollup>(entity =>
-            {
-                entity.HasIndex(e => e.NodeId);
-                entity.HasIndex(e => e.BucketStartUtc);
-                entity.HasIndex(e => new { e.NodeId, e.Granularity, e.BucketStartUtc }).IsUnique();
-            });
+        // TelemetryRollup configuration
+        modelBuilder.Entity<TelemetryRollup>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.BucketStartUtc);
+            entity.HasIndex(e => new { e.NodeId, e.Granularity, e.BucketStartUtc }).IsUnique();
+        });
 
         // CommandQueueItem configuration
         modelBuilder.Entity<CommandQueueItem>(entity =>
@@ -442,6 +448,39 @@ public class DataContext : DbContext
             // Store as jsonb for efficient queryability
             entity.Property(e => e.InputJson).HasColumnType("jsonb");
             entity.Property(e => e.ResultJson).HasColumnType("jsonb");
+        });
+
+        // System update history
+        modelBuilder.Entity<SystemUpdateHistory>(entity =>
+        {
+            entity.HasIndex(e => e.NodeId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.StartedAt);
+            entity.HasIndex(e => new { e.NodeId, e.Status });
+            entity.HasIndex(e => new { e.NodeId, e.StartedAt });
+
+            entity.HasOne(e => e.Node)
+                .WithMany()
+                .HasForeignKey(e => e.NodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Property(e => e.PreUpdateStateJson).HasColumnType("jsonb");
+            entity.Property(e => e.PostUpdateStateJson).HasColumnType("jsonb");
+            entity.Property(e => e.PackagesJson).HasColumnType("jsonb");
+        });
+
+        // System update logs
+        modelBuilder.Entity<SystemUpdateLog>(entity =>
+        {
+            entity.HasIndex(e => e.UpdateHistoryId);
+            entity.HasIndex(e => e.TimestampUtc);
+            entity.HasIndex(e => e.Level);
+            entity.HasIndex(e => new { e.UpdateHistoryId, e.TimestampUtc });
+
+            entity.HasOne(e => e.UpdateHistory)
+                .WithMany(h => h.Logs)
+                .HasForeignKey(e => e.UpdateHistoryId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

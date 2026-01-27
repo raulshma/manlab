@@ -14,27 +14,27 @@ public class NetworkRateLimitOptions
     /// Maximum number of concurrent subnet scans per connection.
     /// </summary>
     public int MaxConcurrentScans { get; set; } = 1;
-    
+
     /// <summary>
     /// Maximum requests per minute for ping operations.
     /// </summary>
     public int PingRequestsPerMinute { get; set; } = 60;
-    
+
     /// <summary>
     /// Maximum requests per minute for traceroute operations.
     /// </summary>
     public int TracerouteRequestsPerMinute { get; set; } = 20;
-    
+
     /// <summary>
     /// Maximum requests per minute for port scan operations.
     /// </summary>
     public int PortScanRequestsPerMinute { get; set; } = 10;
-    
+
     /// <summary>
     /// Maximum requests per minute for subnet scan operations.
     /// </summary>
     public int SubnetScanRequestsPerMinute { get; set; } = 5;
-    
+
     /// <summary>
     /// Maximum requests per minute for device discovery operations.
     /// </summary>
@@ -88,7 +88,7 @@ public sealed class NetworkRateLimitService
     {
         var limit = GetLimitForOperation(operation);
         var windowKey = GetWindowKey(connectionId, operation);
-        
+
         var requestCount = _cache.GetOrCreate(windowKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
@@ -112,7 +112,7 @@ public sealed class NetworkRateLimitService
     public void RecordRequest(string connectionId, string operation)
     {
         var windowKey = GetWindowKey(connectionId, operation);
-        
+
         var count = _cache.GetOrCreate(windowKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);

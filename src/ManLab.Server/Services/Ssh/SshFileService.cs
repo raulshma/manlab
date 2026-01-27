@@ -530,7 +530,7 @@ public sealed class SshFileService
         var path = (virtualPath ?? "/").Trim().Replace('\\', '/');
         var isWindowsDrivePath = path.Length >= 2 && path[0] == '/' && char.IsLetter(path[1]) &&
                                   (path.Length == 2 || path[2] == '/');
-        
+
         return VirtualToRealPath(virtualPath!, sftp, isWindowsDrivePath);
     }
 
@@ -608,23 +608,23 @@ public sealed class SshFileService
                 break;
 
             case SshProvisioningService.PrivateKeyAuth privateKeyAuth:
-            {
-                var keyBytes = System.Text.Encoding.UTF8.GetBytes(privateKeyAuth.PrivateKeyPem);
-                using var ms = new MemoryStream(keyBytes);
-
-                PrivateKeyFile keyFile;
-                if (!string.IsNullOrEmpty(privateKeyAuth.Passphrase))
                 {
-                    keyFile = new PrivateKeyFile(ms, privateKeyAuth.Passphrase);
-                }
-                else
-                {
-                    keyFile = new PrivateKeyFile(ms);
-                }
+                    var keyBytes = System.Text.Encoding.UTF8.GetBytes(privateKeyAuth.PrivateKeyPem);
+                    using var ms = new MemoryStream(keyBytes);
 
-                authMethods.Add(new PrivateKeyAuthenticationMethod(machine.Username, keyFile));
-                break;
-            }
+                    PrivateKeyFile keyFile;
+                    if (!string.IsNullOrEmpty(privateKeyAuth.Passphrase))
+                    {
+                        keyFile = new PrivateKeyFile(ms, privateKeyAuth.Passphrase);
+                    }
+                    else
+                    {
+                        keyFile = new PrivateKeyFile(ms);
+                    }
+
+                    authMethods.Add(new PrivateKeyAuthenticationMethod(machine.Username, keyFile));
+                    break;
+                }
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(auth), "Unknown SSH auth mode");
@@ -662,23 +662,23 @@ public sealed class SshFileService
                 break;
 
             case SshProvisioningService.PrivateKeyAuth privateKeyAuth:
-            {
-                var keyBytes = System.Text.Encoding.UTF8.GetBytes(privateKeyAuth.PrivateKeyPem);
-                using var ms = new MemoryStream(keyBytes);
-
-                PrivateKeyFile keyFile;
-                if (!string.IsNullOrEmpty(privateKeyAuth.Passphrase))
                 {
-                    keyFile = new PrivateKeyFile(ms, privateKeyAuth.Passphrase);
-                }
-                else
-                {
-                    keyFile = new PrivateKeyFile(ms);
-                }
+                    var keyBytes = System.Text.Encoding.UTF8.GetBytes(privateKeyAuth.PrivateKeyPem);
+                    using var ms = new MemoryStream(keyBytes);
 
-                authMethods.Add(new PrivateKeyAuthenticationMethod(machine.Username, keyFile));
-                break;
-            }
+                    PrivateKeyFile keyFile;
+                    if (!string.IsNullOrEmpty(privateKeyAuth.Passphrase))
+                    {
+                        keyFile = new PrivateKeyFile(ms, privateKeyAuth.Passphrase);
+                    }
+                    else
+                    {
+                        keyFile = new PrivateKeyFile(ms);
+                    }
+
+                    authMethods.Add(new PrivateKeyAuthenticationMethod(machine.Username, keyFile));
+                    break;
+                }
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(auth), "Unknown SSH auth mode");

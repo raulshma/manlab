@@ -39,7 +39,7 @@ public sealed partial class LinuxWifiScannerService : IWifiScannerService
                 {
                     var interfaceName = Path.GetFileName(netDir);
                     var wirelessPath = Path.Combine(netDir, "wireless");
-                    
+
                     if (Directory.Exists(wirelessPath))
                     {
                         // It's a wireless interface
@@ -120,7 +120,7 @@ public sealed partial class LinuxWifiScannerService : IWifiScannerService
 
         // Get adapter to use
         var adapters = await GetAdaptersAsync(ct);
-        var adapter = adapterName != null 
+        var adapter = adapterName != null
             ? adapters.FirstOrDefault(a => a.Name.Equals(adapterName, StringComparison.OrdinalIgnoreCase))
             : adapters.FirstOrDefault();
 
@@ -131,7 +131,7 @@ public sealed partial class LinuxWifiScannerService : IWifiScannerService
                 StartedAt = startedAt,
                 CompletedAt = DateTime.UtcNow,
                 Success = false,
-                ErrorMessage = adapterName != null 
+                ErrorMessage = adapterName != null
                     ? $"WiFi adapter '{adapterName}' not found"
                     : "No WiFi adapters found",
                 Platform = "Linux"
@@ -174,7 +174,7 @@ public sealed partial class LinuxWifiScannerService : IWifiScannerService
     }
 
     private async Task<(bool Success, List<WifiNetwork> Networks, string? ErrorMessage)> ScanWithNmcliAsync(
-        string interfaceName, 
+        string interfaceName,
         CancellationToken ct)
     {
         var networks = new List<WifiNetwork>();
@@ -187,7 +187,7 @@ public sealed partial class LinuxWifiScannerService : IWifiScannerService
 
             // Get networks with detailed info
             var output = await RunCommandAsync(
-                "nmcli", 
+                "nmcli",
                 $"-t -f SSID,BSSID,MODE,CHAN,FREQ,RATE,SIGNAL,BARS,SECURITY,IN-USE device wifi list ifname {interfaceName}",
                 ct);
 
@@ -210,11 +210,11 @@ public sealed partial class LinuxWifiScannerService : IWifiScannerService
                     var bssid = parts[1].Replace("\\:", ":"); // nmcli escapes colons
                     var mode = parts[2];
                     int.TryParse(parts[3], out var channel);
-                    
+
                     // Parse frequency (e.g., "2437 MHz")
                     var freqMatch = FrequencyRegex().Match(parts[4]);
                     int.TryParse(freqMatch.Groups[1].Value, out var frequency);
-                    
+
                     int.TryParse(parts[6], out var signal);
                     var security = parts[8].Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
                     var inUse = parts.Length > 9 && parts[9] == "*";
@@ -247,7 +247,7 @@ public sealed partial class LinuxWifiScannerService : IWifiScannerService
     }
 
     private async Task<(bool Success, List<WifiNetwork> Networks, string? ErrorMessage)> ScanWithIwlistAsync(
-        string interfaceName, 
+        string interfaceName,
         CancellationToken ct)
     {
         var networks = new List<WifiNetwork>();
@@ -403,7 +403,7 @@ public sealed partial class LinuxWifiScannerService : IWifiScannerService
             process.Start();
             var output = await process.StandardOutput.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
-            
+
             return output;
         }
         catch
