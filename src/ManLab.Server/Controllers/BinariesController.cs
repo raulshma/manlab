@@ -1,5 +1,4 @@
 using ManLab.Server.Services;
-using ManLab.Server.Services.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -13,7 +12,7 @@ namespace ManLab.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = Permissions.PolicyPrefix + Permissions.BinariesDownload)]
+[AllowAnonymous]
 public sealed partial class BinariesController : ControllerBase
 {
     private static readonly Regex AllowedRidRegex = AllowedRidRegexFactory();

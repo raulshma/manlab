@@ -1911,3 +1911,101 @@ export async function downloadSshZip(
   }
   return response;
 }
+
+/**
+ * Gets the auto-update settings for a specific node.
+ */
+export async function fetchAutoUpdateSettings(nodeId: string): Promise<AutoUpdateSettings> {
+  const response = await fetch(`${API_BASE}/autoupdate/${nodeId}`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to fetch auto-update settings: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Updates the auto-update settings for a specific node.
+ */
+export async function updateAutoUpdateSettings(
+  nodeId: string,
+  settings: UpdateAutoUpdateSettingsRequest
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/autoupdate/${nodeId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || `Failed to update auto-update settings: ${response.statusText}`);
+  }
+}
+
+/**
+ * Manually triggers an update check for a specific node.
+ */
+export async function triggerAutoUpdateCheck(nodeId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/autoupdate/${nodeId}/check`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || `Failed to trigger update check: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Approves a pending update for a specific node.
+ */
+export async function approvePendingUpdate(nodeId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/autoupdate/${nodeId}/approve`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || `Failed to approve pending update: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Disables auto-update for a specific node.
+ */
+export async function disableAutoUpdate(nodeId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/autoupdate/${nodeId}/disable`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("Node not found");
+    throw new Error(`Failed to disable auto-update: ${response.statusText}`);
+  }
+}
+
+/**
+ * Triggers a global auto-update check for all nodes.
+ */
+export async function triggerGlobalAutoUpdateCheck(): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/autoupdate/trigger-global`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to trigger global update check: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Gets the status of all nodes with auto-update enabled.
+ */
+export async function fetchAutoUpdateStatus(): Promise<NodeAutoUpdateStatus[]> {
+  const response = await fetch(`${API_BASE}/autoupdate/status`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch auto-update status: ${response.statusText}`);
+  }
+  return response.json();
+}

@@ -297,6 +297,11 @@ builder.Services.AddHostedService<MonitorJobBootstrapper>();
 builder.Services.AddSingleton<DashboardConnectionTracker>();
 builder.Services.AddHostedService<ServerResourceUsageService>();
 
+// Auto-update services
+builder.Services.AddScoped<AutoUpdateService>();
+builder.Services.AddSingleton<AutoUpdateScheduler>();
+builder.Services.AddHostedService<AutoUpdateBootstrapper>();
+
 // Retention cleanup (snapshot tables)
 builder.Services.AddOptions<RetentionOptions>()
     .Bind(builder.Configuration.GetSection(RetentionOptions.SectionName));

@@ -20,6 +20,7 @@ import {
 } from "../../api";
 import { useSignalR } from "../../SignalRContext";
 import { ConfirmationModal } from "../ConfirmationModal";
+import { AutoUpdateSettingsPanel } from "../autoupdate/AutoUpdateSettingsPanel";
 import {
   Card,
   CardContent,
@@ -531,6 +532,19 @@ export function NodeSettingsTab({ nodeId, nodeStatus, hostname }: NodeSettingsTa
               </div>
             </ScrollArea>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Auto-Update Settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Auto-Update Settings</CardTitle>
+          <CardDescription>
+            Configure automatic agent updates for this node
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AutoUpdateSettingsPanel nodeId={nodeId} />
         </CardContent>
       </Card>
 

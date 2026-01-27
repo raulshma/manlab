@@ -2,8 +2,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Node } from '../types';
-import { Globe, Monitor, Tag, AlertTriangle, ArrowUpCircle, CheckCircle2 } from 'lucide-react';
+import { Globe, Monitor, Tag, AlertTriangle, ArrowUpCircle, CheckCircle2, Zap } from 'lucide-react';
 import { useAgentUpdateCheck } from '@/hooks/useAgentUpdateCheck';
+import { useQuery } from '@tanstack/react-query';
+import { fetchAutoUpdateSettings } from '@/api';
 
 interface NodeCardProps {
   node: Node;
@@ -64,6 +66,14 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
     node.agentVersion
   );
 
+  // Check if auto-update is enabled
+  const { data: autoUpdateSettings } = useQuery({
+    queryKey: ['autoUpdate', node.id],
+    queryFn: () => fetchAutoUpdateSettings(node.id),
+    refetchInterval: 60000, // Check every minute
+    retry: false,
+  });
+
   return (
     <Card
       role="button"
@@ -90,7 +100,31 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
               <h3 className="text-base font-semibold text-foreground truncate">
                 {node.hostname}
               </h3>
-              
+
+              {/* Auto-update enabled indicator */}
+              {autoUpdateSettings?.enabled && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Zap className="h-4 w-4 text-amber-500 shrink-0 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    <p className="font-semibold">Auto-update enabled</p>
+                    <p className="text-sm text-muted-foreground">
+                      {autoUpdateSettings.pendingVersion
+                        ? `Update to v${autoUpdateSettings.pendingVersion} pending`
+                        : autoUpdateSettings.approvalMode === 'automatic'
+                        ? 'Updates install automatically'
+                        : 'Updates require approval'}
+                    </p>
+                    {autoUpdateSettings.pendingVersion && (
+                      <p className="text-xs text-blue-500 mt-1">
+                        • Awaiting approval •
+                      </p>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
               {/* Update indicator */}
               {!updateCheckLoading && hasUpdate && (
                 <Tooltip>
@@ -105,7 +139,7 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
                   </TooltipContent>
                 </Tooltip>
               )}
-              
+
               {/* Latest version indicator (when no update available) */}
               {!updateCheckLoading && !hasUpdate && node.agentVersion && (
                 <Tooltip>

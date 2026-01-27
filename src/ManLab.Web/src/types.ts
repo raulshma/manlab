@@ -1273,4 +1273,48 @@ export interface SshZipDownloadRequest {
 }
 
 // Note: SSH zip downloads are streamed directly as a zip payload (binary),
+// not as JSON, so there's no corresponding TypeScript type for the response.
+
+/**
+ * Auto-update settings for a node.
+ */
+export interface AutoUpdateSettings {
+  nodeId: string;
+  enabled: boolean;
+  channel: string;
+  maintenanceWindow: string | null;
+  approvalMode: 'automatic' | 'manual';
+  lastCheckAt: string | null;
+  lastUpdateAt: string | null;
+  failureCount: number;
+  pendingVersion: string | null;
+  lastError: string | null;
+}
+
+/**
+ * Request to update auto-update settings.
+ */
+export interface UpdateAutoUpdateSettingsRequest {
+  enabled: boolean;
+  channel?: string;
+  maintenanceWindow?: string;
+  approvalMode: 'automatic' | 'manual';
+}
+
+/**
+ * Auto-update status for a node.
+ */
+export interface NodeAutoUpdateStatus {
+  nodeId: string;
+  hostname: string;
+  status: NodeStatus;
+  agentVersion: string | null;
+  autoUpdateEnabled: boolean;
+  pendingVersion: string | null;
+  lastCheckAt: string | null;
+  lastUpdateAt: string | null;
+  failureCount: number;
+  lastError: string | null;
+}
+
 // not a JSON initiation response. See `downloadSshZip()` in `api.ts`.

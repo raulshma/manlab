@@ -74,6 +74,57 @@ public static class SettingKeys
         public const string AgentLogFilePath = "Agent.AgentLogFilePath";
         public const string AgentLogFileMaxBytes = "Agent.AgentLogFileMaxBytes";
         public const string AgentLogFileRetainedFiles = "Agent.AgentLogFileRetainedFiles";
+
+        // Update settings
+        public const string UpdateChannel = "Agent.Update.Channel";
+    }
+
+    public static class AutoUpdate
+    {
+        /// <summary>
+        /// Whether automatic updates are enabled for this node.
+        /// </summary>
+        public const string Enabled = "AutoUpdate.Enabled";
+
+        /// <summary>
+        /// The update channel to use (stable, beta, etc.).
+        /// </summary>
+        public const string Channel = "AutoUpdate.Channel";
+
+        /// <summary>
+        /// Maintenance window for auto-updates (format: "HH:MM-HH:MM" in UTC).
+        /// </summary>
+        public const string MaintenanceWindow = "AutoUpdate.MaintenanceWindow";
+
+        /// <summary>
+        /// Approval mode: "automatic" or "manual".
+        /// </summary>
+        public const string ApprovalMode = "AutoUpdate.ApprovalMode";
+
+        /// <summary>
+        /// Timestamp of the last auto-update check attempt.
+        /// </summary>
+        public const string LastCheckAt = "AutoUpdate.LastCheckAt";
+
+        /// <summary>
+        /// Timestamp of the last successful auto-update.
+        /// </summary>
+        public const string LastUpdateAt = "AutoUpdate.LastUpdateAt";
+
+        /// <summary>
+        /// Number of consecutive auto-update failures.
+        /// </summary>
+        public const string FailureCount = "AutoUpdate.FailureCount";
+
+        /// <summary>
+        /// Pending update version awaiting manual approval (if any).
+        /// </summary>
+        public const string PendingVersion = "AutoUpdate.PendingVersion";
+
+        /// <summary>
+        /// Last error message from a failed auto-update attempt.
+        /// </summary>
+        public const string LastError = "AutoUpdate.LastError";
     }
 
     public static class Discord
