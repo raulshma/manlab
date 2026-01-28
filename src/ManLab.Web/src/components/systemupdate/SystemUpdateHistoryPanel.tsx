@@ -96,7 +96,7 @@ function UpdateCard({ update, isExpanded, onToggle, onViewDetails }: UpdateCardP
     };
 
     return (
-      <Badge variant={variants[update.status] || "outline"} className="text-xs">
+      <Badge variant={(variants[update.status] as "default" | "secondary" | "destructive" | "outline") || "outline"} className="text-xs">
         {update.status}
       </Badge>
     );

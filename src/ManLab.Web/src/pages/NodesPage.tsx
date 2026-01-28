@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -24,7 +25,7 @@ import {
   List as ListIcon,
   ArrowUpCircle,
 } from "lucide-react";
-import { MachineOnboardingModal } from "@/components/MachineOnboardingModal";
+
 import { NodeDetailView } from "@/components/NodeDetailView";
 import { NetworkMap } from "@/components/NetworkMap";
 import { fetchNodes } from "@/api";
@@ -218,13 +219,9 @@ export function NodesPage() {
             <>
               <h2 className="text-sm font-semibold px-2">Nodes</h2>
               <div className="flex items-center gap-1">
-                <MachineOnboardingModal
-                  trigger={
-                    <Button size="sm" variant="ghost" className="h-7 text-xs">
-                      Onboard
-                    </Button>
-                  }
-                />
+                <Link to="/onboarding" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "h-7 text-xs")}>
+                    Onboard
+                </Link>
               </div>
             </>
           )}

@@ -1189,6 +1189,21 @@ export async function deleteOnboardingMachine(
   }
 }
 
+export async function cancelOnboardingMachine(
+  machineId: string
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/onboarding/machines/${machineId}/cancel`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+     if (response.status === 404) {
+        // Job might have already finished; treat as success or ignore.
+        return;
+     }
+     throw new Error(`Failed to cancel onboarding: ${await response.text()}`);
+  }
+}
+
 export async function testSshConnection(
   machineId: string,
   input: {

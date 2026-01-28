@@ -64,7 +64,7 @@ export function UpdateLogViewer({ updateId, onClose }: UpdateLogViewerProps) {
       Debug: "outline",
     };
 
-    return <Badge variant={variants[level] || "outline"} className="text-xs">{level}</Badge>;
+    return <Badge variant={(variants[level] as "default" | "secondary" | "destructive" | "outline") || "outline"} className="text-xs">{level}</Badge>;
   };
 
   const handleDownload = () => {

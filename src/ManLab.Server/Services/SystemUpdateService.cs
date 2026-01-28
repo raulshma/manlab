@@ -415,6 +415,43 @@ public sealed class SystemUpdateService
         }
     }
 
+    /// <summary>
+    /// Cleans up any updates that were left InProgress during a server shutdown.
+    /// </summary>
+    public async Task CleanupStuckUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+
+        var stuckUpdates = await db.SystemUpdateHistories
+            .Where(h => h.Status == "InProgress")
+            .ToListAsync(cancellationToken);
+
+        if (stuckUpdates.Count == 0)
+        {
+            return;
+        }
+
+        _logger.LogInformation("Found {Count} stuck system updates. Marking as failed.", stuckUpdates.Count);
+
+        foreach (var update in stuckUpdates)
+        {
+            update.Status = "Failed";
+            update.CompletedAt = DateTime.UtcNow;
+            update.ErrorMessage = "System update interrupted by server shutdown";
+
+            // Also reset the node failure count so it doesn't immediately disable updates if this was a fluke
+            // (Optional, but maybe safer to leave failure count logic to the main flow. 
+            // However, failUpdateAsync increments it. Here we are just marking as failed.)
+            
+            // We should probably log this failure to the node's history/audit
+            await AuditAsync(db, update.NodeId, "systemupdate.failed", 
+                $"System update {update.Id} marked as failed due to server shutdown");
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     #endregion
 
     #region History and Logs

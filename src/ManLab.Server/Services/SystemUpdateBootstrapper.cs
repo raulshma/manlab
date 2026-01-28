@@ -1,4 +1,5 @@
 using ManLab.Server.Constants;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ManLab.Server.Services;
 
@@ -14,17 +15,28 @@ public sealed class SystemUpdateBootstrapper : IHostedService
     public SystemUpdateBootstrapper(
         SystemUpdateScheduler scheduler,
         ISettingsService settings,
-        ILogger<SystemUpdateBootstrapper> logger)
+        ILogger<SystemUpdateBootstrapper> logger,
+        IServiceScopeFactory scopeFactory)
     {
         _scheduler = scheduler;
         _settings = settings;
         _logger = logger;
+        _scopeFactory = scopeFactory;
     }
+
+    private readonly IServiceScopeFactory _scopeFactory;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         try
         {
+            // Clean up any stuck updates from previous runs
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var systemUpdateService = scope.ServiceProvider.GetRequiredService<SystemUpdateService>();
+                await systemUpdateService.CleanupStuckUpdatesAsync(cancellationToken);
+            }
+
             // Check if job is enabled (default: true)
             var enabled = await _settings.GetValueAsync(SettingKeys.SystemUpdate.JobEnabled, "true");
             if (enabled.Equals("false", StringComparison.OrdinalIgnoreCase))

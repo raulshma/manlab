@@ -584,7 +584,13 @@ public sealed class SshProvisioningService
 
         var githubEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
         var githubBaseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
+        var githubRepo = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.Repository);
         var githubVersion = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
+
+        if (githubEnabled && string.IsNullOrWhiteSpace(githubBaseUrl) && !string.IsNullOrWhiteSpace(githubRepo))
+        {
+            githubBaseUrl = $"https://github.com/{githubRepo}/releases/download";
+        }
 
         var githubArgs = string.Empty;
         var localArgs = string.Empty;

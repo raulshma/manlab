@@ -55,8 +55,9 @@ export function useAgentUpdateCheck(nodeId: string, currentAgentVersion: string 
   }
 
   // Compare versions
-  const hasUpdate = !!latestVersion && !!currentAgentVersion && currentAgentVersion !== latestVersion;
-  const isLatest = !!currentAgentVersion && currentAgentVersion === latestVersion;
+  // Compare versions
+  const hasUpdate = !!latestVersion && !!currentAgentVersion && compareVersions(latestVersion, currentAgentVersion) > 0;
+  const isLatest = !!currentAgentVersion && !!latestVersion && compareVersions(latestVersion, currentAgentVersion) === 0;
 
   return {
     hasUpdate,

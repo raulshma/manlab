@@ -658,6 +658,36 @@ public sealed class OnboardingController : ControllerBase
         return Accepted(new StartInstallResponse(machine.Id, machine.Status.ToString()));
     }
 
+    [HttpPost("machines/{id:guid}/cancel")]
+    public async Task<ActionResult> Cancel(Guid id)
+    {
+        var runningInMemory = _jobRunner.IsRunning(id);
+
+        if (runningInMemory)
+        {
+            _jobRunner.CancelJob(id);
+            return Accepted();
+        }
+
+        // If not running in memory, check if it's stuck in the DB (e.g. after server restart)
+        var machine = await _db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == id);
+        if (machine is null)
+        {
+            return NotFound();
+        }
+
+        if (machine.Status == OnboardingStatus.Running)
+        {
+            machine.Status = OnboardingStatus.Failed;
+            machine.LastError = "Cancelled by user (job was not running)";
+            machine.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return Ok(new { message = "Stuck job cleared" });
+        }
+
+        return NotFound("No job is currently running for this machine.");
+    }
+
     [HttpPost("machines/{id:guid}/uninstall")]
     public async Task<ActionResult<StartUninstallResponse>> Uninstall(Guid id, [FromBody] StartUninstallRequest request)
     {

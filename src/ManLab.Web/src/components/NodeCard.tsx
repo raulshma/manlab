@@ -61,7 +61,7 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
   const isError = node.status === 'Error';
 
   // Check for agent updates
-  const { hasUpdate, latestVersion, loading: updateCheckLoading } = useAgentUpdateCheck(
+  const { hasUpdate, latestVersion, isLatest, loading: updateCheckLoading } = useAgentUpdateCheck(
     node.id,
     node.agentVersion
   );
@@ -126,6 +126,7 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
               )}
 
               {/* Update indicator */}
+              {/* Update indicator */}
               {!updateCheckLoading && hasUpdate && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -134,14 +135,14 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
                   <TooltipContent side="bottom" className="max-w-xs">
                     <p className="font-semibold">Agent update available</p>
                     <p className="text-sm text-muted-foreground">
-                      Upgrade from v{node.agentVersion} to v{latestVersion}
+                      Upgrade from v{node.agentVersion?.replace(/^v/, '')} to v{latestVersion?.replace(/^v/, '')}
                     </p>
                   </TooltipContent>
                 </Tooltip>
               )}
 
-              {/* Latest version indicator (when no update available) */}
-              {!updateCheckLoading && !hasUpdate && node.agentVersion && (
+              {/* Latest version indicator */}
+              {!updateCheckLoading && isLatest && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 cursor-help" />
@@ -151,6 +152,8 @@ export function NodeCard({ node, onClick }: NodeCardProps) {
                   </TooltipContent>
                 </Tooltip>
               )}
+
+
             </div>
 
             {/* Details */}

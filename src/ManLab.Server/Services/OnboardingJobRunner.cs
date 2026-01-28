@@ -15,7 +15,7 @@ namespace ManLab.Server.Services;
 
 public sealed class OnboardingJobRunner
 {
-    private readonly ConcurrentDictionary<Guid, Task> _running = new();
+    private readonly ConcurrentDictionary<Guid, (Task Task, CancellationTokenSource Cts)> _running = new();
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHubContext<AgentHub> _hub;
@@ -39,8 +39,17 @@ public sealed class OnboardingJobRunner
             return false;
         }
 
-        var task = Task.Run(() => RunInstallAsync(machineId, request));
-        return _running.TryAdd(machineId, task);
+        var cts = new CancellationTokenSource();
+        var task = Task.Run(() => RunInstallAsync(machineId, request, cts.Token));
+        
+        // Ensure cleanup happens even if task fails/completes
+        task.ContinueWith(_ => 
+        {
+            _running.TryRemove(machineId, out var removed);
+            removed.Cts?.Dispose();
+        });
+
+        return _running.TryAdd(machineId, (task, cts));
     }
 
     public bool TryStartUninstall(Guid machineId, UninstallRequest request)
@@ -50,8 +59,32 @@ public sealed class OnboardingJobRunner
             return false;
         }
 
-        var task = Task.Run(() => RunUninstallAsync(machineId, request));
-        return _running.TryAdd(machineId, task);
+        var cts = new CancellationTokenSource();
+        var task = Task.Run(() => RunUninstallAsync(machineId, request, cts.Token));
+
+        // Ensure cleanup happens even if task fails/completes
+        task.ContinueWith(_ => 
+        {
+            _running.TryRemove(machineId, out var removed);
+            removed.Cts?.Dispose();
+        });
+
+        return _running.TryAdd(machineId, (task, cts));
+    }
+
+    public void CancelJob(Guid machineId)
+    {
+        if (_running.TryGetValue(machineId, out var entry))
+        {
+            try
+            {
+                entry.Cts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Ignore if already disposed
+            }
+        }
     }
 
     public sealed record InstallRequest(
@@ -78,7 +111,7 @@ public sealed class OnboardingJobRunner
         string? ActorIp,
         string RateLimitKey);
 
-    private async Task RunInstallAsync(Guid machineId, InstallRequest request)
+    private async Task RunInstallAsync(Guid machineId, InstallRequest request, CancellationToken cancellationToken)
     {
         try
         {
@@ -283,7 +316,7 @@ public sealed class OnboardingJobRunner
                 request.RunAsRoot,
                 request.AgentInstall,
                 progress,
-                CancellationToken.None);
+                cancellationToken);
 
             if (requiresTrust)
             {
@@ -402,7 +435,7 @@ public sealed class OnboardingJobRunner
                     await PublishLogAsync(machineId, "Agent did not reach expected online/version state within timeout. Collecting diagnostics from target...");
                     try
                     {
-                        var diagnostics = await ssh.CollectAgentDiagnosticsAsync(connOptions, serverUri, CancellationToken.None);
+                        var diagnostics = await ssh.CollectAgentDiagnosticsAsync(connOptions, serverUri, cancellationToken);
                         if (!string.IsNullOrWhiteSpace(diagnostics))
                         {
                             await PublishLogAsync(machineId, diagnostics);
@@ -469,7 +502,7 @@ public sealed class OnboardingJobRunner
                 await PublishLogAsync(machineId, "Agent did not register within timeout. Collecting diagnostics from target...");
                 try
                 {
-                    var diagnostics = await ssh.CollectAgentDiagnosticsAsync(connOptions, serverUri, CancellationToken.None);
+                    var diagnostics = await ssh.CollectAgentDiagnosticsAsync(connOptions, serverUri, cancellationToken);
                     if (!string.IsNullOrWhiteSpace(diagnostics))
                     {
                         await PublishLogAsync(machineId, diagnostics);
@@ -553,6 +586,22 @@ public sealed class OnboardingJobRunner
                 Error = null
             });
         }
+        catch (OperationCanceledException)
+        {
+            await PublishLogAsync(machineId, "Cancelled by user.");
+            
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+            var machine = await db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == machineId);
+            if (machine is not null)
+            {
+                machine.Status = OnboardingStatus.Failed;
+                machine.LastError = "Cancelled by user";
+                machine.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+            }
+            await PublishStatusAsync(machineId, OnboardingStatus.Failed, "Cancelled by user");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Onboarding job failed for machine {MachineId}", machineId);
@@ -624,13 +673,10 @@ public sealed class OnboardingJobRunner
             await PublishLogAsync(machineId, "Failed: " + ex.Message);
             await PublishStatusAsync(machineId, OnboardingStatus.Failed, ex.Message);
         }
-        finally
-        {
-            _running.TryRemove(machineId, out _);
-        }
+        // Finally block removed as cleanup is handled by ContinueWith
     }
 
-    private async Task RunUninstallAsync(Guid machineId, UninstallRequest request)
+    private async Task RunUninstallAsync(Guid machineId, UninstallRequest request, CancellationToken cancellationToken)
     {
         try
         {
@@ -694,7 +740,7 @@ public sealed class OnboardingJobRunner
                 connOptions,
                 serverUri,
                 progress,
-                CancellationToken.None);
+                cancellationToken);
 
             if (requiresTrust)
             {
@@ -776,6 +822,22 @@ public sealed class OnboardingJobRunner
                 Success = true,
                 Error = null
             });
+        }
+        catch (OperationCanceledException)
+        {
+            await PublishLogAsync(machineId, "Cancelled by user.");
+
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+            var machine = await db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == machineId);
+            if (machine is not null)
+            {
+                machine.Status = OnboardingStatus.Failed;
+                machine.LastError = "Cancelled by user";
+                machine.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+            }
+            await PublishStatusAsync(machineId, OnboardingStatus.Failed, "Cancelled by user");
         }
         catch (Exception ex)
         {

@@ -332,6 +332,16 @@ public sealed class SystemUpdateController : ControllerBase
 
         return Ok(new { message = "Reboot approved and executed" });
     }
+    /// <summary>
+    /// POST /api/systemupdate/cleanup
+    /// Manually cleans up any stuck updates (InProgress updates that are actually dead).
+    /// </summary>
+    [HttpPost("cleanup")]
+    public async Task<ActionResult> CleanupStuckUpdates()
+    {
+        await _systemUpdateService.CleanupStuckUpdatesAsync();
+        return Ok(new { message = "Stuck updates cleanup completed" });
+    }
 }
 
 #region Request/Response Models

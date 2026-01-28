@@ -8,6 +8,7 @@ import { AuthProvider } from "./auth/AuthContext";
 import { AuthGate } from "./auth/AuthGate";
 import { DashboardPage } from "./pages/DashboardPage";
 import { NodesPage } from "./pages/NodesPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
 import { NodeDetailsPage } from "./pages/NodeDetailsPage";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { LogViewerPage } from "./pages/LogViewerPage";
@@ -38,6 +39,7 @@ function AppRoutes() {
       <Route element={<AppLayout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/nodes" element={<NodesPage />} />
+        <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/nodes/:id" element={<NodeDetailsPage />} />
         <Route path="/nodes/:id/update" element={<NodeUpdatePage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />

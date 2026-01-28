@@ -312,6 +312,7 @@ builder.Services.AddHostedService<AutoUpdateBootstrapper>();
 builder.Services.AddScoped<SystemUpdateService>();
 builder.Services.AddSingleton<SystemUpdateScheduler>();
 builder.Services.AddHostedService<SystemUpdateBootstrapper>();
+builder.Services.AddHostedService<OnboardingBootstrapper>();
 
 // Retention cleanup (snapshot tables)
 builder.Services.AddOptions<RetentionOptions>()

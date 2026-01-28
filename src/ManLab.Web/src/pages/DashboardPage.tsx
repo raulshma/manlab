@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { MachineOnboardingModal } from "@/components/MachineOnboardingModal";
+
 import { LocalAgentCard } from "@/components/LocalAgentCard";
 import { NodeGrid } from "@/components/NodeGrid";
 import { DashboardStatsCard } from "@/components/dashboard/DashboardStatsCard";
@@ -177,14 +177,12 @@ export function DashboardPage() {
               <BarChart3 className="h-4 w-4 mr-2 text-muted-foreground" />
               Analytics
             </Button>
-            <MachineOnboardingModal
-              trigger={
+            <Link to="/onboarding">
                 <Button size="sm" className="h-9 shadow-lg shadow-primary/20">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Onboard Machine
+                    <Plus className="h-4 w-4 mr-2" />
+                    Onboard Machine
                 </Button>
-              }
-            />
+            </Link>
           </div>
         </header>
 
