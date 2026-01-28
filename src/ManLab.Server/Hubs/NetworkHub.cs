@@ -723,6 +723,25 @@ public class NetworkHub : Hub
         {
             await foreach (var host in _scanner.ScanSubnetAsync(cidr, concurrencyLimit, timeout))
             {
+                // Stop scanning if the client disconnected
+                if (!_rateLimit.IsConnectionActive(connectionId))
+                {
+                    _logger.LogInformation("Subnet scan {ScanId} aborted (client disconnected)", scanId);
+                    return;
+                }
+
+                // Protect against OOM for very large subnets
+                if (foundHosts.Count >= 10000)
+                {
+                    _logger.LogWarning("Subnet scan {ScanId} aborted (limit reached)", scanId);
+                    await _hubContext.Clients.Group(GetScanGroup(scanId)).SendAsync("ScanFailed", new ScanFailedEvent
+                    {
+                        ScanId = scanId,
+                        Cidr = cidr,
+                        Error = "Scan limit reached (10,000 hosts). Please narrow your scan range."
+                    });
+                    break;
+                }
                 var isNew = !foundHosts.ContainsKey(host.IpAddress);
                 foundHosts[host.IpAddress] = host;
                 if (isNew)

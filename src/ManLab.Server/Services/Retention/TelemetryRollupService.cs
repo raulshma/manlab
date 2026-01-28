@@ -83,9 +83,10 @@ public sealed class TelemetryRollupService : BackgroundService
         {
             await RollupHourlyAsync(db, nodeId, currentHour, cancellationToken);
             await RollupDailyAsync(db, nodeId, currentDay, cancellationToken);
+            
+            await db.SaveChangesAsync(cancellationToken);
+            db.ChangeTracker.Clear();
         }
-
-        await db.SaveChangesAsync(cancellationToken);
     }
 
     private async Task RollupHourlyAsync(DataContext db, Guid nodeId, DateTime currentHour, CancellationToken ct)

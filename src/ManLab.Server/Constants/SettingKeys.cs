@@ -125,6 +125,16 @@ public static class SettingKeys
         /// Last error message from a failed auto-update attempt.
         /// </summary>
         public const string LastError = "AutoUpdate.LastError";
+
+        /// <summary>
+        /// Global setting: Whether the auto-update job is enabled (system-wide).
+        /// </summary>
+        public const string JobEnabled = "AutoUpdate.Job.Enabled";
+
+        /// <summary>
+        /// Global setting: Cron expression for the auto-update job schedule.
+        /// </summary>
+        public const string JobSchedule = "AutoUpdate.Job.Schedule";
     }
 
     public static class Discord
@@ -149,6 +159,27 @@ public static class SettingKeys
         /// The latest release version tag (e.g., v1.0.0). Used for constructing download URLs.
         /// </summary>
         public const string LatestVersion = "GitHub.LatestVersion";
+
+        /// <summary>
+        /// GitHub repository in format "owner/repo" (e.g., "manlab/agent").
+        /// Used for fetching releases via GitHub API.
+        /// </summary>
+        public const string Repository = "GitHub.Repository";
+
+        /// <summary>
+        /// Version selection strategy: "latest-stable", "latest-prerelease", "manual".
+        /// - latest-stable: Automatically use the latest non-prerelease semantic version
+        /// - latest-prerelease: Include prereleases when finding the latest version
+        /// - manual: Use the version specified in GitHub.LatestVersion
+        /// </summary>
+        public const string VersionStrategy = "GitHub.VersionStrategy";
+
+        /// <summary>
+        /// Whether to prefer GitHub releases over local binaries for auto-updates.
+        /// When true, auto-update will check GitHub first, then fall back to local.
+        /// When false, auto-update will check local first, then fall back to GitHub.
+        /// </summary>
+        public const string PreferGitHubForUpdates = "GitHub.PreferGitHubForUpdates";
     }
 
     public static class Network
@@ -255,5 +286,15 @@ public static class SettingKeys
         /// Package manager to use (auto-detect if empty: apt, yum, dnf, pacman, zypper, windows-update).
         /// </summary>
         public const string PackageManager = "SystemUpdate.PackageManager";
+
+        /// <summary>
+        /// Global setting: Whether the system update job is enabled (system-wide).
+        /// </summary>
+        public const string JobEnabled = "SystemUpdate.Job.Enabled";
+
+        /// <summary>
+        /// Global setting: Cron expression for the system update job schedule.
+        /// </summary>
+        public const string JobSchedule = "SystemUpdate.Job.Schedule";
     }
 }

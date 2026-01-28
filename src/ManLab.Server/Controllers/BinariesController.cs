@@ -58,23 +58,45 @@ public sealed partial class BinariesController : ControllerBase
         // GitHub releases (best-effort)
         var githubEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
         var githubBaseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
-        var githubLatest = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
+        var githubRepo = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.Repository);
+        var versionStrategy = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.VersionStrategy, "latest-stable");
+        var manualVersion = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
 
         IReadOnlyList<AgentGitHubReleaseItem> githubReleases = Array.Empty<AgentGitHubReleaseItem>();
-        string? githubRepo = null;
+        string? effectiveRepo = null;
         string? githubError = null;
+        string? recommendedVersion = null;
 
-        if (githubEnabled && TryParseGitHubRepoFromReleaseBaseUrl(githubBaseUrl, out var repo))
+        if (githubEnabled)
         {
-            githubRepo = repo;
-            try
+            // Try to parse repo from base URL if not explicitly configured
+            if (!string.IsNullOrWhiteSpace(githubRepo))
             {
-                githubReleases = await FetchGitHubReleasesAsync(repo, max: 50);
+                effectiveRepo = githubRepo;
             }
-            catch (Exception ex)
+            else if (TryParseGitHubRepoFromReleaseBaseUrl(githubBaseUrl, out var parsedRepo))
             {
-                // Best-effort: do not fail the request if GitHub API is unavailable.
-                githubError = ex.Message;
+                effectiveRepo = parsedRepo;
+            }
+
+            if (!string.IsNullOrWhiteSpace(effectiveRepo))
+            {
+                try
+                {
+                    githubReleases = await FetchGitHubReleasesAsync(effectiveRepo, max: 50);
+                    
+                    // Determine recommended version based on strategy
+                    recommendedVersion = DetermineRecommendedVersion(githubReleases, versionStrategy, manualVersion);
+                }
+                catch (Exception ex)
+                {
+                    // Best-effort: do not fail the request if GitHub API is unavailable.
+                    githubError = ex.Message;
+                }
+            }
+            if (string.IsNullOrWhiteSpace(githubBaseUrl) && !string.IsNullOrWhiteSpace(effectiveRepo))
+            {
+                githubBaseUrl = $"https://github.com/{effectiveRepo}/releases/download";
             }
         }
 
@@ -84,8 +106,10 @@ public sealed partial class BinariesController : ControllerBase
             GitHub: new AgentGitHubReleaseCatalog(
                 Enabled: githubEnabled,
                 ReleaseBaseUrl: string.IsNullOrWhiteSpace(githubBaseUrl) ? null : githubBaseUrl,
-                ConfiguredLatestVersion: string.IsNullOrWhiteSpace(githubLatest) ? null : githubLatest,
-                Repo: githubRepo,
+                Repository: effectiveRepo,
+                VersionStrategy: versionStrategy,
+                ConfiguredLatestVersion: string.IsNullOrWhiteSpace(manualVersion) ? null : manualVersion,
+                RecommendedVersion: recommendedVersion,
                 Releases: githubReleases,
                 Error: githubError)));
     }
@@ -226,6 +250,56 @@ public sealed partial class BinariesController : ControllerBase
 
         repo = $"{owner}/{name}";
         return true;
+    }
+
+    /// <summary>
+    /// Determines the recommended version based on the configured strategy.
+    /// </summary>
+    private static string? DetermineRecommendedVersion(
+        IReadOnlyList<AgentGitHubReleaseItem> releases,
+        string strategy,
+        string? manualVersion)
+    {
+        if (releases.Count == 0)
+        {
+            return null;
+        }
+
+        // Manual strategy: use the configured version
+        if (string.Equals(strategy, "manual", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(manualVersion) ? null : manualVersion;
+        }
+
+        // latest-prerelease: include prereleases
+        var includePrerelease = string.Equals(strategy, "latest-prerelease", StringComparison.OrdinalIgnoreCase);
+
+        // Find the latest version based on semantic versioning
+        Version? latestVersion = null;
+        string? latestTag = null;
+
+        foreach (var release in releases)
+        {
+            // Skip drafts
+            if (release.Draft) continue;
+
+            // Skip prereleases unless strategy allows them
+            if (release.Prerelease && !includePrerelease) continue;
+
+            var tag = release.Tag.TrimStart('v');
+            
+            // Try to parse as semantic version
+            if (Version.TryParse(tag.Split('-')[0].Split('+')[0], out var version))
+            {
+                if (latestVersion == null || version > latestVersion)
+                {
+                    latestVersion = version;
+                    latestTag = release.Tag;
+                }
+            }
+        }
+
+        return latestTag;
     }
 
     private async Task<IReadOnlyList<AgentGitHubReleaseItem>> FetchGitHubReleasesAsync(string repo, int max)
@@ -827,8 +901,10 @@ public sealed partial class BinariesController : ControllerBase
     public sealed record AgentGitHubReleaseCatalog(
         bool Enabled,
         string? ReleaseBaseUrl,
+        string? Repository,
+        string VersionStrategy,
         string? ConfiguredLatestVersion,
-        string? Repo,
+        string? RecommendedVersion,
         IReadOnlyList<AgentGitHubReleaseItem> Releases,
         string? Error);
 

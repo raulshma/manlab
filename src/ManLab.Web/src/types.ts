@@ -487,6 +487,22 @@ export interface MonitorJobSummary {
 }
 
 /**
+ * Monitoring: Scheduled network tool configuration
+ */
+export interface ScheduledNetworkToolConfig {
+  id: string;
+  name: string;
+  toolType: string;
+  target: string | null;
+  parameters: string | null;
+  cron: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAtUtc: string | null;
+}
+
+/**
  * Enhancements: Log viewer policy + session
  */
 export interface LogViewerPolicy {

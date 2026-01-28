@@ -59,6 +59,7 @@ import type {
   TrafficMonitorConfig,
   TrafficSample,
   MonitorJobSummary,
+  ScheduledNetworkToolConfig,
   ProcessTelemetry,
   // System update types
   SystemUpdateSettings,
@@ -74,6 +75,17 @@ import type {
 } from "./types";
 
 const API_BASE = "/api";
+const TOKEN_KEY = "manlab:auth_token";
+
+/**
+ * Helper function to get auth headers for API requests.
+ * Returns an object with Authorization header if a token exists.
+ */
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
 
 export const api = {
   get: async <T>(
@@ -82,6 +94,7 @@ export const api = {
   ): Promise<{ data: T }> => {
     const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
       signal: options?.signal,
+      headers: getAuthHeaders(),
     });
     if (!response.ok) throw new Error(response.statusText);
     return { data: await response.json() };
@@ -93,7 +106,7 @@ export const api = {
   ): Promise<{ data: T }> => {
     const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify(body),
       signal: options?.signal,
     });
@@ -109,7 +122,7 @@ export const api = {
   ): Promise<{ data: T }> => {
     const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify(body),
       signal: options?.signal,
     });
@@ -124,6 +137,7 @@ export const api = {
     const response = await fetch(url.startsWith("http") ? url : `${API_BASE}${url.replace("/api", "")}`, {
       method: "DELETE",
       signal: options?.signal,
+      headers: getAuthHeaders(),
     });
     if (!response.ok) throw new Error(response.statusText);
     const text = await response.text();
@@ -1371,7 +1385,9 @@ export async function fetchUninstallPreview(
  * Local Agent: Fetches the status of the local agent installation on the server.
  */
 export async function fetchLocalAgentStatus(): Promise<LocalAgentStatus> {
-  const response = await fetch(`${API_BASE}/localagent/status`);
+  const response = await fetch(`${API_BASE}/localagent/status`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) {
     throw new Error(
       `Failed to fetch local agent status: ${response.statusText}`
@@ -1384,7 +1400,9 @@ export async function fetchLocalAgentStatus(): Promise<LocalAgentStatus> {
  * Local Agent: Fetches the default agent configuration values.
  */
 export async function fetchDefaultAgentConfig(): Promise<AgentConfiguration> {
-  const response = await fetch(`${API_BASE}/localagent/default-config`);
+  const response = await fetch(`${API_BASE}/localagent/default-config`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) {
     throw new Error(
       `Failed to fetch default agent config: ${response.statusText}`
@@ -1406,9 +1424,9 @@ export async function installLocalAgent(
 ): Promise<LocalAgentInstallResponse> {
   const response = await fetch(`${API_BASE}/localagent/install`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ 
-      force, 
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify({
+      force,
       userMode,
       agentConfig: agentConfig ? agentConfig : undefined
     }),
@@ -1429,7 +1447,7 @@ export async function installLocalAgent(
 export async function uninstallLocalAgent(): Promise<LocalAgentInstallResponse> {
   const response = await fetch(`${API_BASE}/localagent/uninstall`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({}),
   });
   if (!response.ok) {
@@ -1447,7 +1465,7 @@ export async function uninstallLocalAgent(): Promise<LocalAgentInstallResponse> 
 export async function clearLocalAgentFiles(): Promise<LocalAgentInstallResponse> {
   const response = await fetch(`${API_BASE}/localagent/clear-files`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({}),
   });
   if (!response.ok) {
@@ -1746,6 +1764,125 @@ export async function runTrafficMonitor(): Promise<void> {
   }
 }
 
+// Network Tools Scheduled Configs
+export async function fetchScheduledNetworkTools(): Promise<ScheduledNetworkToolConfig[]> {
+  const response = await fetch(`${API_BASE}/monitoring/network-tools`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch scheduled network tools: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchScheduledNetworkTool(id: string): Promise<ScheduledNetworkToolConfig> {
+  const response = await fetch(`${API_BASE}/monitoring/network-tools/${id}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch scheduled network tool: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function createScheduledNetworkTool(body: {
+  name: string;
+  toolType: string;
+  target?: string | null;
+  parameters?: string | null;
+  cron: string;
+  enabled?: boolean | null;
+}): Promise<ScheduledNetworkToolConfig> {
+  const response = await fetch(`${API_BASE}/monitoring/network-tools`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function updateScheduledNetworkTool(
+  id: string,
+  body: {
+    name: string;
+    toolType: string;
+    target?: string | null;
+    parameters?: string | null;
+    cron: string;
+    enabled?: boolean | null;
+  }
+): Promise<ScheduledNetworkToolConfig> {
+  const response = await fetch(`${API_BASE}/monitoring/network-tools/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function deleteScheduledNetworkTool(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/monitoring/network-tools/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`Failed to delete scheduled network tool: ${response.statusText}`);
+  }
+}
+
+export async function runScheduledNetworkTool(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/monitoring/network-tools/${id}/run`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Failed to run scheduled network tool: ${response.statusText}`);
+  }
+}
+
+// Global Job Management (agent-update, system-update)
+export async function updateGlobalJobSchedule(
+  jobType: "agent-update" | "system-update",
+  cronExpression: string
+): Promise<{ message: string; schedule: string }> {
+  const response = await fetch(`${API_BASE}/monitoring/jobs/global/${jobType}/schedule`, {
+    method: "PUT",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ cronExpression }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `Failed to update ${jobType} schedule`);
+  }
+  return response.json();
+}
+
+export async function updateGlobalJobEnabled(
+  jobType: "agent-update" | "system-update",
+  enabled: boolean
+): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/monitoring/jobs/global/${jobType}/enabled`, {
+    method: "PUT",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `Failed to update ${jobType} enabled state`);
+  }
+  return response.json();
+}
+
+export async function triggerGlobalJob(
+  jobType: "agent-update" | "system-update"
+): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/monitoring/jobs/global/${jobType}/trigger`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `Failed to trigger ${jobType}`);
+  }
+  return response.json();
+}
+
 /**
  * Enhancements: Terminal - Open a new terminal session
  */
@@ -1927,7 +2064,9 @@ export async function downloadSshZip(
  * Gets the auto-update settings for a specific node.
  */
 export async function fetchAutoUpdateSettings(nodeId: string): Promise<AutoUpdateSettings> {
-  const response = await fetch(`${API_BASE}/autoupdate/${nodeId}`);
+  const response = await fetch(`${API_BASE}/autoupdate/${nodeId}`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
     throw new Error(`Failed to fetch auto-update settings: ${response.statusText}`);
@@ -1944,7 +2083,7 @@ export async function updateAutoUpdateSettings(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/autoupdate/${nodeId}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(settings),
   });
   if (!response.ok) {
@@ -1960,6 +2099,7 @@ export async function updateAutoUpdateSettings(
 export async function triggerAutoUpdateCheck(nodeId: string): Promise<{ message: string }> {
   const response = await fetch(`${API_BASE}/autoupdate/${nodeId}/check`, {
     method: "POST",
+    headers: getAuthHeaders(),
   });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
@@ -1975,6 +2115,7 @@ export async function triggerAutoUpdateCheck(nodeId: string): Promise<{ message:
 export async function approvePendingUpdate(nodeId: string): Promise<{ message: string }> {
   const response = await fetch(`${API_BASE}/autoupdate/${nodeId}/approve`, {
     method: "POST",
+    headers: getAuthHeaders(),
   });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
@@ -1990,6 +2131,7 @@ export async function approvePendingUpdate(nodeId: string): Promise<{ message: s
 export async function disableAutoUpdate(nodeId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/autoupdate/${nodeId}/disable`, {
     method: "POST",
+    headers: getAuthHeaders(),
   });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
@@ -2003,6 +2145,7 @@ export async function disableAutoUpdate(nodeId: string): Promise<void> {
 export async function triggerGlobalAutoUpdateCheck(): Promise<{ message: string }> {
   const response = await fetch(`${API_BASE}/autoupdate/trigger-global`, {
     method: "POST",
+    headers: getAuthHeaders(),
   });
   if (!response.ok) {
     throw new Error(`Failed to trigger global update check: ${response.statusText}`);
@@ -2029,7 +2172,9 @@ export async function fetchAutoUpdateStatus(): Promise<NodeAutoUpdateStatus[]> {
  * Gets system update settings for a node.
  */
 export async function fetchSystemUpdateSettings(nodeId: string): Promise<SystemUpdateSettings> {
-  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}`);
+  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
     throw new Error(`Failed to fetch system update settings: ${response.statusText}`);
@@ -2046,7 +2191,7 @@ export async function updateSystemUpdateSettings(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/systemupdate/${nodeId}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(settings),
   });
   if (!response.ok) {
@@ -2060,7 +2205,9 @@ export async function updateSystemUpdateSettings(
  * Checks for available system updates on a node.
  */
 export async function checkSystemUpdates(nodeId: string): Promise<SystemUpdateAvailability> {
-  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}/check`);
+  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}/check`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
     throw new Error(`Failed to check for system updates: ${response.statusText}`);
@@ -2077,7 +2224,7 @@ export async function createSystemUpdate(
 ): Promise<{ updateId: string }> {
   const response = await fetch(`${API_BASE}/systemupdate/${nodeId}/create`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(options),
   });
   if (!response.ok) {
@@ -2092,7 +2239,9 @@ export async function createSystemUpdate(
  * Gets details of a specific system update.
  */
 export async function getSystemUpdateDetails(updateId: string): Promise<SystemUpdateDetails> {
-  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}`);
+  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Update not found");
     throw new Error(`Failed to get update details: ${response.statusText}`);
@@ -2106,6 +2255,7 @@ export async function getSystemUpdateDetails(updateId: string): Promise<SystemUp
 export async function approveSystemUpdate(updateId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/approve`, {
     method: "POST",
+    headers: getAuthHeaders(),
   });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Update not found");
@@ -2120,7 +2270,7 @@ export async function approveSystemUpdate(updateId: string): Promise<void> {
 export async function rejectSystemUpdate(updateId: string, reason?: string): Promise<void> {
   const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/reject`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(reason ? { reason } : {}),
   });
   if (!response.ok) {
@@ -2134,7 +2284,9 @@ export async function rejectSystemUpdate(updateId: string, reason?: string): Pro
  * Gets system update history for a node.
  */
 export async function getSystemUpdateHistory(nodeId: string, limit = 50): Promise<SystemUpdateHistory[]> {
-  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}/history?limit=${limit}`);
+  const response = await fetch(`${API_BASE}/systemupdate/${nodeId}/history?limit=${limit}`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Node not found");
     throw new Error(`Failed to get update history: ${response.statusText}`);
@@ -2146,7 +2298,9 @@ export async function getSystemUpdateHistory(nodeId: string, limit = 50): Promis
  * Gets detailed logs for a system update.
  */
 export async function getSystemUpdateLogs(updateId: string): Promise<SystemUpdateLog[]> {
-  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/logs`);
+  const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/logs`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) {
     throw new Error(`Failed to get update logs: ${response.statusText}`);
   }
@@ -2159,6 +2313,7 @@ export async function getSystemUpdateLogs(updateId: string): Promise<SystemUpdat
 export async function approveSystemReboot(updateId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/systemupdate/updates/${updateId}/reboot/approve`, {
     method: "POST",
+    headers: getAuthHeaders(),
   });
   if (!response.ok) {
     if (response.status === 404) throw new Error("Update not found");

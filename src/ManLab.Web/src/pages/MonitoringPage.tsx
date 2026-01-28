@@ -48,7 +48,7 @@ export function MonitoringPage() {
           </CardHeader>
           <CardContent>
             <TabsContent value="jobs" className="mt-0">
-              <MonitorJobsPanel onManageJob={(type) => setActiveTab(type === "http" ? "http" : "traffic")} />
+              <MonitorJobsPanel />
             </TabsContent>
             <TabsContent value="http" className="mt-0">
               <HttpMonitorsPanel />

@@ -170,6 +170,11 @@ builder.Services.AddAuthorization(options =>
         });
     }
 
+    options.DefaultPolicy = new AuthorizationPolicyBuilder()
+        .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, LocalBypassAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser()
+        .Build();
+
     options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
         .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, LocalBypassAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
@@ -185,6 +190,7 @@ builder.Services.AddSingleton<DownloadSessionService>();
 builder.Services.AddSingleton<StreamingDownloadService>();
 builder.Services.AddScoped<RemoteToolsAuthorizationService>();
 builder.Services.AddHostedService<TerminalSessionCleanupService>();
+builder.Services.AddHostedService<DownloadCleanupService>();
 
 builder.Services.AddOptions<ManLab.Server.Services.Ssh.SshProvisioningOptions>()
     .Bind(builder.Configuration.GetSection(ManLab.Server.Services.Ssh.SshProvisioningOptions.SectionName));
@@ -443,7 +449,7 @@ app.MapScalarApiReference();
 
 app.MapControllers();
 app.MapHub<AgentHub>("/hubs/agent").AllowAnonymous();
-app.MapHub<ManLab.Server.Hubs.NetworkHub>("/hubs/network");
+app.MapHub<ManLab.Server.Hubs.NetworkHub>("/hubs/network").AllowAnonymous();
 
 app.Run();
 

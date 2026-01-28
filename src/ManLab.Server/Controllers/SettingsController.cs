@@ -61,4 +61,220 @@ public class SettingsController : ControllerBase
             return BadRequest($"Failed to send test message: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Gets GitHub update configuration.
+    /// </summary>
+    [HttpGet("github-update")]
+    public async Task<ActionResult<GitHubUpdateConfigDto>> GetGitHubUpdateConfig()
+    {
+        var enabled = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
+        var baseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
+        var repository = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.Repository);
+        var versionStrategy = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.VersionStrategy, "latest-stable");
+        var manualVersion = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.LatestVersion);
+        var preferGitHub = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.PreferGitHubForUpdates, false);
+
+        return Ok(new GitHubUpdateConfigDto
+        {
+            Enabled = enabled,
+            ReleaseBaseUrl = baseUrl,
+            Repository = repository,
+            VersionStrategy = versionStrategy,
+            ManualVersion = manualVersion,
+            PreferGitHubForUpdates = preferGitHub
+        });
+    }
+
+    /// <summary>
+    /// Updates GitHub update configuration.
+    /// </summary>
+    [HttpPut("github-update")]
+    public async Task<ActionResult> UpdateGitHubUpdateConfig([FromBody] UpdateGitHubUpdateConfigRequest request)
+    {
+        // Validate version strategy
+        var validStrategies = new[] { "latest-stable", "latest-prerelease", "manual" };
+        if (!validStrategies.Contains(request.VersionStrategy, StringComparer.OrdinalIgnoreCase))
+        {
+            return BadRequest($"Version strategy must be one of: {string.Join(", ", validStrategies)}");
+        }
+
+        // Validate repository format if provided
+        if (!string.IsNullOrWhiteSpace(request.Repository))
+        {
+            var parts = request.Repository.Split('/');
+            if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+            {
+                return BadRequest("Repository must be in format 'owner/repo'");
+            }
+        }
+
+        // Validate base URL if provided
+        if (!string.IsNullOrWhiteSpace(request.ReleaseBaseUrl))
+        {
+            if (!Uri.TryCreate(request.ReleaseBaseUrl, UriKind.Absolute, out var uri) ||
+                !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest("Release base URL must be a valid GitHub URL");
+            }
+        }
+
+        // Update settings
+        await _settingsService.SetValueAsync(
+            Constants.SettingKeys.GitHub.EnableGitHubDownload,
+            request.Enabled.ToString(),
+            "GitHub",
+            "Enable downloading agent binaries from GitHub releases");
+
+        await _settingsService.SetValueAsync(
+            Constants.SettingKeys.GitHub.ReleaseBaseUrl,
+            request.ReleaseBaseUrl,
+            "GitHub",
+            "Base URL for GitHub releases (e.g., https://github.com/owner/repo/releases/download)");
+
+        await _settingsService.SetValueAsync(
+            Constants.SettingKeys.GitHub.Repository,
+            request.Repository,
+            "GitHub",
+            "GitHub repository in format 'owner/repo'");
+
+        await _settingsService.SetValueAsync(
+            Constants.SettingKeys.GitHub.VersionStrategy,
+            request.VersionStrategy,
+            "GitHub",
+            "Version selection strategy: latest-stable, latest-prerelease, or manual");
+
+        await _settingsService.SetValueAsync(
+            Constants.SettingKeys.GitHub.LatestVersion,
+            request.ManualVersion,
+            "GitHub",
+            "Manually specified version (used when strategy is 'manual')");
+
+        await _settingsService.SetValueAsync(
+            Constants.SettingKeys.GitHub.PreferGitHubForUpdates,
+            request.PreferGitHubForUpdates.ToString(),
+            "GitHub",
+            "Prefer GitHub releases over local binaries for auto-updates");
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Tests GitHub API connectivity and fetches available releases.
+    /// </summary>
+    [HttpPost("github-update/test")]
+    public async Task<ActionResult<GitHubTestResultDto>> TestGitHubConnection([FromBody] TestGitHubConnectionRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Repository))
+        {
+            return BadRequest("Repository is required");
+        }
+
+        var parts = request.Repository.Split('/');
+        if (parts.Length != 2)
+        {
+            return BadRequest("Repository must be in format 'owner/repo'");
+        }
+
+        try
+        {
+            var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("ManLab/1.0");
+            httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+
+            var url = $"https://api.github.com/repos/{request.Repository}/releases?per_page=10";
+            var response = await httpClient.GetAsync(url);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                return BadRequest(new GitHubTestResultDto
+                {
+                    Success = false,
+                    Error = $"GitHub API returned {response.StatusCode}: {response.ReasonPhrase}",
+                    Releases = Array.Empty<string>()
+                });
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
+            
+            var releases = new List<string>();
+            if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var el in doc.RootElement.EnumerateArray())
+                {
+                    if (el.TryGetProperty("tag_name", out var tagEl) && 
+                        tagEl.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        var tag = tagEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(tag))
+                        {
+                            releases.Add(tag);
+                        }
+                    }
+                }
+            }
+
+            return Ok(new GitHubTestResultDto
+            {
+                Success = true,
+                Error = null,
+                Releases = releases.ToArray()
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to test GitHub connection for repository {Repository}", request.Repository);
+            return BadRequest(new GitHubTestResultDto
+            {
+                Success = false,
+                Error = ex.Message,
+                Releases = Array.Empty<string>()
+            });
+        }
+    }
+}
+
+/// <summary>
+/// DTO for GitHub update configuration.
+/// </summary>
+public record GitHubUpdateConfigDto
+{
+    public bool Enabled { get; init; }
+    public string? ReleaseBaseUrl { get; init; }
+    public string? Repository { get; init; }
+    public string VersionStrategy { get; init; } = "latest-stable";
+    public string? ManualVersion { get; init; }
+    public bool PreferGitHubForUpdates { get; init; }
+}
+
+/// <summary>
+/// Request DTO for updating GitHub update configuration.
+/// </summary>
+public record UpdateGitHubUpdateConfigRequest
+{
+    public bool Enabled { get; init; }
+    public string? ReleaseBaseUrl { get; init; }
+    public string? Repository { get; init; }
+    public string VersionStrategy { get; init; } = "latest-stable";
+    public string? ManualVersion { get; init; }
+    public bool PreferGitHubForUpdates { get; init; }
+}
+
+/// <summary>
+/// Request DTO for testing GitHub connection.
+/// </summary>
+public record TestGitHubConnectionRequest
+{
+    public string Repository { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Result DTO for GitHub connection test.
+/// </summary>
+public record GitHubTestResultDto
+{
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public string[] Releases { get; init; } = Array.Empty<string>();
 }

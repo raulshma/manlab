@@ -149,7 +149,18 @@ public sealed class NetworkRateLimitService
     /// <param name="connectionId">The SignalR connection ID.</param>
     public void EndScan(string connectionId)
     {
-        _activeScans.AddOrUpdate(connectionId, 0, (_, existing) => Math.Max(0, existing - 1));
+        if (_activeScans.ContainsKey(connectionId))
+        {
+            _activeScans.AddOrUpdate(connectionId, 0, (_, existing) => Math.Max(0, existing - 1));
+        }
+    }
+
+    /// <summary>
+    /// Checks if a connection is currently active (connected).
+    /// </summary>
+    public bool IsConnectionActive(string connectionId)
+    {
+        return _activeScans.ContainsKey(connectionId);
     }
 
     /// <summary>

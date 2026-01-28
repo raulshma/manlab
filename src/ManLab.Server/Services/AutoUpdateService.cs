@@ -27,6 +27,7 @@ public sealed class AutoUpdateService
     private readonly IOptions<BinaryDistributionOptions> _binaryOptions;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ISettingsService _settingsService;
 
     public AutoUpdateService(
         IServiceScopeFactory scopeFactory,
@@ -34,7 +35,8 @@ public sealed class AutoUpdateService
         IAuditLog audit,
         IOptions<BinaryDistributionOptions> binaryOptions,
         IHttpClientFactory httpClientFactory,
-        IHttpContextAccessor httpContextAccessor)
+        IHttpContextAccessor httpContextAccessor,
+        ISettingsService settingsService)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -42,6 +44,7 @@ public sealed class AutoUpdateService
         _binaryOptions = binaryOptions;
         _httpClientFactory = httpClientFactory;
         _httpContextAccessor = httpContextAccessor;
+        _settingsService = settingsService;
     }
 
     /// <summary>
@@ -109,15 +112,15 @@ public sealed class AutoUpdateService
         await UpdateNodeSettingAsync(db, node.Id, SettingKeys.AutoUpdate.LastCheckAt, DateTime.UtcNow.ToString("o"));
 
         // Check for available update
-        var (hasUpdate, latestVersion) = await CheckForUpdateAsync(node.Id, settings.Channel, cancellationToken);
+        var (hasUpdate, latestVersion, source) = await CheckForUpdateAsync(node.Id, settings.Channel, cancellationToken);
         if (!hasUpdate || latestVersion == null)
         {
             _logger.LogDebug("Node {NodeId} is already up to date", node.Id);
             return;
         }
 
-        _logger.LogInformation("Update available for node {NodeId}: current={Current}, latest={Latest}",
-            node.Id, node.AgentVersion ?? "unknown", latestVersion);
+        _logger.LogInformation("Update available for node {NodeId}: current={Current}, latest={Latest}, source={Source}",
+            node.Id, node.AgentVersion ?? "unknown", latestVersion, source);
 
         // Check if update is already pending approval
         if (settings.ApprovalMode == "manual" && settings.PendingVersion == latestVersion)
@@ -142,7 +145,7 @@ public sealed class AutoUpdateService
     /// <summary>
     /// Checks if a node has an available update.
     /// </summary>
-    private async Task<(bool HasUpdate, string? LatestVersion)> CheckForUpdateAsync(
+    private async Task<(bool HasUpdate, string? LatestVersion, string Source)> CheckForUpdateAsync(
         Guid nodeId,
         string channel,
         CancellationToken cancellationToken)
@@ -153,28 +156,28 @@ public sealed class AutoUpdateService
         var node = await db.Nodes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == nodeId, cancellationToken);
         if (node?.AgentVersion == null)
         {
-            return (false, null);
+            return (false, null, "none");
         }
 
         // Get release catalog
         var catalog = await GetReleaseCatalogAsync(channel, cancellationToken);
         if (catalog == null)
         {
-            return (false, null);
+            return (false, null, "none");
         }
 
-        // Find latest version
-        var latestVersion = GetLatestAvailableVersion(catalog, node.AgentVersion);
+        // Find latest version using the new strategy
+        var (latestVersion, source) = await GetLatestAvailableVersionAsync(catalog, node.AgentVersion, cancellationToken);
         if (latestVersion == null)
         {
-            return (false, null);
+            return (false, null, source);
         }
 
         // Compare versions
         var current = ParseVersion(node.AgentVersion);
         var latest = ParseVersion(latestVersion);
 
-        return (latest > current, latestVersion);
+        return (latest > current, latestVersion, source);
     }
 
     /// <summary>
@@ -220,10 +223,21 @@ public sealed class AutoUpdateService
     /// <summary>
     /// Gets the latest available version from the catalog.
     /// </summary>
-    private static string? GetLatestAvailableVersion(JsonObject catalog, string currentVersion)
+    private async Task<(string? Version, string Source)> GetLatestAvailableVersionAsync(
+        JsonObject catalog, 
+        string currentVersion,
+        CancellationToken cancellationToken)
     {
         var local = catalog["local"] as JsonArray;
         var github = catalog["gitHub"] as JsonObject;
+
+        // Determine source preference
+        var preferGitHub = await _settingsService.GetValueAsync(
+            Constants.SettingKeys.GitHub.PreferGitHubForUpdates, 
+            false);
+
+        string? latestLocal = null;
+        string? latestGitHub = null;
 
         // Check local releases
         if (local != null && local.Count > 0)
@@ -235,10 +249,12 @@ public sealed class AutoUpdateService
                     versionNode is JsonValue versionValue)
                 {
                     var version = versionValue.ToString();
-                    if (!string.Equals(version, "staged", StringComparison.OrdinalIgnoreCase) &&
-                        CompareVersions(version, currentVersion) > 0)
+                    if (!string.Equals(version, "staged", StringComparison.OrdinalIgnoreCase))
                     {
-                        return version;
+                        if (latestLocal == null || CompareVersions(version, latestLocal) > 0)
+                        {
+                            latestLocal = version;
+                        }
                     }
                 }
             }
@@ -252,6 +268,12 @@ public sealed class AutoUpdateService
             github.TryGetPropertyValue("releases", out var releasesNode) &&
             releasesNode is JsonArray releases)
         {
+            var versionStrategy = await _settingsService.GetValueAsync(
+                Constants.SettingKeys.GitHub.VersionStrategy, 
+                "latest-stable");
+
+            var includePrerelease = string.Equals(versionStrategy, "latest-prerelease", StringComparison.OrdinalIgnoreCase);
+
             foreach (var item in releases)
             {
                 if (item is JsonObject obj &&
@@ -262,19 +284,58 @@ public sealed class AutoUpdateService
                     obj.TryGetPropertyValue("draft", out var draftNode) &&
                     draftNode is JsonValue draftValue)
                 {
-                    if (!preValue.GetValue<bool>() && !draftValue.GetValue<bool>())
+                    var isPrerelease = preValue.GetValue<bool>();
+                    var isDraft = draftValue.GetValue<bool>();
+
+                    // Skip drafts always
+                    if (isDraft) continue;
+
+                    // Skip prereleases unless strategy allows them
+                    if (isPrerelease && !includePrerelease) continue;
+
+                    var tag = tagValue.ToString().TrimStart('v');
+                    if (latestGitHub == null || CompareVersions(tag, latestGitHub) > 0)
                     {
-                        var tag = tagValue.ToString().TrimStart('v');
-                        if (CompareVersions(tag, currentVersion) > 0)
-                        {
-                            return tag;
-                        }
+                        latestGitHub = tag;
                     }
                 }
             }
         }
 
-        return null;
+        // Select the best version based on preference and availability
+        string? selectedVersion = null;
+        string source = "none";
+
+        if (preferGitHub)
+        {
+            // Prefer GitHub, fall back to local
+            if (latestGitHub != null && CompareVersions(latestGitHub, currentVersion) > 0)
+            {
+                selectedVersion = latestGitHub;
+                source = "github";
+            }
+            else if (latestLocal != null && CompareVersions(latestLocal, currentVersion) > 0)
+            {
+                selectedVersion = latestLocal;
+                source = "local";
+            }
+        }
+        else
+        {
+            // Prefer local, fall back to GitHub
+            if (latestLocal != null && CompareVersions(latestLocal, currentVersion) > 0)
+            {
+                selectedVersion = latestLocal;
+                source = "local";
+            }
+            else if (latestGitHub != null && CompareVersions(latestGitHub, currentVersion) > 0)
+            {
+                selectedVersion = latestGitHub;
+                source = "github";
+            }
+        }
+
+        return (selectedVersion, source);
     }
 
     /// <summary>
@@ -321,6 +382,28 @@ public sealed class AutoUpdateService
         // Get server base URL
         var serverBaseUrl = GetServerBaseUrl();
 
+        // Determine install source based on preference
+        var preferGitHub = await _scopeFactory.CreateScope().ServiceProvider
+            .GetRequiredService<ISettingsService>()
+            .GetValueAsync(Constants.SettingKeys.GitHub.PreferGitHubForUpdates, false);
+
+        var githubEnabled = await _scopeFactory.CreateScope().ServiceProvider
+            .GetRequiredService<ISettingsService>()
+            .GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
+
+        var githubBaseUrl = await _scopeFactory.CreateScope().ServiceProvider
+            .GetRequiredService<ISettingsService>()
+            .GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
+
+        string installSource = "local";
+        string? githubUrl = null;
+
+        if (preferGitHub && githubEnabled && !string.IsNullOrWhiteSpace(githubBaseUrl))
+        {
+            installSource = "github";
+            githubUrl = githubBaseUrl;
+        }
+
         // Determine auth method based on machine settings
         OnboardingJobRunner.InstallRequest request;
         var credentialService = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<CredentialEncryptionService>();
@@ -338,10 +421,10 @@ public sealed class AutoUpdateService
                 SudoPassword: null,
                 RunAsRoot: false,
                 AgentInstall: new SshProvisioningService.AgentInstallOptions(
-                    Source: "local",
+                    Source: installSource,
                     Channel: settings.Channel,
                     Version: targetVersion,
-                    GitHubReleaseBaseUrl: null),
+                    GitHubReleaseBaseUrl: githubUrl),
                 TargetNodeId: node.Id,
                 TrustOnFirstUse: machine.TrustHostKey,
                 ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,
@@ -367,10 +450,10 @@ public sealed class AutoUpdateService
                 SudoPassword: null,
                 RunAsRoot: false,
                 AgentInstall: new SshProvisioningService.AgentInstallOptions(
-                    Source: "local",
+                    Source: installSource,
                     Channel: settings.Channel,
                     Version: targetVersion,
-                    GitHubReleaseBaseUrl: null),
+                    GitHubReleaseBaseUrl: githubUrl),
                 TargetNodeId: node.Id,
                 TrustOnFirstUse: machine.TrustHostKey,
                 ExpectedHostKeyFingerprint: machine.HostKeyFingerprint,

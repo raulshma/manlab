@@ -27,11 +27,15 @@ public sealed class SystemUpdateScheduler
     /// <summary>
     /// Schedules the global system update job that checks all nodes for updates.
     /// </summary>
-    public async Task ScheduleGlobalSystemUpdateJobAsync(CancellationToken ct = default)
+    /// <param name="cronExpression">Optional custom cron expression. If null, uses default.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task ScheduleGlobalSystemUpdateJobAsync(string? cronExpression = null, CancellationToken ct = default)
     {
         var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
         var jobKey = new JobKey(JobKey, JobGroup);
         var triggerKey = new TriggerKey(TriggerKey, JobGroup);
+
+        var effectiveCron = cronExpression ?? DefaultCronExpression;
 
         var job = JobBuilder.Create<SystemUpdateJob>()
             .WithIdentity(jobKey)
@@ -40,9 +44,9 @@ public sealed class SystemUpdateScheduler
 
         var trigger = TriggerBuilder.Create()
             .WithIdentity(triggerKey)
-            .WithCronSchedule(DefaultCronExpression, cron => cron
+            .WithCronSchedule(effectiveCron, cron => cron
                 .WithMisfireHandlingInstructionDoNothing())
-            .WithDescription("Runs every 6 hours")
+            .WithDescription($"Cron: {effectiveCron}")
             .Build();
 
         if (await scheduler.CheckExists(jobKey, ct).ConfigureAwait(false))
@@ -52,7 +56,7 @@ public sealed class SystemUpdateScheduler
         }
 
         await scheduler.ScheduleJob(job, trigger, ct).ConfigureAwait(false);
-        _logger.LogInformation("Scheduled global system update job with cron: {Cron}", DefaultCronExpression);
+        _logger.LogInformation("Scheduled global system update job with cron: {Cron}", effectiveCron);
     }
 
     /// <summary>
@@ -81,7 +85,7 @@ public sealed class SystemUpdateScheduler
         if (!await scheduler.CheckExists(jobKey, ct).ConfigureAwait(false))
         {
             _logger.LogWarning("System update job does not exist, scheduling it first");
-            await ScheduleGlobalSystemUpdateJobAsync(ct).ConfigureAwait(false);
+            await ScheduleGlobalSystemUpdateJobAsync(null, ct).ConfigureAwait(false);
         }
 
         await scheduler.TriggerJob(jobKey, ct).ConfigureAwait(false);

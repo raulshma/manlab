@@ -635,13 +635,16 @@ export function SignalRProvider({
     newConnection.on("NodeStatusChanged", nodeStatusChangedHandler);
     newConnection.on("NodeRegistered", nodeRegisteredHandler);
     newConnection.on("TelemetryReceived", telemetryUpdateHandler);
-    newConnection.on("telemetryreceived", telemetryUpdateHandler);
+    newConnection.on("telemetryReceived", telemetryUpdateHandler); // camelCase
+    newConnection.on("telemetryreceived", telemetryUpdateHandler); // lowercase
     newConnection.on("CommandUpdated", commandUpdatedHandler);
 
     // Register local agent event handlers (prevents 'No client method' warnings)
     newConnection.on("LocalAgentLog", localAgentLogHandler);
     newConnection.on("LocalAgentStatusChanged", localAgentStatusChangedHandler);
     newConnection.on("ServerResourceUsage", serverResourceUsageHandler);
+    newConnection.on("serverResourceUsage", serverResourceUsageHandler); // camelCase
+    newConnection.on("serverresourceusage", serverResourceUsageHandler); // lowercase
 
     // Register agent backoff/ping event handlers
     const agentBackoffStatusHandler = (
@@ -705,6 +708,8 @@ export function SignalRProvider({
       newConnection.off("NodeStatusChanged", nodeStatusChangedHandler);
       newConnection.off("NodeRegistered", nodeRegisteredHandler);
       newConnection.off("TelemetryReceived", telemetryUpdateHandler);
+      newConnection.off("telemetryReceived", telemetryUpdateHandler);
+      newConnection.off("telemetryreceived", telemetryUpdateHandler);
       newConnection.off("CommandUpdated", commandUpdatedHandler);
       newConnection.off("LocalAgentLog", localAgentLogHandler);
       newConnection.off(
@@ -712,6 +717,8 @@ export function SignalRProvider({
         localAgentStatusChangedHandler
       );
       newConnection.off("ServerResourceUsage", serverResourceUsageHandler);
+      newConnection.off("serverResourceUsage", serverResourceUsageHandler);
+      newConnection.off("serverresourceusage", serverResourceUsageHandler);
       newConnection.off("AgentBackoffStatus", agentBackoffStatusHandler);
       newConnection.off("AgentPingResponse", agentPingResponseHandler);
       newConnection.off("NodeDeleted", nodeDeletedHandler);

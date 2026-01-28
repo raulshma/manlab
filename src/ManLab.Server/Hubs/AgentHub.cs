@@ -42,7 +42,6 @@ public class AgentHub : Hub
 
     // Throttle zip progress updates to every 2 seconds per download
     private static readonly TimeSpan ZipProgressThrottleInterval = TimeSpan.FromSeconds(2);
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTime> _lastZipProgressUpdate = new();
 
     private readonly ILogger<AgentHub> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -427,7 +426,7 @@ public class AgentHub : Hub
         // Avoid additional DB round-trips in the hot heartbeat path.
 
         // Let the dashboard invalidate/refetch telemetry for this node.
-        await Clients.All.SendAsync("TelemetryReceived", nodeId);
+        await Clients.All.SendAsync("telemetryreceived", nodeId);
     }
 
     /// <summary>
@@ -1130,7 +1129,7 @@ public class AgentHub : Hub
                 _downloadSessions.UpdateStatus(downloadId, DownloadSessionService.DownloadStatus.Ready);
 
                 // Clean up throttle tracking since zip creation is complete
-                _lastZipProgressUpdate.TryRemove(downloadId, out _);
+                // _lastZipProgressUpdate.TryRemove(downloadId, out _); - No longer needed as it's stored on the session
 
                 // Notify client that zip is ready
                 if (_downloadSessions.TryGetSession(downloadId, out var session) && session is not null)
@@ -1195,23 +1194,22 @@ public class AgentHub : Hub
                 return; // Can't forward without downloadId
             }
 
+            // Get the download session first to check throttling against session state
+            if (!_downloadSessions.TryGetSession(downloadId, out var session) || session is null)
+            {
+                return;
+            }
+
             // Throttle updates to every 2 seconds per download for performance
             var now = DateTime.UtcNow;
-            if (_lastZipProgressUpdate.TryGetValue(downloadId, out var lastUpdate))
+            if (session.LastZipProgressUpdateAt.HasValue)
             {
-                if (now - lastUpdate < ZipProgressThrottleInterval)
+                if (now - session.LastZipProgressUpdateAt.Value < ZipProgressThrottleInterval)
                 {
                     return; // Skip this update, too soon
                 }
             }
-            _lastZipProgressUpdate[downloadId] = now;
-
-            // Get the download session to find the client connection
-            if (!_downloadSessions.TryGetSession(downloadId, out var session) || session is null)
-            {
-                _lastZipProgressUpdate.TryRemove(downloadId, out _); // Clean up
-                return;
-            }
+            session.LastZipProgressUpdateAt = now;
 
             // Parse progress from logs like "Compressing: 50% (5/10 files)" or "Creating zip archive with 10 file(s)..."
             int? percentComplete = null;

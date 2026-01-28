@@ -127,8 +127,9 @@ public sealed class NetworkScannerService : INetworkScannerService
         var ipRange = ParseCidr(cidr).ToList();
         var semaphore = new SemaphoreSlim(Math.Min(concurrencyLimit, 256));
         var enrichmentSemaphore = new SemaphoreSlim(Math.Min(concurrencyLimit, 64));
-        var channel = Channel.CreateUnbounded<DiscoveredHost>(new UnboundedChannelOptions
+        var channel = Channel.CreateBounded<DiscoveredHost>(new BoundedChannelOptions(1000)
         {
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false
         });

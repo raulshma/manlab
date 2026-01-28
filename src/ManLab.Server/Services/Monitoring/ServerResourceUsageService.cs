@@ -47,7 +47,7 @@ public sealed class ServerResourceUsageService : BackgroundService
                 var snapshot = Collect();
                 await _hubContext.Clients
                     .Group(AgentHub.DashboardGroupName)
-                    .SendAsync("ServerResourceUsage", snapshot, stoppingToken);
+                    .SendAsync("serverresourceusage", snapshot, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

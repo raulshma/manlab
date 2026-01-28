@@ -16,9 +16,10 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
 
     private readonly object _gate = new();
     private readonly List<PacketCaptureRecord> _packets = [];
-    private readonly Channel<PacketCaptureRecord> _broadcastChannel = Channel.CreateUnbounded<PacketCaptureRecord>(
-        new UnboundedChannelOptions
+    private readonly Channel<PacketCaptureRecord> _broadcastChannel = Channel.CreateBounded<PacketCaptureRecord>(
+        new BoundedChannelOptions(1000)
         {
+            FullMode = BoundedChannelFullMode.DropWrite,
             SingleReader = true,
             SingleWriter = false
         });

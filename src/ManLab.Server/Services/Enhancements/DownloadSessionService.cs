@@ -65,6 +65,12 @@ public sealed class DownloadSessionService
         /// Set after the agent completes zip creation.
         /// </summary>
         public string? TempFilePath { get; set; }
+
+        /// <summary>
+        /// Track the last time a zip progress update was forwarded for this session.
+        /// Used for throttling updates.
+        /// </summary>
+        public DateTime? LastZipProgressUpdateAt { get; set; }
     }
 
     /// <summary>
