@@ -172,7 +172,7 @@ public class AgentHub : Hub
 
             if (previousStatus != authedNode.Status)
             {
-                await Clients.All.SendAsync("NodeStatusChanged", authedNode.Id, authedNode.Status.ToString(), authedNode.LastSeen);
+                await Clients.Group(DashboardGroupName).SendAsync("NodeStatusChanged", authedNode.Id, authedNode.Status.ToString(), authedNode.LastSeen);
             }
 
             _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
@@ -247,7 +247,7 @@ public class AgentHub : Hub
         Context.Items[ContextTokenHashKey] = tokenHash;
 
         // Let dashboards upsert immediately without waiting for a REST poll.
-        await Clients.All.SendAsync("NodeRegistered", new NodeRegisteredDto
+        await Clients.Group(DashboardGroupName).SendAsync("NodeRegistered", new NodeRegisteredDto
         {
             Id = newNode.Id,
             Hostname = newNode.Hostname,
@@ -259,7 +259,7 @@ public class AgentHub : Hub
             CreatedAt = newNode.CreatedAt
         });
 
-        await Clients.All.SendAsync("NodeStatusChanged", newNode.Id, newNode.Status.ToString(), newNode.LastSeen);
+        await Clients.Group(DashboardGroupName).SendAsync("NodeStatusChanged", newNode.Id, newNode.Status.ToString(), newNode.LastSeen);
 
         _audit.TryEnqueue(AuditEventFactory.CreateSignalR(
             kind: "audit",
@@ -426,7 +426,7 @@ public class AgentHub : Hub
         // Avoid additional DB round-trips in the hot heartbeat path.
 
         // Let the dashboard invalidate/refetch telemetry for this node.
-        await Clients.All.SendAsync("telemetryreceived", nodeId);
+        await Clients.Group(DashboardGroupName).SendAsync("telemetryreceived", nodeId);
     }
 
     /// <summary>
@@ -477,7 +477,7 @@ public class AgentHub : Hub
         }
 
         await db.SaveChangesAsync();
-        await Clients.All.SendAsync("ServiceStatusSnapshotsReceived", nodeId);
+        await Clients.Group(DashboardGroupName).SendAsync("ServiceStatusSnapshotsReceived", nodeId);
     }
 
     /// <summary>
@@ -530,7 +530,7 @@ public class AgentHub : Hub
         }
 
         await db.SaveChangesAsync();
-        await Clients.All.SendAsync("SmartDriveSnapshotsReceived", nodeId);
+        await Clients.Group(DashboardGroupName).SendAsync("SmartDriveSnapshotsReceived", nodeId);
     }
 
     /// <summary>
@@ -574,7 +574,7 @@ public class AgentHub : Hub
         }
 
         await db.SaveChangesAsync();
-        await Clients.All.SendAsync("GpuSnapshotsReceived", nodeId);
+        await Clients.Group(DashboardGroupName).SendAsync("GpuSnapshotsReceived", nodeId);
     }
 
     /// <summary>
@@ -616,7 +616,7 @@ public class AgentHub : Hub
         }
 
         await db.SaveChangesAsync();
-        await Clients.All.SendAsync("UpsSnapshotsReceived", nodeId);
+        await Clients.Group(DashboardGroupName).SendAsync("UpsSnapshotsReceived", nodeId);
     }
 
     /// <summary>

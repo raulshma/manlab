@@ -16,6 +16,7 @@ public sealed class ServerResourceUsageService : BackgroundService
     private readonly DashboardConnectionTracker _connectionTracker;
     private readonly ILogger<ServerResourceUsageService> _logger;
 
+    private readonly Process _process;
     private bool _cpuInitialized;
     private TimeSpan _prevCpuTime;
     private DateTime _prevSampleAtUtc;
@@ -28,6 +29,13 @@ public sealed class ServerResourceUsageService : BackgroundService
         _hubContext = hubContext;
         _connectionTracker = connectionTracker;
         _logger = logger;
+        _process = Process.GetCurrentProcess();
+    }
+
+    public override void Dispose()
+    {
+        _process.Dispose();
+        base.Dispose();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -69,11 +77,12 @@ public sealed class ServerResourceUsageService : BackgroundService
 
     private ServerResourceUsageDto Collect()
     {
-        using var process = Process.GetCurrentProcess();
+        _process.Refresh();
+
         var now = DateTime.UtcNow;
 
         float? cpuPercent = null;
-        var cpuTime = process.TotalProcessorTime;
+        var cpuTime = _process.TotalProcessorTime;
 
         if (_cpuInitialized)
         {
@@ -94,9 +103,9 @@ public sealed class ServerResourceUsageService : BackgroundService
         {
             TimestampUtc = now,
             CpuPercent = cpuPercent,
-            MemoryBytes = process.WorkingSet64,
+            MemoryBytes = _process.WorkingSet64,
             GcHeapBytes = GC.GetTotalMemory(forceFullCollection: false),
-            ThreadCount = process.Threads.Count
+            ThreadCount = _process.Threads.Count
         };
     }
 }
