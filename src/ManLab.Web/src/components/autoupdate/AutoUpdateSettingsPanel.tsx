@@ -42,6 +42,7 @@ export function AutoUpdateSettingsPanel({ nodeId }: AutoUpdateSettingsPanelProps
   const [channel, setChannel] = useState<string>("stable");
   const [maintenanceWindow, setMaintenanceWindow] = useState<string>("");
   const [approvalMode, setApprovalMode] = useState<"automatic" | "manual">("manual");
+  const [disableDiscordNotification, setDisableDiscordNotification] = useState<boolean>(false);
 
   // Fetch auto-update settings
   const {
@@ -97,6 +98,9 @@ export function AutoUpdateSettingsPanel({ nodeId }: AutoUpdateSettingsPanelProps
     if (approvalMode !== settings.approvalMode) {
       setApprovalMode(settings.approvalMode);
     }
+    if (disableDiscordNotification !== (settings.disableDiscordNotification ?? false)) {
+      setDisableDiscordNotification(settings.disableDiscordNotification ?? false);
+    }
   }
 
   const handleSave = () => {
@@ -105,6 +109,7 @@ export function AutoUpdateSettingsPanel({ nodeId }: AutoUpdateSettingsPanelProps
       channel,
       maintenanceWindow: maintenanceWindow || undefined,
       approvalMode,
+      disableDiscordNotification,
     });
   };
 
@@ -115,6 +120,7 @@ export function AutoUpdateSettingsPanel({ nodeId }: AutoUpdateSettingsPanelProps
         channel,
         maintenanceWindow: maintenanceWindow || undefined,
         approvalMode,
+        disableDiscordNotification,
       });
     } else {
       disableMutation.mutate();
@@ -265,6 +271,28 @@ export function AutoUpdateSettingsPanel({ nodeId }: AutoUpdateSettingsPanelProps
                 ? "Updates require manual approval before installation."
                 : "Updates are installed automatically when available."}
             </p>
+          </div>
+
+          {/* Discord notification toggle */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="discordNotification" className="flex items-center gap-2">
+                  Discord Notifications
+                </Label>
+                {!settings.discordNotificationsAvailable && (
+                  <p className="text-xs text-muted-foreground">
+                    Configure Discord notifications in global settings to enable per-node notifications
+                  </p>
+                )}
+              </div>
+              <Switch
+                id="discordNotification"
+                checked={!disableDiscordNotification}
+                onCheckedChange={(checked) => setDisableDiscordNotification(!checked)}
+                disabled={updateMutation.isPending || !settings.discordNotificationsAvailable}
+              />
+            </div>
           </div>
 
           {/* Save button */}

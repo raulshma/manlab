@@ -33,8 +33,16 @@ export function DiscordSettings() {
   useEffect(() => {
     if (settings) {
       const urlSetting = settings.find((s: SystemSetting) => s.key === SettingKeys.Discord.WebhookUrl);
-      if (urlSetting?.value && urlSetting.value !== webhookUrl) {
+      const enabledSetting = settings.find((s: SystemSetting) => s.key === SettingKeys.Discord.Enabled);
+
+      if (urlSetting?.value) {
         setWebhookUrl(urlSetting.value);
+      }
+
+      if (enabledSetting) {
+        setEnabled(enabledSetting.value === "true");
+      } else if (urlSetting?.value) {
+        // Legacy: if URL exists but Enabled key missing, assume enabled
         setEnabled(true);
       }
     }
@@ -55,13 +63,18 @@ export function DiscordSettings() {
   });
 
   const handleSave = () => {
-    const valueToSave = enabled ? webhookUrl : "";
     mutation.mutate([
       {
         key: SettingKeys.Discord.WebhookUrl,
-        value: valueToSave,
+        value: webhookUrl,
         category: "Notifications",
         description: "Discord Webhook URL for alerts",
+      },
+      {
+        key: SettingKeys.Discord.Enabled,
+        value: enabled ? "true" : "false",
+        category: "Notifications",
+        description: "Enable Discord notifications",
       },
     ]);
   };

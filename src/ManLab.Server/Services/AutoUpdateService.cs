@@ -31,6 +31,7 @@ public sealed class AutoUpdateService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ISettingsService _settingsService;
     private readonly IHubContext<AgentHub> _hubContext;
+    private readonly DiscordWebhookNotificationService _discordService;
 
     public AutoUpdateService(
         IServiceScopeFactory scopeFactory,
@@ -40,7 +41,8 @@ public sealed class AutoUpdateService
         IHttpClientFactory httpClientFactory,
         IHttpContextAccessor httpContextAccessor,
         ISettingsService settingsService,
-        IHubContext<AgentHub> hubContext)
+        IHubContext<AgentHub> hubContext,
+        DiscordWebhookNotificationService discordService)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -50,6 +52,7 @@ public sealed class AutoUpdateService
         _httpContextAccessor = httpContextAccessor;
         _settingsService = settingsService;
         _hubContext = hubContext;
+        _discordService = discordService;
     }
 
     /// <summary>
@@ -58,9 +61,10 @@ public sealed class AutoUpdateService
     /// </summary>
     /// <param name="force">Whether to force checking all nodes regardless of schedule.</param>
     /// <param name="jobApprovalMode">Job-level approval mode ("automatic" or "manual"). If provided, overrides node-level settings.</param>
-    public async Task CheckAndApplyUpdatesAsync(bool force = false, string? jobApprovalMode = null, CancellationToken cancellationToken = default)
+    /// <param name="sendDiscordNotification">Whether to send Discord notifications for updates.</param>
+    public async Task CheckAndApplyUpdatesAsync(bool force = false, string? jobApprovalMode = null, bool sendDiscordNotification = false, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Auto-update job starting (Force: {Force}, JobApprovalMode: {JobApprovalMode})", force, jobApprovalMode);
+        _logger.LogInformation("Auto-update job starting (Force: {Force}, JobApprovalMode: {JobApprovalMode}, SendDiscord: {SendDiscord})", force, jobApprovalMode, sendDiscordNotification);
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
@@ -97,7 +101,7 @@ public sealed class AutoUpdateService
         {
             try
             {
-                await ProcessNodeAutoUpdateAsync(db, node, force, jobApprovalMode, cancellationToken);
+                await ProcessNodeAutoUpdateAsync(db, node, force, jobApprovalMode, sendDiscordNotification, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -109,7 +113,7 @@ public sealed class AutoUpdateService
     /// <summary>
     /// Processes auto-update for a single node.
     /// </summary>
-    private async Task ProcessNodeAutoUpdateAsync(DataContext db, Node node, bool force, string? jobApprovalMode, CancellationToken cancellationToken)
+    private async Task ProcessNodeAutoUpdateAsync(DataContext db, Node node, bool force, string? jobApprovalMode, bool sendDiscordNotification, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Processing auto-update check for node {NodeId} ({NodeName})", node.Id, node.Hostname);
         
@@ -168,6 +172,17 @@ public sealed class AutoUpdateService
 
         _logger.LogInformation("Update available for node {NodeId}: current={Current}, latest={Latest}, source={Source}",
             node.Id, node.AgentVersion ?? "unknown", latestVersion, source);
+
+        // Send Discord notification if enabled at job level and node has not opted out
+        if (sendDiscordNotification && !settings.DisableDiscordNotification)
+        {
+            var lastNotified = await GetNodeSettingValueAsync(db, node.Id, SettingKeys.AutoUpdate.LastNotifiedVersion);
+            if (lastNotified != latestVersion)
+            {
+                await _discordService.NotifyUpdateAvailableAsync(node.Hostname ?? "Unknown", "Agent", latestVersion, source, cancellationToken);
+                await UpdateNodeSettingAsync(db, node.Id, SettingKeys.AutoUpdate.LastNotifiedVersion, latestVersion);
+            }
+        }
 
         // Check if update is already pending approval
         if (effectiveApprovalMode == "manual" && settings.PendingVersion == latestVersion)
@@ -646,7 +661,8 @@ public sealed class AutoUpdateService
             LastUpdateAt = ParseDateTime(settingsDict.GetValueOrDefault(SettingKeys.AutoUpdate.LastUpdateAt)),
             FailureCount = int.TryParse(settingsDict.GetValueOrDefault(SettingKeys.AutoUpdate.FailureCount), out var fc) ? fc : 0,
             PendingVersion = settingsDict.GetValueOrDefault(SettingKeys.AutoUpdate.PendingVersion),
-            LastError = settingsDict.GetValueOrDefault(SettingKeys.AutoUpdate.LastError)
+            LastError = settingsDict.GetValueOrDefault(SettingKeys.AutoUpdate.LastError),
+            DisableDiscordNotification = settingsDict.GetValueOrDefault(SettingKeys.AutoUpdate.DisableDiscordNotification) == "true"
         };
     }
 
@@ -827,6 +843,7 @@ public sealed class AutoUpdateService
         public int FailureCount { get; init; }
         public string? PendingVersion { get; init; }
         public string? LastError { get; init; }
+        public bool DisableDiscordNotification { get; init; }
     }
 
     /// <summary>

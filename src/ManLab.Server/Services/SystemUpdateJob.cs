@@ -33,8 +33,11 @@ public sealed class SystemUpdateJob : IJob
             var autoApprove = !context.MergedJobDataMap.ContainsKey("autoApprove") ||
                              context.MergedJobDataMap.GetBoolean("autoApprove");
 
+            var sendDiscord = context.MergedJobDataMap.ContainsKey("sendDiscordNotification") &&
+                              context.MergedJobDataMap.GetBoolean("sendDiscordNotification");
+
             // Delegate to the service's method
-            await _systemUpdateService.CheckAndCreatePendingUpdatesAsync(force, autoApprove, context.CancellationToken);
+            await _systemUpdateService.CheckAndCreatePendingUpdatesAsync(force, autoApprove, sendDiscord, context.CancellationToken);
             _logger.LogDebug("System update job completed at {Time}", DateTime.UtcNow);
         }
         catch (Exception ex)

@@ -28,6 +28,8 @@ public sealed class SystemUpdateService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly SshProvisioningService _sshProvisioningService;
     private readonly IHubContext<AgentHub> _hubContext;
+    private readonly DiscordWebhookNotificationService _discordService;
+    private readonly ISettingsService _settingsService;
 
     public SystemUpdateService(
         IServiceScopeFactory scopeFactory,
@@ -35,7 +37,9 @@ public sealed class SystemUpdateService
         IAuditLog audit,
         IHttpContextAccessor httpContextAccessor,
         SshProvisioningService sshProvisioningService,
-        IHubContext<AgentHub> hubContext)
+        IHubContext<AgentHub> hubContext,
+        DiscordWebhookNotificationService discordService,
+        ISettingsService settingsService)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -43,6 +47,8 @@ public sealed class SystemUpdateService
         _httpContextAccessor = httpContextAccessor;
         _sshProvisioningService = sshProvisioningService;
         _hubContext = hubContext;
+        _discordService = discordService;
+        _settingsService = settingsService;
     }
 
     #region Core Update Methods
@@ -53,9 +59,10 @@ public sealed class SystemUpdateService
     /// </summary>
     /// <param name="force">Whether to force checking all nodes regardless of schedule.</param>
     /// <param name="jobAutoApprove">Job-level auto-approve setting. If provided, overrides node-level settings.</param>
-    public async Task CheckAndCreatePendingUpdatesAsync(bool force = false, bool? jobAutoApprove = null, CancellationToken cancellationToken = default)
+    /// <param name="sendDiscordNotification">Whether to send Discord notifications for updates.</param>
+    public async Task CheckAndCreatePendingUpdatesAsync(bool force = false, bool? jobAutoApprove = null, bool sendDiscordNotification = false, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("System update job starting (Force: {Force}, JobAutoApprove: {JobAutoApprove})", force, jobAutoApprove);
+        _logger.LogInformation("System update job starting (Force: {Force}, JobAutoApprove: {JobAutoApprove}, SendDiscord: {SendDiscord})", force, jobAutoApprove, sendDiscordNotification);
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
@@ -89,7 +96,7 @@ public sealed class SystemUpdateService
         {
             try
             {
-                await ProcessNodeSystemUpdateAsync(db, node, force, jobAutoApprove, cancellationToken);
+                await ProcessNodeSystemUpdateAsync(db, node, force, jobAutoApprove, sendDiscordNotification, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -101,7 +108,7 @@ public sealed class SystemUpdateService
     /// <summary>
     /// Processes system update for a single node.
     /// </summary>
-    private async Task ProcessNodeSystemUpdateAsync(DataContext db, Node node, bool force, bool? jobAutoApprove, CancellationToken cancellationToken)
+    private async Task ProcessNodeSystemUpdateAsync(DataContext db, Node node, bool force, bool? jobAutoApprove, bool sendDiscordNotification, CancellationToken cancellationToken)
     {
         var settings = await GetNodeSettingsAsync(db, node.Id, cancellationToken);
         if (!settings.Enabled && !force)
@@ -146,6 +153,26 @@ public sealed class SystemUpdateService
 
         _logger.LogInformation("System updates available for node {NodeId}: {Count} package(s), {Security} security update(s)",
             node.Id, availability.Packages.Count, availability.SecurityUpdates);
+
+        // Send Discord notification if enabled at job level and node has not opted out
+        if (sendDiscordNotification && !settings.DisableDiscordNotification)
+        {
+            var contentHash = ComputeContentHash(availability.Packages);
+            var lastHash = await GetNodeSettingValueAsync(db, node.Id, SettingKeys.SystemUpdate.LastNotifiedContentHash, cancellationToken);
+
+            if (contentHash != lastHash)
+            {
+                var updateType = availability.SecurityUpdates > 0 ? "Security" : "System";
+                var versionInfo = $"{availability.Packages.Count} package(s)";
+                if (availability.SecurityUpdates > 0)
+                {
+                    versionInfo += $" ({availability.SecurityUpdates} security)";
+                }
+
+                await _discordService.NotifyUpdateAvailableAsync(node.Hostname ?? "Unknown", updateType, versionInfo, "System", cancellationToken);
+                await UpdateNodeSettingAsync(db, node.Id, SettingKeys.SystemUpdate.LastNotifiedContentHash, contentHash, cancellationToken);
+            }
+        }
 
         // Filter based on settings
         var includePackages = availability.Packages.Where(p =>
@@ -787,6 +814,7 @@ public sealed class SystemUpdateService
         await UpdateNodeSettingAsync(db, nodeId, SettingKeys.SystemUpdate.AutoApproveUpdates, settings.AutoApproveUpdates.ToString().ToLowerInvariant(), cancellationToken);
         await UpdateNodeSettingAsync(db, nodeId, SettingKeys.SystemUpdate.AutoRebootIfNeeded, settings.AutoRebootIfNeeded.ToString().ToLowerInvariant(), cancellationToken);
         await UpdateNodeSettingAsync(db, nodeId, SettingKeys.SystemUpdate.PackageManager, settings.PackageManager ?? "", cancellationToken);
+        await UpdateNodeSettingAsync(db, nodeId, SettingKeys.SystemUpdate.DisableDiscordNotification, settings.DisableDiscordNotification.ToString().ToLowerInvariant(), cancellationToken);
 
         await AuditAsync(db, nodeId, "systemupdate.settings_updated", "System update settings updated");
     }
@@ -794,6 +822,15 @@ public sealed class SystemUpdateService
     #endregion
 
     #region Private Helpers
+    private static string ComputeContentHash(List<SystemPackage> packages)
+    {
+        var sorted = packages.OrderBy(p => p.Name).ThenBy(p => p.Version);
+        var str = string.Join("|", sorted.Select(p => $"{p.Name}:{p.Version}"));
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var bytes = System.Text.Encoding.UTF8.GetBytes(str);
+        var hash = md5.ComputeHash(bytes);
+        return Convert.ToHexString(hash);
+    }
 
     private async Task<SystemUpdateNodeSettings> GetNodeSettingsAsync(
         DataContext db,
@@ -816,6 +853,10 @@ public sealed class SystemUpdateService
             return int.TryParse(val, out var result) ? result : defaultValue;
         };
 
+        var discordEnabled = await _settingsService.GetValueAsync(SettingKeys.Discord.Enabled, true);
+        var discordWebhookUrl = await _settingsService.GetValueAsync(SettingKeys.Discord.WebhookUrl);
+        var discordAvailable = discordEnabled && !string.IsNullOrWhiteSpace(discordWebhookUrl);
+
         return new SystemUpdateNodeSettings
         {
             Enabled = parseBool(SettingKeys.SystemUpdate.Enabled, false),
@@ -827,7 +868,9 @@ public sealed class SystemUpdateService
             IncludeDriverUpdates = parseBool(SettingKeys.SystemUpdate.IncludeDriverUpdates, true),
             AutoApproveUpdates = parseBool(SettingKeys.SystemUpdate.AutoApproveUpdates, false),
             AutoRebootIfNeeded = parseBool(SettingKeys.SystemUpdate.AutoRebootIfNeeded, false),
-            PackageManager = settingsDict.GetValueOrDefault(SettingKeys.SystemUpdate.PackageManager)
+            PackageManager = settingsDict.GetValueOrDefault(SettingKeys.SystemUpdate.PackageManager),
+            DisableDiscordNotification = parseBool(SettingKeys.SystemUpdate.DisableDiscordNotification, false),
+            DiscordNotificationsAvailable = discordAvailable
         };
     }
 
@@ -1053,6 +1096,8 @@ public sealed class SystemUpdateNodeSettings
     public bool AutoApproveUpdates { get; set; }
     public bool AutoRebootIfNeeded { get; set; }
     public string? PackageManager { get; set; }
+    public bool DisableDiscordNotification { get; set; }
+    public bool DiscordNotificationsAvailable { get; set; }
 }
 
 #endregion

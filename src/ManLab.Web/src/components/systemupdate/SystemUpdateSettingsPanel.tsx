@@ -327,6 +327,28 @@ export function SystemUpdateSettingsPanel({ nodeId }: SystemUpdateSettingsPanelP
                     disabled={isSaving}
                   />
                 </div>
+
+                {/* Discord notification toggle */}
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Label htmlFor="discordNotification" className="flex items-center gap-2">
+                      Discord Notifications
+                    </Label>
+                    {!currentSettings.discordNotificationsAvailable && (
+                      <p className="text-xs text-muted-foreground">
+                        Configure Discord notifications in global settings to enable per-node notifications
+                      </p>
+                    )}
+                  </div>
+                  <Switch
+                    id="discordNotification"
+                    checked={!currentSettings.disableDiscordNotification}
+                    onCheckedChange={(checked) =>
+                      setLocalSettings({ ...currentSettings, disableDiscordNotification: !checked })
+                    }
+                    disabled={isSaving || !currentSettings.discordNotificationsAvailable}
+                  />
+                </div>
               </div>
 
               {/* Manual Check Button */}

@@ -107,7 +107,7 @@ public sealed class MonitorJobsController : ControllerBase
                 : "0 0 */6 * * ?";
             results.Add(new MonitorJobSummaryDto
             {
-                Id = Guid.Empty, // System job has no entity ID
+                Id = Guid.Parse("55555555-5555-5555-5555-555555555555"), // Fixed ID for system update job
                 Type = "system-update",
                 Name = "System Updates",
                 Schedule = cronExpression,
@@ -121,7 +121,7 @@ public sealed class MonitorJobsController : ControllerBase
             // Show as disabled if not scheduled
             results.Add(new MonitorJobSummaryDto
             {
-                Id = Guid.Empty,
+                Id = Guid.Parse("55555555-5555-5555-5555-555555555555"),
                 Type = "system-update",
                 Name = "System Updates",
                 Schedule = "0 0 */6 * * ?", // Default schedule
@@ -143,7 +143,7 @@ public sealed class MonitorJobsController : ControllerBase
                 : "0 */15 * * * ?";
             results.Add(new MonitorJobSummaryDto
             {
-                Id = Guid.Empty, // System job has no entity ID
+                Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), // Fixed ID for agent update job
                 Type = "agent-update",
                 Name = "Agent Updates",
                 Schedule = cronExpression,
@@ -157,7 +157,7 @@ public sealed class MonitorJobsController : ControllerBase
             // Show as disabled if not scheduled
             results.Add(new MonitorJobSummaryDto
             {
-                Id = Guid.Empty,
+                Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
                 Type = "agent-update",
                 Name = "Agent Updates",
                 Schedule = "0 */15 * * * ?", // Default schedule

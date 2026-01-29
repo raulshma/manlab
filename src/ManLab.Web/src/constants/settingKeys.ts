@@ -45,6 +45,7 @@ export const SettingKeys = {
     AgentLogFileRetainedFiles: "Agent.AgentLogFileRetainedFiles",
   },
   Discord: {
+    Enabled: "Discord.Enabled",
     WebhookUrl: "Discord.WebhookUrl",
   },
   GitHub: {

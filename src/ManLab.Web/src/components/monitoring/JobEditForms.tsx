@@ -538,6 +538,7 @@ export function GlobalJobEditForm({
   enabled,
   approvalMode,
   autoApprove,
+  sendDiscordNotification,
   onChange,
   onSave,
   onCancel,
@@ -548,7 +549,8 @@ export function GlobalJobEditForm({
   enabled: boolean;
   approvalMode?: "automatic" | "manual";
   autoApprove?: boolean;
-  onChange: (data: { schedule: string; enabled: boolean; approvalMode?: "automatic" | "manual"; autoApprove?: boolean }) => void;
+  sendDiscordNotification?: boolean;
+  onChange: (data: { schedule: string; enabled: boolean; approvalMode?: "automatic" | "manual"; autoApprove?: boolean; sendDiscordNotification?: boolean }) => void;
   onSave: () => void;
   onCancel: () => void;
   isSaving: boolean;
@@ -572,7 +574,7 @@ export function GlobalJobEditForm({
           <Label>Schedule</Label>
           <CronExpressionEditor
             value={schedule}
-            onChange={(newSchedule) => onChange({ schedule: newSchedule, enabled, approvalMode, autoApprove })}
+            onChange={(newSchedule) => onChange({ schedule: newSchedule, enabled, approvalMode, autoApprove, sendDiscordNotification })}
             disabled={isSaving}
           />
         </div>
@@ -585,7 +587,7 @@ export function GlobalJobEditForm({
               <Switch
                 id="enabled"
                 checked={enabled}
-                onCheckedChange={(checked) => onChange({ schedule, enabled: checked, approvalMode, autoApprove })}
+                onCheckedChange={(checked) => onChange({ schedule, enabled: checked, approvalMode, autoApprove, sendDiscordNotification })}
                 disabled={isSaving}
               />
               <div className="flex-1">
@@ -601,13 +603,32 @@ export function GlobalJobEditForm({
             </div>
           </div>
 
+          {/* Discord Notification */}
+          <div className="space-y-2">
+            <Label htmlFor="discordNotification">Notifications</Label>
+            <div className="flex items-center gap-3 p-4 bg-background rounded-lg border">
+              <Switch
+                id="discordNotification"
+                checked={sendDiscordNotification ?? false}
+                onCheckedChange={(checked) => onChange({ schedule, enabled, approvalMode, autoApprove, sendDiscordNotification: checked })}
+                disabled={isSaving}
+              />
+              <div className="flex-1">
+                <p className="text-sm font-medium">Send Discord Notifications</p>
+                <p className="text-xs text-muted-foreground">
+                  Receive alerts when updates are available or installed.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Approval Settings - Agent Update */}
           {jobType === "agent-update" && (
             <div className="space-y-2">
               <Label htmlFor="approvalMode">Approval Mode</Label>
               <Select
                 value={approvalMode ?? "manual"}
-                onValueChange={(value) => onChange({ schedule, enabled, approvalMode: value as "automatic" | "manual", autoApprove })}
+                onValueChange={(value) => onChange({ schedule, enabled, approvalMode: value as "automatic" | "manual", autoApprove, sendDiscordNotification })}
               >
                 <SelectTrigger id="approvalMode">
                   <SelectValue />
@@ -640,7 +661,7 @@ export function GlobalJobEditForm({
                 <Switch
                   id="autoApprove"
                   checked={autoApprove ?? false}
-                  onCheckedChange={(checked) => onChange({ schedule, enabled, approvalMode, autoApprove: checked })}
+                  onCheckedChange={(checked) => onChange({ schedule, enabled, approvalMode, autoApprove: checked, sendDiscordNotification })}
                   disabled={isSaving}
                 />
               </div>

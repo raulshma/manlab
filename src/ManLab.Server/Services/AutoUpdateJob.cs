@@ -34,7 +34,10 @@ public sealed class AutoUpdateJob : IJob
                 ? context.MergedJobDataMap.GetString("approvalMode")
                 : "manual";
 
-            await _autoUpdateService.CheckAndApplyUpdatesAsync(force, approvalMode, context.CancellationToken);
+            var sendDiscord = context.MergedJobDataMap.ContainsKey("sendDiscordNotification") &&
+                              context.MergedJobDataMap.GetBoolean("sendDiscordNotification");
+
+            await _autoUpdateService.CheckAndApplyUpdatesAsync(force, approvalMode, sendDiscord, context.CancellationToken);
             _logger.LogDebug("Auto-update job completed at {Time}", DateTime.UtcNow);
         }
         catch (Exception ex)

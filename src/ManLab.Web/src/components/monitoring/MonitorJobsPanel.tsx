@@ -70,6 +70,7 @@ export function MonitorJobsPanel() {
     enabled: boolean;
     approvalMode?: "automatic" | "manual";
     autoApprove?: boolean;
+    sendDiscordNotification?: boolean;
   } | null>(null);
 
   const [expandedJobKey, setExpandedJobKey] = useState<string | null>(null);
@@ -204,8 +205,9 @@ export function MonitorJobsPanel() {
       enabled: boolean;
       approvalMode?: "automatic" | "manual";
       autoApprove?: boolean;
+      sendDiscordNotification?: boolean;
     }) => {
-      const { type, schedule, enabled, approvalMode, autoApprove } = data;
+      const { type, schedule, enabled, approvalMode, autoApprove, sendDiscordNotification } = data;
 
       // Build the update request
       const updateRequest: UpdateUpdateJobsConfigRequest = {};
@@ -215,12 +217,14 @@ export function MonitorJobsPanel() {
           enabled,
           schedule,
           approvalMode: approvalMode ?? "manual",
+          sendDiscordNotification,
         };
       } else {
         updateRequest.systemUpdate = {
           enabled,
           schedule,
           autoApprove: autoApprove ?? false,
+          sendDiscordNotification,
         };
       }
 
@@ -272,8 +276,8 @@ export function MonitorJobsPanel() {
       // and approval settings from the update jobs config
       const config = updateJobsConfig;
       const approvalSettings = job.type === "agent-update"
-        ? { approvalMode: config?.agentUpdate.approvalMode ?? "manual" }
-        : { autoApprove: config?.systemUpdate.autoApprove ?? false };
+        ? { approvalMode: config?.agentUpdate.approvalMode ?? "manual", sendDiscordNotification: config?.agentUpdate.sendDiscordNotification }
+        : { autoApprove: config?.systemUpdate.autoApprove ?? false, sendDiscordNotification: config?.systemUpdate.sendDiscordNotification };
 
       setEditingGlobalJob({
         type: job.type,
@@ -464,6 +468,7 @@ export function MonitorJobsPanel() {
                         enabled={editingGlobalJob.enabled}
                         approvalMode={editingGlobalJob.approvalMode}
                         autoApprove={editingGlobalJob.autoApprove}
+                        sendDiscordNotification={editingGlobalJob.sendDiscordNotification}
                         onChange={(data) => setEditingGlobalJob({ ...editingGlobalJob, ...data })}
                         onSave={handleSaveGlobalJob}
                         onCancel={handleCancelEdit}

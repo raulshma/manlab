@@ -127,7 +127,12 @@ public static class SettingKeys
         public const string LastError = "AutoUpdate.LastError";
 
         /// <summary>
-        /// Global setting: Whether the auto-update job is enabled (system-wide).
+        /// Node-level setting: Whether this node has opted out of Discord notifications.
+        /// </summary>
+        public const string DisableDiscordNotification = "AutoUpdate.DisableDiscordNotification";
+
+        /// <summary>
+        /// Global setting: Whether to auto-update job is enabled (system-wide).
         /// </summary>
         public const string JobEnabled = "AutoUpdate.Job.Enabled";
 
@@ -140,10 +145,22 @@ public static class SettingKeys
         /// Global setting: Approval mode for the auto-update job ("automatic" or "manual").
         /// </summary>
         public const string JobApprovalMode = "AutoUpdate.Job.ApprovalMode";
+
+        /// <summary>
+        /// Global setting: Whether to send Discord notifications for agent updates.
+        /// </summary>
+        public const string JobSendDiscordNotification = "AutoUpdate.Job.SendDiscordNotification";
+
+        /// <summary>
+        /// Value of the last agent version that a Discord notification was sent for.
+        /// Used to prevent duplicate notifications.
+        /// </summary>
+        public const string LastNotifiedVersion = "AutoUpdate.LastNotifiedVersion";
     }
 
     public static class Discord
     {
+        public const string Enabled = "Discord.Enabled";
         public const string WebhookUrl = "Discord.WebhookUrl";
     }
 
@@ -306,6 +323,28 @@ public static class SettingKeys
         /// Global setting: Whether to auto-approve system updates at the job level.
         /// </summary>
         public const string JobAutoApprove = "SystemUpdate.Job.AutoApprove";
+
+        /// <summary>
+        /// Global setting: Whether to send Discord notifications for system updates.
+        /// </summary>
+        public const string JobSendDiscordNotification = "SystemUpdate.Job.SendDiscordNotification";
+
+        /// <summary>
+        /// ID of the last system update that a Discord notification was sent for.
+        /// Used to prevent duplicate notifications.
+        /// </summary>
+        public const string LastNotifiedUpdateId = "SystemUpdate.LastNotifiedUpdateId";
+
+        /// <summary>
+        /// Hash of the package content that was last notified.
+        /// Used to prevent duplicate notifications for the same set of updates.
+        /// </summary>
+        public const string LastNotifiedContentHash = "SystemUpdate.LastNotifiedContentHash";
+
+        /// <summary>
+        /// Node-level setting: Whether this node has opted out of Discord notifications.
+        /// </summary>
+        public const string DisableDiscordNotification = "SystemUpdate.DisableDiscordNotification";
     }
 
     public static class ProcessMonitoring

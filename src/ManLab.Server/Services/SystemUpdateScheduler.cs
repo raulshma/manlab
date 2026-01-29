@@ -46,11 +46,13 @@ public sealed class SystemUpdateScheduler
 
         // Get job-level auto-approve setting
         var autoApprove = await _settingsService.GetValueAsync(SettingKeys.SystemUpdate.JobAutoApprove, false);
+        var sendDiscord = await _settingsService.GetValueAsync(SettingKeys.SystemUpdate.JobSendDiscordNotification, false);
 
         var job = JobBuilder.Create<SystemUpdateJob>()
             .WithIdentity(jobKey)
             .WithDescription("Periodically checks all nodes for available system updates")
             .UsingJobData("autoApprove", autoApprove)
+            .UsingJobData("sendDiscordNotification", sendDiscord)
             .Build();
 
         var trigger = TriggerBuilder.Create()
@@ -99,10 +101,11 @@ public sealed class SystemUpdateScheduler
         {
             // Get job-level auto-approve setting
             var autoApprove = await _settingsService.GetValueAsync(SettingKeys.SystemUpdate.JobAutoApprove, false);
+            var sendDiscord = await _settingsService.GetValueAsync(SettingKeys.SystemUpdate.JobSendDiscordNotification, false);
 
             // Execute the job logic directly, skipping Quartz scheduler
             // This ensures immediate execution and proper error handling
-            await systemUpdateService.CheckAndCreatePendingUpdatesAsync(force: true, autoApprove, ct);
+            await systemUpdateService.CheckAndCreatePendingUpdatesAsync(force: true, autoApprove, sendDiscord, ct);
             _logger.LogInformation("System update job execution completed");
         }
         catch (Exception ex)

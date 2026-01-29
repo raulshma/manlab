@@ -28,6 +28,13 @@ public sealed class DiscordWebhookNotificationService : INotificationService
 
     public async Task NotifyNodeOfflineAsync(Node node, CancellationToken cancellationToken = default)
     {
+        // Check if Discord notifications are globally enabled
+        var enabled = await _settingsService.GetValueAsync(Constants.SettingKeys.Discord.Enabled, true);
+        if (!enabled)
+        {
+            return;
+        }
+
         // Prioritize DB setting over appsettings
         var webhookUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.Discord.WebhookUrl);
         if (string.IsNullOrWhiteSpace(webhookUrl))
@@ -56,6 +63,34 @@ public sealed class DiscordWebhookNotificationService : INotificationService
     public async Task SendTestMessageAsync(string webhookUrl, CancellationToken cancellationToken = default)
     {
         await SendMessageInternalAsync(webhookUrl, "✅ **ManLab Test Alert**\nThis is a test notification from your ManLab dashboard.", cancellationToken);
+    }
+
+    public async Task NotifyUpdateAvailableAsync(string nodeName, string updateType, string version, string source, CancellationToken cancellationToken = default)
+    {
+        // Check if Discord notifications are globally enabled
+        var enabled = await _settingsService.GetValueAsync(Constants.SettingKeys.Discord.Enabled, true);
+        if (!enabled)
+        {
+            return;
+        }
+
+        var webhookUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.Discord.WebhookUrl);
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            webhookUrl = _options.CurrentValue.WebhookUrl;
+        }
+
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            return;
+        }
+
+        var content = $"⬇️ **ManLab Update Available**\n" +
+                      $"Node **{nodeName}** has a new **{updateType}** update available.\n" +
+                      $"- Version: `{version}`\n" +
+                      $"- Source: `{source}`";
+
+        await SendMessageInternalAsync(webhookUrl, content, cancellationToken);
     }
 
     private async Task SendMessageInternalAsync(string webhookUrl, string content, CancellationToken cancellationToken)

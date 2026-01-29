@@ -23,19 +23,22 @@ public class AutoUpdateController : ControllerBase
     private readonly AutoUpdateService _autoUpdateService;
     private readonly AutoUpdateScheduler _scheduler;
     private readonly IAuditLog _audit;
+    private readonly ISettingsService _settingsService;
 
     public AutoUpdateController(
         DataContext dbContext,
         ILogger<AutoUpdateController> logger,
         AutoUpdateService autoUpdateService,
         AutoUpdateScheduler scheduler,
-        IAuditLog audit)
+        IAuditLog audit,
+        ISettingsService settingsService)
     {
         _dbContext = dbContext;
         _logger = logger;
         _autoUpdateService = autoUpdateService;
         _scheduler = scheduler;
         _audit = audit;
+        _settingsService = settingsService;
     }
 
     /// <summary>
@@ -54,6 +57,10 @@ public class AutoUpdateController : ControllerBase
 
         var settings = await _autoUpdateService.GetNodeAutoUpdateSettingsAsync(_dbContext, nodeId);
 
+        var discordEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.Discord.Enabled, true);
+        var discordWebhookUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.Discord.WebhookUrl);
+        var discordAvailable = discordEnabled && !string.IsNullOrWhiteSpace(discordWebhookUrl);
+
         return Ok(new AutoUpdateSettingsDto
         {
             NodeId = nodeId,
@@ -65,7 +72,9 @@ public class AutoUpdateController : ControllerBase
             LastUpdateAt = settings.LastUpdateAt,
             FailureCount = settings.FailureCount,
             PendingVersion = settings.PendingVersion,
-            LastError = settings.LastError
+            LastError = settings.LastError,
+            DisableDiscordNotification = settings.DisableDiscordNotification,
+            DiscordNotificationsAvailable = discordAvailable
         });
     }
 
@@ -110,6 +119,12 @@ public class AutoUpdateController : ControllerBase
         await UpsertNodeSettingAsync(nodeId, SettingKeys.AutoUpdate.MaintenanceWindow, request.MaintenanceWindow);
         await UpsertNodeSettingAsync(nodeId, SettingKeys.AutoUpdate.ApprovalMode, request.ApprovalMode);
 
+        // Update Discord notification opt-out if provided
+        if (request.DisableDiscordNotification.HasValue)
+        {
+            await UpsertNodeSettingAsync(nodeId, SettingKeys.AutoUpdate.DisableDiscordNotification, request.DisableDiscordNotification.Value.ToString().ToLowerInvariant());
+        }
+
         // If enabling, reset failure count
         if (request.Enabled)
         {
@@ -125,7 +140,7 @@ public class AutoUpdateController : ControllerBase
             statusCode: 200,
             nodeId: nodeId,
             category: "auto-update",
-            message: $"Auto-update settings updated (enabled={request.Enabled})"));
+            message: $"Auto-update settings updated (enabled={request.Enabled}, discordNotificationsDisabled={request.DisableDiscordNotification.GetValueOrDefault(false)})"));
 
         return NoContent();
     }
@@ -330,6 +345,8 @@ public record AutoUpdateSettingsDto
     public int FailureCount { get; init; }
     public string? PendingVersion { get; init; }
     public string? LastError { get; init; }
+    public bool DisableDiscordNotification { get; init; }
+    public bool DiscordNotificationsAvailable { get; init; }
 }
 
 /// <summary>
@@ -341,6 +358,7 @@ public record UpdateAutoUpdateSettingsRequest
     public string? Channel { get; init; }
     public string? MaintenanceWindow { get; init; }
     public string ApprovalMode { get; init; } = "manual";
+    public bool? DisableDiscordNotification { get; init; }
 }
 
 /// <summary>

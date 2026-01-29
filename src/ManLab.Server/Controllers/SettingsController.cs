@@ -17,6 +17,8 @@ public class SettingsController : ControllerBase
     private readonly ILogger<SettingsController> _logger;
     private readonly DiscordWebhookNotificationService _discordService; // Direct dependency for testing, ideally use interface/event
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AutoUpdateScheduler _autoUpdateScheduler;
+    private readonly SystemUpdateScheduler _systemUpdateScheduler;
 
     public SettingsController(
         ISettingsService settingsService,
@@ -24,12 +26,16 @@ public class SettingsController : ControllerBase
         // Using concrete type here to access the test method we'll add,
         // or we could add SendTestMessage to INotificationService
         DiscordWebhookNotificationService discordService,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        AutoUpdateScheduler autoUpdateScheduler,
+        SystemUpdateScheduler systemUpdateScheduler)
     {
         _settingsService = settingsService;
         _logger = logger;
         _discordService = discordService;
         _httpClientFactory = httpClientFactory;
+        _autoUpdateScheduler = autoUpdateScheduler;
+        _systemUpdateScheduler = systemUpdateScheduler;
     }
 
     [HttpGet]
@@ -174,11 +180,13 @@ public class SettingsController : ControllerBase
         var agentJobEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.AutoUpdate.JobEnabled, true);
         var agentJobSchedule = await _settingsService.GetValueAsync(Constants.SettingKeys.AutoUpdate.JobSchedule, "0 */15 * * * ?");
         var agentJobApprovalMode = await _settingsService.GetValueAsync(Constants.SettingKeys.AutoUpdate.JobApprovalMode, "manual");
+        var agentJobSendDiscord = await _settingsService.GetValueAsync(Constants.SettingKeys.AutoUpdate.JobSendDiscordNotification, false);
 
         // System update job settings
         var systemJobEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.SystemUpdate.JobEnabled, true);
         var systemJobSchedule = await _settingsService.GetValueAsync(Constants.SettingKeys.SystemUpdate.JobSchedule, "0 0 */6 * * ?");
         var systemJobAutoApprove = await _settingsService.GetValueAsync(Constants.SettingKeys.SystemUpdate.JobAutoApprove, false);
+        var systemJobSendDiscord = await _settingsService.GetValueAsync(Constants.SettingKeys.SystemUpdate.JobSendDiscordNotification, false);
 
         return Ok(new UpdateJobsConfigDto
         {
@@ -186,13 +194,15 @@ public class SettingsController : ControllerBase
             {
                 Enabled = agentJobEnabled,
                 Schedule = agentJobSchedule,
-                ApprovalMode = agentJobApprovalMode
+                ApprovalMode = agentJobApprovalMode,
+                SendDiscordNotification = agentJobSendDiscord
             },
             SystemUpdate = new SystemUpdateJobConfigDto
             {
                 Enabled = systemJobEnabled,
                 Schedule = systemJobSchedule,
-                AutoApprove = systemJobAutoApprove
+                AutoApprove = systemJobAutoApprove,
+                SendDiscordNotification = systemJobSendDiscord
             }
         });
     }
@@ -201,7 +211,7 @@ public class SettingsController : ControllerBase
     /// Updates update job configuration.
     /// </summary>
     [HttpPut("update-jobs")]
-    public async Task<ActionResult> UpdateUpdateJobsConfig([FromBody] UpdateUpdateJobsConfigRequest request)
+    public async Task<ActionResult> UpdateUpdateJobsConfig([FromBody] UpdateUpdateJobsConfigRequest request, CancellationToken ct)
     {
         // Validate cron expressions
         if (!string.IsNullOrWhiteSpace(request.AgentUpdate?.Schedule) &&
@@ -244,6 +254,22 @@ public class SettingsController : ControllerBase
                 request.AgentUpdate.ApprovalMode ?? "manual",
                 "AutoUpdate",
                 "Job-level approval mode for agent updates ('automatic' or 'manual')");
+
+            await _settingsService.SetValueAsync(
+                Constants.SettingKeys.AutoUpdate.JobSendDiscordNotification,
+                request.AgentUpdate.SendDiscordNotification.ToString().ToLowerInvariant(),
+                "AutoUpdate",
+                "Whether to send Discord notifications for agent updates");
+
+            // Sync scheduler
+            if (request.AgentUpdate.Enabled)
+            {
+                await _autoUpdateScheduler.ScheduleGlobalAutoUpdateJobAsync(request.AgentUpdate.Schedule, ct);
+            }
+            else
+            {
+                await _autoUpdateScheduler.RemoveGlobalAutoUpdateJobAsync(ct);
+            }
         }
 
         // Update system update job settings
@@ -266,6 +292,22 @@ public class SettingsController : ControllerBase
                 request.SystemUpdate.AutoApprove.ToString().ToLowerInvariant(),
                 "SystemUpdate",
                 "Job-level auto-approve setting for system updates");
+
+            await _settingsService.SetValueAsync(
+                Constants.SettingKeys.SystemUpdate.JobSendDiscordNotification,
+                request.SystemUpdate.SendDiscordNotification.ToString().ToLowerInvariant(),
+                "SystemUpdate",
+                "Whether to send Discord notifications for system updates");
+
+            // Sync scheduler
+            if (request.SystemUpdate.Enabled)
+            {
+                await _systemUpdateScheduler.ScheduleGlobalSystemUpdateJobAsync(request.SystemUpdate.Schedule, ct);
+            }
+            else
+            {
+                await _systemUpdateScheduler.RemoveGlobalSystemUpdateJobAsync(ct);
+            }
         }
 
         return NoContent();
@@ -408,6 +450,7 @@ public record AgentUpdateJobConfigDto
     public bool Enabled { get; init; }
     public string Schedule { get; init; } = "0 */15 * * * ?";
     public string ApprovalMode { get; init; } = "manual";
+    public bool SendDiscordNotification { get; init; }
 }
 
 /// <summary>
@@ -418,6 +461,7 @@ public record SystemUpdateJobConfigDto
     public bool Enabled { get; init; }
     public string Schedule { get; init; } = "0 0 */6 * * ?";
     public bool AutoApprove { get; init; }
+    public bool SendDiscordNotification { get; init; }
 }
 
 /// <summary>

@@ -46,11 +46,13 @@ public sealed class AutoUpdateScheduler
 
         // Get job-level approval mode setting
         var approvalMode = await _settingsService.GetValueAsync(SettingKeys.AutoUpdate.JobApprovalMode, "manual");
+        var sendDiscord = await _settingsService.GetValueAsync(SettingKeys.AutoUpdate.JobSendDiscordNotification, false);
 
         var job = JobBuilder.Create<AutoUpdateJob>()
             .WithIdentity(jobKey)
             .WithDescription("Periodically checks all nodes for available agent updates")
             .UsingJobData("approvalMode", approvalMode)
+            .UsingJobData("sendDiscordNotification", sendDiscord)
             .Build();
 
         var trigger = TriggerBuilder.Create()
@@ -99,10 +101,11 @@ public sealed class AutoUpdateScheduler
         {
             // Get job-level approval mode setting
             var approvalMode = await _settingsService.GetValueAsync(SettingKeys.AutoUpdate.JobApprovalMode, "manual");
+            var sendDiscord = await _settingsService.GetValueAsync(SettingKeys.AutoUpdate.JobSendDiscordNotification, false);
 
             // Execute the job logic directly, skipping Quartz scheduler
             // This ensures immediate execution and proper error handling
-            await autoUpdateService.CheckAndApplyUpdatesAsync(force: true, approvalMode, ct);
+            await autoUpdateService.CheckAndApplyUpdatesAsync(force: true, approvalMode, sendDiscord, ct);
             _logger.LogInformation("Auto-update job execution completed");
         }
         catch (Exception ex)

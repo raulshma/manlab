@@ -1374,6 +1374,8 @@ export interface AutoUpdateSettings {
   failureCount: number;
   pendingVersion: string | null;
   lastError: string | null;
+  disableDiscordNotification?: boolean;
+  discordNotificationsAvailable?: boolean;
 }
 
 /**
@@ -1384,6 +1386,7 @@ export interface UpdateAutoUpdateSettingsRequest {
   channel?: string;
   maintenanceWindow?: string;
   approvalMode: 'automatic' | 'manual';
+  disableDiscordNotification?: boolean;
 }
 
 /**
@@ -1420,6 +1423,8 @@ export interface SystemUpdateSettings {
   autoApproveUpdates: boolean;
   autoRebootIfNeeded: boolean;
   packageManager: string | null;
+  disableDiscordNotification?: boolean;
+  discordNotificationsAvailable?: boolean;
 }
 
 /**
@@ -1568,6 +1573,7 @@ export interface AgentUpdateJobConfigDto {
   enabled: boolean;
   schedule: string;
   approvalMode: "automatic" | "manual";
+  sendDiscordNotification?: boolean;
 }
 
 /**
@@ -1577,6 +1583,7 @@ export interface SystemUpdateJobConfigDto {
   enabled: boolean;
   schedule: string;
   autoApprove: boolean;
+  sendDiscordNotification?: boolean;
 }
 
 /**
