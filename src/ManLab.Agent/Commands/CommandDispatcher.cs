@@ -64,7 +64,7 @@ public sealed class CommandDispatcher : IDisposable
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _runningCommands = new();
 
     public CommandDispatcher(
-        ILoggerFactory loggerFactory, 
+        ILoggerFactory loggerFactory,
         Func<Guid, string, string?, Task> updateStatusCallback,
         Func<IReadOnlyList<ServiceStatusSnapshotIngest>, Task>? sendServiceSnapshots = null,
         Func<IReadOnlyList<SmartDriveSnapshotIngest>, Task>? sendSmartSnapshots = null,
@@ -124,82 +124,82 @@ public sealed class CommandDispatcher : IDisposable
                     throw new InvalidOperationException($"Command '{normalizedType}' is disabled by agent configuration.");
                 }
 
-            // Strict JSON boundary: if payload is supplied, it must be valid JSON.
-            // We no longer accept non-JSON strings and try to "guess" what they mean.
-            JsonDocument? payloadDoc = null;
-            JsonElement? payloadRoot = null;
-            try
-            {
-                if (!string.IsNullOrWhiteSpace(payload))
+                // Strict JSON boundary: if payload is supplied, it must be valid JSON.
+                // We no longer accept non-JSON strings and try to "guess" what they mean.
+                JsonDocument? payloadDoc = null;
+                JsonElement? payloadRoot = null;
+                try
                 {
-                    if (payload.Length > MaxPayloadChars)
+                    if (!string.IsNullOrWhiteSpace(payload))
                     {
-                        throw new ArgumentException($"Command payload too large (max {MaxPayloadChars} characters).", nameof(payload));
+                        if (payload.Length > MaxPayloadChars)
+                        {
+                            throw new ArgumentException($"Command payload too large (max {MaxPayloadChars} characters).", nameof(payload));
+                        }
+
+                        try
+                        {
+                            payloadDoc = JsonDocument.Parse(payload);
+                            payloadRoot = payloadDoc.RootElement;
+                        }
+                        catch (JsonException ex)
+                        {
+                            throw new ArgumentException("Command payload must be valid JSON.", nameof(payload), ex);
+                        }
                     }
 
-                    try
+                    var result = normalizedType switch
                     {
-                        payloadDoc = JsonDocument.Parse(payload);
-                        payloadRoot = payloadDoc.RootElement;
-                    }
-                    catch (JsonException ex)
+                        var t when t == CommandTypes.DockerList => await HandleDockerListAsync(commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.DockerRestart => await HandleDockerRestartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.DockerStop => await HandleDockerStopAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.DockerStart => await HandleDockerStartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.DockerInspect => await HandleDockerInspectAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.DockerLogs => await HandleDockerLogsAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.DockerStats => await HandleDockerStatsAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.DockerExec => await HandleDockerExecAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.DockerRemove => await HandleDockerRemoveAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.ComposeList => await HandleComposeListAsync(commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.ComposeUp => await HandleComposeUpAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.ComposeDown => await HandleComposeDownAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.SystemUpdate => await HandleSystemUpdateAsync(commandId, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.SystemShutdown => await HandleSystemShutdownAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.SystemRestart => await HandleSystemRestartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.AgentShutdown => HandleAgentShutdown(),
+                        var t when t == CommandTypes.AgentEnableTask => await HandleTaskControlAsync(enable: true, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.AgentDisableTask => await HandleTaskControlAsync(enable: false, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.AgentUninstall => await HandleAgentUninstallAsync(commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.ShellExec => await HandleShellExecAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+
+                        var t when t == CommandTypes.ServiceStatus => await HandleServiceStatusAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.ServiceRestart => await HandleServiceRestartAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.SmartScan => await HandleSmartScanAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
+
+                        // Remote tools
+                        var t when t == CommandTypes.LogRead => await HandleLogReadAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.LogTail => await HandleLogTailAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.ScriptRun => await HandleScriptRunAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.TerminalOpen => await HandleTerminalOpenAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.TerminalClose => await HandleTerminalCloseAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.TerminalInput => await HandleTerminalInputAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.FileList => await HandleFileListAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.FileRead => await HandleFileReadAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.FileZip => await HandleFileZipAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.FileStream => await HandleFileStreamAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
+                        var t when t == CommandTypes.ConfigUpdate => HandleConfigUpdate(payloadRoot),
+                        _ => throw new NotSupportedException($"Unknown command type: {type}")
+                    };
+
+                    // For non-streaming commands, send the final status
+                    if (!normalizedType.Equals(CommandTypes.SystemUpdate, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new ArgumentException("Command payload must be valid JSON.", nameof(payload), ex);
+                        await _updateStatusCallback(commandId, "Success", result).ConfigureAwait(false);
                     }
                 }
-
-                var result = normalizedType switch
+                finally
                 {
-                    var t when t == CommandTypes.DockerList => await HandleDockerListAsync(commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.DockerRestart => await HandleDockerRestartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.DockerStop => await HandleDockerStopAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.DockerStart => await HandleDockerStartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.DockerInspect => await HandleDockerInspectAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.DockerLogs => await HandleDockerLogsAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.DockerStats => await HandleDockerStatsAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.DockerExec => await HandleDockerExecAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.DockerRemove => await HandleDockerRemoveAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.ComposeList => await HandleComposeListAsync(commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.ComposeUp => await HandleComposeUpAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.ComposeDown => await HandleComposeDownAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.SystemUpdate => await HandleSystemUpdateAsync(commandId, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.SystemShutdown => await HandleSystemShutdownAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.SystemRestart => await HandleSystemRestartAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.AgentShutdown => HandleAgentShutdown(),
-                    var t when t == CommandTypes.AgentEnableTask => await HandleTaskControlAsync(enable: true, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.AgentDisableTask => await HandleTaskControlAsync(enable: false, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.AgentUninstall => await HandleAgentUninstallAsync(commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.ShellExec => await HandleShellExecAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-
-                    var t when t == CommandTypes.ServiceStatus => await HandleServiceStatusAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.ServiceRestart => await HandleServiceRestartAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.SmartScan => await HandleSmartScanAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
-
-                    // Remote tools
-                    var t when t == CommandTypes.LogRead => await HandleLogReadAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.LogTail => await HandleLogTailAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.ScriptRun => await HandleScriptRunAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.TerminalOpen => await HandleTerminalOpenAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.TerminalClose => await HandleTerminalCloseAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.TerminalInput => await HandleTerminalInputAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.FileList => await HandleFileListAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.FileRead => await HandleFileReadAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.FileZip => await HandleFileZipAsync(commandId, payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.FileStream => await HandleFileStreamAsync(payloadRoot, commandCts.Token).ConfigureAwait(false),
-                    var t when t == CommandTypes.ConfigUpdate => HandleConfigUpdate(payloadRoot),
-                    _ => throw new NotSupportedException($"Unknown command type: {type}")
-                };
-
-                // For non-streaming commands, send the final status
-                if (!normalizedType.Equals(CommandTypes.SystemUpdate, StringComparison.OrdinalIgnoreCase))
-                {
-                    await _updateStatusCallback(commandId, "Success", result).ConfigureAwait(false);
+                    payloadDoc?.Dispose();
                 }
-            }
-            finally
-            {
-                payloadDoc?.Dispose();
-            }
             }
             finally
             {
@@ -424,7 +424,7 @@ public sealed class CommandDispatcher : IDisposable
             async (status, logs) => await _updateStatusCallback(commandId, status, logs).ConfigureAwait(false));
 
         var (success, output) = await executor.ExecuteUpdateAsync(cancellationToken).ConfigureAwait(false);
-        
+
         // Status is already updated by the executor, just return the result
         return output;
     }
@@ -725,7 +725,7 @@ public sealed class CommandDispatcher : IDisposable
         root["Agent"] = agentSection;
         // Use source generation for AOT compatibility
         var json = JsonSerializer.Serialize(root, ManLabJsonContext.Default.DictionaryStringObject);
-        
+
         // Format with indentation using JsonNode (AOT-compatible)
         var formatted = JsonNode.Parse(json)?.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(appSettingsPath, formatted ?? json);
@@ -750,7 +750,7 @@ public sealed class CommandDispatcher : IDisposable
     private string HandleAgentShutdown()
     {
         _logger.LogInformation("Agent shutdown requested by server");
-        
+
         if (_shutdownCallback is null)
         {
             throw new InvalidOperationException("Shutdown callback not configured.");
@@ -778,7 +778,7 @@ public sealed class CommandDispatcher : IDisposable
 
         foreach (var taskName in taskNames)
         {
-            var command = enable 
+            var command = enable
                 ? $"schtasks /Change /TN \"{taskName}\" /ENABLE"
                 : $"schtasks /Change /TN \"{taskName}\" /DISABLE";
 
@@ -1198,7 +1198,7 @@ del ""%~f0""
             var delta = now - _lastLogOpUtc;
             if (delta < TimeSpan.FromSeconds(minSeconds))
             {
-                throw new InvalidOperationException($"Log operation rate-limited (min {minSeconds}s between requests)." );
+                throw new InvalidOperationException($"Log operation rate-limited (min {minSeconds}s between requests).");
             }
 
             _lastLogOpUtc = now;
@@ -1581,7 +1581,7 @@ del ""%~f0""
 
         if (services.Count == 0)
         {
-            throw new ArgumentException("Payload must include 'services' (array) or 'service' (string)." );
+            throw new ArgumentException("Payload must include 'services' (array) or 'service' (string).");
         }
 
         // De-dupe and validate
@@ -2403,7 +2403,7 @@ del ""%~f0""
         }
 
         // Report file count before creating archive.
-        await _updateStatusCallback(commandId, "InProgress", 
+        await _updateStatusCallback(commandId, "InProgress",
             $"Creating zip archive with {context.FilesToZip.Count} file(s)...").ConfigureAwait(false);
 
         // Create temporary zip file.
@@ -2424,7 +2424,7 @@ del ""%~f0""
                 {
                     lastProgressReport = now;
                     var percent = (int)((filesProcessed * 100.0) / context.FilesToZip.Count);
-                    await _updateStatusCallback(commandId, "InProgress", 
+                    await _updateStatusCallback(commandId, "InProgress",
                         $"Compressing: {percent}% ({filesProcessed}/{context.FilesToZip.Count} files)").ConfigureAwait(false);
                 }
             }
@@ -2851,7 +2851,7 @@ del ""%~f0""
     private async Task<string> HandleFileReadAsync(JsonElement? payloadRoot, CancellationToken cancellationToken)
     {
         var path = ExtractVirtualPathStrict(payloadRoot, required: true)!;
-        
+
         string actualPath;
         string resolvedVirtualPath;
 
@@ -2859,19 +2859,19 @@ del ""%~f0""
         // Windows: starts with X:\ or X:/
         // Unix: absolute path to a temp directory
         var isDirectOsPath = IsDirectOsPath(path);
-        
+
         if (isDirectOsPath)
         {
             // Direct OS path (e.g., temp file from file.zip command)
             // Only allow files in temp directories for security
             var tempPath = Path.GetTempPath();
             var normalizedPath = Path.GetFullPath(path);
-            
+
             if (!normalizedPath.StartsWith(tempPath, StringComparison.OrdinalIgnoreCase))
             {
                 throw new UnauthorizedAccessException($"Direct file access is only allowed for temp files. Path: {path}");
             }
-            
+
             actualPath = normalizedPath;
             resolvedVirtualPath = path; // Keep original path for logging
         }
@@ -3024,10 +3024,10 @@ del ""%~f0""
         var endOffset = ExtractOptionalLong(root, "endOffset", "EndOffset") ?? -1;
 
         // Chunk size (default 1MB).
-        var chunkSize = ExtractOptionalInt(root, "chunkSize", "ChunkSize") 
+        var chunkSize = ExtractOptionalInt(root, "chunkSize", "ChunkSize")
             ?? ManLab.Agent.Services.ChunkedFileReader.DefaultChunkSize;
-        chunkSize = Math.Clamp(chunkSize, 
-            ManLab.Agent.Services.ChunkedFileReader.MinChunkSize, 
+        chunkSize = Math.Clamp(chunkSize,
+            ManLab.Agent.Services.ChunkedFileReader.MinChunkSize,
             ManLab.Agent.Services.ChunkedFileReader.MaxChunkSize);
 
         // Resolve the actual file path.

@@ -176,7 +176,7 @@ public sealed class MonitorJobsController : ControllerBase
     [HttpPut("global/{jobType}/schedule")]
     [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
     public async Task<ActionResult> UpdateGlobalJobSchedule(
-        string jobType, 
+        string jobType,
         [FromBody] UpdateJobScheduleRequest request,
         CancellationToken ct)
     {
@@ -195,18 +195,18 @@ public sealed class MonitorJobsController : ControllerBase
         {
             case "agent-update":
                 await _settings.SetValueAsync(
-                    SettingKeys.AutoUpdate.JobSchedule, 
-                    request.CronExpression, 
-                    "AutoUpdate", 
+                    SettingKeys.AutoUpdate.JobSchedule,
+                    request.CronExpression,
+                    "AutoUpdate",
                     "Cron expression for agent update job");
                 await _autoUpdateScheduler.ScheduleGlobalAutoUpdateJobAsync(request.CronExpression, ct);
                 return Ok(new { message = "Agent update job schedule updated", schedule = request.CronExpression });
 
             case "system-update":
                 await _settings.SetValueAsync(
-                    SettingKeys.SystemUpdate.JobSchedule, 
-                    request.CronExpression, 
-                    "SystemUpdate", 
+                    SettingKeys.SystemUpdate.JobSchedule,
+                    request.CronExpression,
+                    "SystemUpdate",
                     "Cron expression for system update job");
                 await _systemUpdateScheduler.ScheduleGlobalSystemUpdateJobAsync(request.CronExpression, ct);
                 return Ok(new { message = "System update job schedule updated", schedule = request.CronExpression });
@@ -358,21 +358,21 @@ public sealed class MonitorJobsController : ControllerBase
 
         if (string.Equals(type, "http", StringComparison.OrdinalIgnoreCase))
         {
-             var checks = await _db.HttpMonitorChecks
-                .AsNoTracking()
-                .Where(c => c.MonitorId == id)
-                .OrderByDescending(c => c.TimestampUtc)
-                .Take(20)
-                .ToListAsync(ct);
-             
-             history = checks.Select(c => new JobExecutionHistoryDto
-             {
-                 TimestampUtc = c.TimestampUtc,
-                 Success = c.Success,
-                 DurationMs = c.ResponseTimeMs,
-                 Message = c.ErrorMessage ?? (c.Success ? $"Status: {c.StatusCode}" : "Failed"),
-                 DetailsJson = System.Text.Json.JsonSerializer.Serialize(new { c.StatusCode, c.KeywordMatched, c.SslDaysRemaining })
-             }).ToList();
+            var checks = await _db.HttpMonitorChecks
+               .AsNoTracking()
+               .Where(c => c.MonitorId == id)
+               .OrderByDescending(c => c.TimestampUtc)
+               .Take(20)
+               .ToListAsync(ct);
+
+            history = checks.Select(c => new JobExecutionHistoryDto
+            {
+                TimestampUtc = c.TimestampUtc,
+                Success = c.Success,
+                DurationMs = c.ResponseTimeMs,
+                Message = c.ErrorMessage ?? (c.Success ? $"Status: {c.StatusCode}" : "Failed"),
+                DetailsJson = System.Text.Json.JsonSerializer.Serialize(new { c.StatusCode, c.KeywordMatched, c.SslDaysRemaining })
+            }).ToList();
         }
         else if (string.Equals(type, "network-tool", StringComparison.OrdinalIgnoreCase))
         {
@@ -381,7 +381,7 @@ public sealed class MonitorJobsController : ControllerBase
             {
                 var target = config.Target ?? config.ToolType;
                 var toolType = $"scheduled-{config.ToolType}";
-                
+
                 var entries = await _db.NetworkToolHistory
                    .AsNoTracking()
                    .Where(h => h.ToolType == toolType && h.Target == target)
@@ -401,29 +401,29 @@ public sealed class MonitorJobsController : ControllerBase
         }
         else if (string.Equals(type, "traffic", StringComparison.OrdinalIgnoreCase))
         {
-             var config = await _db.TrafficMonitorConfigs.FindAsync(new object[] { id }, ct);
-             if (config != null)
-             {
-                 var entries = await _db.NetworkToolHistory
-                    .AsNoTracking()
-                    .Where(h => h.ToolType == "monitor-traffic")
-                    .OrderByDescending(h => h.TimestampUtc)
-                    .Take(20)
-                    .ToListAsync(ct);
-                 
-                 // If specific interface is configured, we could filter here, 
-                 // but NetworkToolHistory stores it in InputJson. 
-                 // For now, returning all traffic monitor history is acceptable provided there is usually only one.
-                 
-                 history = entries.Select(h => new JobExecutionHistoryDto
-                 {
-                     TimestampUtc = h.TimestampUtc,
-                     Success = h.Success,
-                     DurationMs = h.DurationMs,
-                     Message = h.ErrorMessage,
-                     DetailsJson = h.ResultJson
-                 }).ToList();
-             }
+            var config = await _db.TrafficMonitorConfigs.FindAsync(new object[] { id }, ct);
+            if (config != null)
+            {
+                var entries = await _db.NetworkToolHistory
+                   .AsNoTracking()
+                   .Where(h => h.ToolType == "monitor-traffic")
+                   .OrderByDescending(h => h.TimestampUtc)
+                   .Take(20)
+                   .ToListAsync(ct);
+
+                // If specific interface is configured, we could filter here, 
+                // but NetworkToolHistory stores it in InputJson. 
+                // For now, returning all traffic monitor history is acceptable provided there is usually only one.
+
+                history = entries.Select(h => new JobExecutionHistoryDto
+                {
+                    TimestampUtc = h.TimestampUtc,
+                    Success = h.Success,
+                    DurationMs = h.DurationMs,
+                    Message = h.ErrorMessage,
+                    DetailsJson = h.ResultJson
+                }).ToList();
+            }
         }
         else if (string.Equals(type, "system-update", StringComparison.OrdinalIgnoreCase))
         {
@@ -471,7 +471,7 @@ public sealed class MonitorJobsController : ControllerBase
     private int GetPackageCount(string? json)
     {
         if (string.IsNullOrEmpty(json)) return 0;
-        try 
+        try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
             return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array ? doc.RootElement.GetArrayLength() : 0;
@@ -574,7 +574,7 @@ public sealed class MonitorJobsController : ControllerBase
     {
         var scheduler = await _schedulerFactory.GetScheduler(ct);
         var executingJobs = await scheduler.GetCurrentlyExecutingJobs(ct);
-        
+
         var running = executingJobs.Select(context => new RunningJobDto
         {
             JobGroup = context.JobDetail.Key.Group,

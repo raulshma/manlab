@@ -41,9 +41,9 @@ public sealed class OnboardingJobRunner
 
         var cts = new CancellationTokenSource();
         var task = Task.Run(() => RunInstallAsync(machineId, request, cts.Token));
-        
+
         // Ensure cleanup happens even if task fails/completes
-        task.ContinueWith(_ => 
+        task.ContinueWith(_ =>
         {
             _running.TryRemove(machineId, out var removed);
             removed.Cts?.Dispose();
@@ -63,7 +63,7 @@ public sealed class OnboardingJobRunner
         var task = Task.Run(() => RunUninstallAsync(machineId, request, cts.Token));
 
         // Ensure cleanup happens even if task fails/completes
-        task.ContinueWith(_ => 
+        task.ContinueWith(_ =>
         {
             _running.TryRemove(machineId, out var removed);
             removed.Cts?.Dispose();
@@ -603,7 +603,7 @@ public sealed class OnboardingJobRunner
         catch (OperationCanceledException)
         {
             await PublishLogAsync(machineId, "Cancelled by user.");
-            
+
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DataContext>();
             var machine = await db.OnboardingMachines.FirstOrDefaultAsync(m => m.Id == machineId);

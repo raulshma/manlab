@@ -20,7 +20,7 @@ public sealed class DockerManager : IDisposable
     {
         _logger = logger;
         _isAvailable = CheckDockerAvailable();
-        
+
         if (_isAvailable)
         {
             _logger.LogInformation("Docker CLI is available");
@@ -91,7 +91,7 @@ public sealed class DockerManager : IDisposable
         try
         {
             _logger.LogInformation("Restarting container: {ContainerId}", containerId);
-            
+
             var (exitCode, _, error) = await RunDockerCommandAsync(
                 $"restart {containerId}",
                 cancellationToken).ConfigureAwait(false);
@@ -133,7 +133,7 @@ public sealed class DockerManager : IDisposable
         try
         {
             _logger.LogInformation("Stopping container: {ContainerId}", containerId);
-            
+
             var (exitCode, _, error) = await RunDockerCommandAsync(
                 $"stop {containerId}",
                 cancellationToken).ConfigureAwait(false);
@@ -175,7 +175,7 @@ public sealed class DockerManager : IDisposable
         try
         {
             _logger.LogInformation("Starting container: {ContainerId}", containerId);
-            
+
             var (exitCode, _, error) = await RunDockerCommandAsync(
                 $"start {containerId}",
                 cancellationToken).ConfigureAwait(false);
@@ -697,7 +697,7 @@ public sealed class DockerManager : IDisposable
                     CreateNoWindow = true
                 }
             };
-            
+
             process.Start();
             process.WaitForExit(5000);
             return process.ExitCode == 0;
@@ -795,7 +795,7 @@ public sealed class DockerManager : IDisposable
     private List<ContainerInfo> ParseContainerList(string output)
     {
         var containers = new List<ContainerInfo>();
-        
+
         if (string.IsNullOrWhiteSpace(output))
         {
             return containers;

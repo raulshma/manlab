@@ -170,7 +170,7 @@ internal sealed class ScriptRunner
                 }
                 catch { /* ignore */ }
 
-                throw new TimeoutException($"Script exceeded max duration ({timeout.TotalSeconds:0}s)." );
+                throw new TimeoutException($"Script exceeded max duration ({timeout.TotalSeconds:0}s).");
             }
 
             await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);

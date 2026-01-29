@@ -398,8 +398,8 @@ public sealed class LinuxTelemetryCollector : ITelemetryCollector
                 if (drive.IsReady && (drive.DriveType == DriveType.Fixed || drive.DriveType == DriveType.Network))
                 {
                     // Skip pseudo filesystems
-                    if (drive.Name.StartsWith("/dev") || 
-                        drive.Name.StartsWith("/proc") || 
+                    if (drive.Name.StartsWith("/dev") ||
+                        drive.Name.StartsWith("/proc") ||
                         drive.Name.StartsWith("/sys") ||
                         drive.Name.StartsWith("/run"))
                     {

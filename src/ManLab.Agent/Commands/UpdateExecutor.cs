@@ -30,7 +30,7 @@ public class UpdateExecutor
     public async Task<(bool Success, string Output)> ExecuteUpdateAsync(CancellationToken cancellationToken = default)
     {
         var (command, args) = GetUpdateCommand();
-        
+
         if (string.IsNullOrEmpty(command))
         {
             var errorMsg = "Unsupported operating system for updates";
@@ -43,7 +43,7 @@ public class UpdateExecutor
         await _statusCallback("InProgress", $"Starting update: {command} {args}");
 
         var output = new StringBuilder();
-        
+
         try
         {
             using var process = new Process
@@ -65,7 +65,7 @@ public class UpdateExecutor
                 {
                     output.AppendLine(e.Data);
                     _logger.LogDebug("[stdout] {Line}", e.Data);
-                    
+
                     // Stream output every few lines to avoid overwhelming the hub
                     if (output.Length % 500 < 100)
                     {
@@ -126,16 +126,16 @@ public class UpdateExecutor
         {
             var distro = GetLinuxDistro();
             var sudoPrefix = IsRunningAsRoot() ? "" : "sudo ";
-            
+
             return distro.ToLowerInvariant() switch
             {
-                "debian" or "ubuntu" or "linuxmint" or "pop" => 
+                "debian" or "ubuntu" or "linuxmint" or "pop" =>
                     ("/bin/bash", $"-c \"{sudoPrefix}apt-get update && {sudoPrefix}apt-get upgrade -y\""),
-                "fedora" or "rhel" or "centos" or "rocky" or "almalinux" => 
+                "fedora" or "rhel" or "centos" or "rocky" or "almalinux" =>
                     ("/bin/bash", $"-c \"{sudoPrefix}dnf upgrade -y\""),
-                "arch" or "manjaro" => 
+                "arch" or "manjaro" =>
                     ("/bin/bash", $"-c \"{sudoPrefix}pacman -Syu --noconfirm\""),
-                "opensuse" or "sles" => 
+                "opensuse" or "sles" =>
                     ("/bin/bash", $"-c \"{sudoPrefix}zypper update -y\""),
                 _ => ("/bin/bash", $"-c \"{sudoPrefix}apt-get update && {sudoPrefix}apt-get upgrade -y\"") // Default to apt
             };
@@ -219,7 +219,7 @@ public class UpdateExecutor
             process.Start();
             var output = process.StandardOutput.ReadToEnd().Trim();
             process.WaitForExit();
-            
+
             if (int.TryParse(output, out var uid))
             {
                 return uid;

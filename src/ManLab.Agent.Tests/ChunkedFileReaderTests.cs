@@ -81,7 +81,7 @@ public class ChunkedFileReaderTests : IDisposable
         // Act
         var chunks = new List<byte[]>();
         await foreach (var chunk in reader.ReadFileChunksAsync(
-            filePath, 
+            filePath,
             chunkSize: 8 * 1024,
             startOffset: startOffset,
             endOffset: endOffset))
@@ -93,7 +93,7 @@ public class ChunkedFileReaderTests : IDisposable
         var combined = CombineChunks(chunks);
         var expectedLength = endOffset - startOffset + 1;
         Assert.Equal(expectedLength, combined.Length);
-        
+
         // Verify content matches the range
         var expectedData = new byte[expectedLength];
         Array.Copy(originalData, startOffset, expectedData, 0, expectedLength);
@@ -181,7 +181,7 @@ public class ChunkedFileReaderTests : IDisposable
         await Assert.ThrowsAsync<OperationCanceledException>(async () =>
         {
             await foreach (var _ in reader.ReadFileChunksAsync(
-                filePath, 
+                filePath,
                 chunkSize: ChunkedFileReader.MinChunkSize,
                 cancellationToken: cts.Token))
             {

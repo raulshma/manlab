@@ -338,7 +338,7 @@ public class SettingsController : ControllerBase
 
             var url = $"https://api.github.com/repos/{request.Repository}/releases?per_page=10";
             var response = await httpClient.GetAsync(url);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 return BadRequest(new GitHubTestResultDto
@@ -351,13 +351,13 @@ public class SettingsController : ControllerBase
 
             await using var stream = await response.Content.ReadAsStreamAsync();
             var doc = await System.Text.Json.JsonDocument.ParseAsync(stream);
-            
+
             var releases = new List<string>();
             if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
             {
                 foreach (var el in doc.RootElement.EnumerateArray())
                 {
-                    if (el.TryGetProperty("tag_name", out var tagEl) && 
+                    if (el.TryGetProperty("tag_name", out var tagEl) &&
                         tagEl.ValueKind == System.Text.Json.JsonValueKind.String)
                     {
                         var tag = tagEl.GetString();

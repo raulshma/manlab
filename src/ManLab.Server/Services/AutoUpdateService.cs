@@ -116,7 +116,7 @@ public sealed class AutoUpdateService
     private async Task ProcessNodeAutoUpdateAsync(DataContext db, Node node, bool force, string? jobApprovalMode, bool sendDiscordNotification, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Processing auto-update check for node {NodeId} ({NodeName})", node.Id, node.Hostname);
-        
+
         var settings = await GetNodeAutoUpdateSettingsAsync(db, node.Id, cancellationToken);
         if (!settings.IsEnabled && !force)
         {
@@ -138,16 +138,16 @@ public sealed class AutoUpdateService
         if (!force && settings.LastCheckAt.HasValue)
         {
             var timeSinceLastCheck = DateTime.UtcNow.Subtract(settings.LastCheckAt.Value);
-            
+
             // If check was in the future (negative duration), treat as invalid and allow check to self-heal
             if (timeSinceLastCheck.TotalMinutes < 0)
             {
-                 _logger.LogWarning("Node {NodeId}: Last check time was in the future ({Time}), proceeding with check to correct.", node.Id, settings.LastCheckAt.Value);
+                _logger.LogWarning("Node {NodeId}: Last check time was in the future ({Time}), proceeding with check to correct.", node.Id, settings.LastCheckAt.Value);
             }
             // If check was recent (positive and less than interval), skip
             else if (timeSinceLastCheck.TotalMinutes < MinCheckIntervalMinutes)
             {
-                _logger.LogInformation("Node {NodeId}: Checked {Minutes} minutes ago (min interval: {MinInterval}), skipping", 
+                _logger.LogInformation("Node {NodeId}: Checked {Minutes} minutes ago (min interval: {MinInterval}), skipping",
                     node.Id, (int)timeSinceLastCheck.TotalMinutes, MinCheckIntervalMinutes);
                 return;
             }
@@ -282,7 +282,7 @@ public sealed class AutoUpdateService
     /// Gets the latest available version from the catalog.
     /// </summary>
     private async Task<(string? Version, string Source)> GetLatestAvailableVersionAsync(
-        JsonObject catalog, 
+        JsonObject catalog,
         string currentVersion,
         CancellationToken cancellationToken)
     {
@@ -291,7 +291,7 @@ public sealed class AutoUpdateService
 
         // Determine source preference
         var preferGitHub = await _settingsService.GetValueAsync(
-            Constants.SettingKeys.GitHub.PreferGitHubForUpdates, 
+            Constants.SettingKeys.GitHub.PreferGitHubForUpdates,
             false);
 
         string? latestLocal = null;
@@ -327,7 +327,7 @@ public sealed class AutoUpdateService
             releasesNode is JsonArray releases)
         {
             var versionStrategy = await _settingsService.GetValueAsync(
-                Constants.SettingKeys.GitHub.VersionStrategy, 
+                Constants.SettingKeys.GitHub.VersionStrategy,
                 "latest-stable");
 
             var includePrerelease = string.Equals(versionStrategy, "latest-prerelease", StringComparison.OrdinalIgnoreCase);

@@ -25,12 +25,12 @@ if (Environment.GetEnvironmentVariable("MANLAB_AUTH_TOKEN") is string authToken)
 {
     agentConfig.AuthToken = authToken;
 }
-if (Environment.GetEnvironmentVariable("MANLAB_HEARTBEAT_INTERVAL_SECONDS") is string heartbeatStr 
+if (Environment.GetEnvironmentVariable("MANLAB_HEARTBEAT_INTERVAL_SECONDS") is string heartbeatStr
     && int.TryParse(heartbeatStr, out var heartbeatSeconds))
 {
     agentConfig.HeartbeatIntervalSeconds = heartbeatSeconds;
 }
-if (Environment.GetEnvironmentVariable("MANLAB_MAX_RECONNECT_DELAY_SECONDS") is string reconnectStr 
+if (Environment.GetEnvironmentVariable("MANLAB_MAX_RECONNECT_DELAY_SECONDS") is string reconnectStr
     && int.TryParse(reconnectStr, out var reconnectSeconds))
 {
     agentConfig.MaxReconnectDelaySeconds = reconnectSeconds;

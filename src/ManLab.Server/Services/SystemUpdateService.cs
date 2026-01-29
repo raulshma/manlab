@@ -121,16 +121,16 @@ public sealed class SystemUpdateService
         if (!force && DateTime.TryParse(lastCheckAtStr, out var lastCheckAt))
         {
             var timeSinceLastCheck = DateTime.UtcNow - lastCheckAt;
-            
+
             // If check was in the future, treat as invalid and allow check
             if (timeSinceLastCheck.TotalMinutes < 0)
             {
-                 _logger.LogWarning("Node {NodeId}: Last check time was in the future ({Time}), proceeding with check to correct.", node.Id, lastCheckAt);
+                _logger.LogWarning("Node {NodeId}: Last check time was in the future ({Time}), proceeding with check to correct.", node.Id, lastCheckAt);
             }
             // If check was recent, skip
             else if (timeSinceLastCheck.TotalMinutes < MinCheckIntervalMinutes)
             {
-                _logger.LogInformation("Node {NodeId}: Checked {Minutes} minutes ago (min interval: {MinInterval}), skipping", 
+                _logger.LogInformation("Node {NodeId}: Checked {Minutes} minutes ago (min interval: {MinInterval}), skipping",
                     node.Id, (int)timeSinceLastCheck.TotalMinutes, MinCheckIntervalMinutes);
                 return;
             }
@@ -729,9 +729,9 @@ public sealed class SystemUpdateService
             // Also reset the node failure count so it doesn't immediately disable updates if this was a fluke
             // (Optional, but maybe safer to leave failure count logic to the main flow. 
             // However, failUpdateAsync increments it. Here we are just marking as failed.)
-            
+
             // We should probably log this failure to the node's history/audit
-            await AuditAsync(db, update.NodeId, "systemupdate.failed", 
+            await AuditAsync(db, update.NodeId, "systemupdate.failed",
                 $"System update {update.Id} marked as failed due to server shutdown");
         }
 

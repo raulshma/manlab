@@ -307,7 +307,7 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
     private (long used, long total) GetMemoryInfo()
     {
         var memInfo = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
-        
+
         if (!GlobalMemoryStatusEx(ref memInfo))
         {
             _logger.LogWarning("Failed to get memory status");

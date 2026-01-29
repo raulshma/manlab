@@ -84,7 +84,7 @@ public sealed partial class BinariesController : ControllerBase
                 try
                 {
                     githubReleases = await FetchGitHubReleasesAsync(effectiveRepo, max: 50);
-                    
+
                     // Determine recommended version based on strategy
                     recommendedVersion = DetermineRecommendedVersion(githubReleases, versionStrategy, manualVersion);
                 }
@@ -287,7 +287,7 @@ public sealed partial class BinariesController : ControllerBase
             if (release.Prerelease && !includePrerelease) continue;
 
             var tag = release.Tag.TrimStart('v');
-            
+
             // Try to parse as semantic version
             if (Version.TryParse(tag.Split('-')[0].Split('+')[0], out var version))
             {

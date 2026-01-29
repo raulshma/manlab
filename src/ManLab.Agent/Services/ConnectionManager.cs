@@ -256,7 +256,7 @@ public sealed class ConnectionManager : IAsyncDisposable
         // Cache metadata - but refresh fields that can change (IP/interface) on every (re)register.
         var primaryInterfaceName = SelectPrimaryInterfaceName();
         var primaryNic = NetworkInterfaceSelector.TryGetInterfaceByName(primaryInterfaceName);
-        
+
         _cachedMetadata ??= new NodeMetadata
         {
             Hostname = Environment.MachineName,
@@ -616,28 +616,28 @@ public sealed class ConnectionManager : IAsyncDisposable
 
         try
         {
-                output ??= string.Empty;
-                if (output.Length <= MaxOutboundTextChunkChars)
+            output ??= string.Empty;
+            if (output.Length <= MaxOutboundTextChunkChars)
+            {
+                await _connection.SendAsync("SendTerminalOutput", sessionId, output, isClosed).ConfigureAwait(false);
+            }
+            else
+            {
+                // Send all but last chunk with isClosed=false, then final chunk carries isClosed.
+                var offset = 0;
+                while (offset < output.Length)
                 {
-                    await _connection.SendAsync("SendTerminalOutput", sessionId, output, isClosed).ConfigureAwait(false);
-                }
-                else
-                {
-                    // Send all but last chunk with isClosed=false, then final chunk carries isClosed.
-                    var offset = 0;
-                    while (offset < output.Length)
-                    {
-                        var len = Math.Min(MaxOutboundTextChunkChars, output.Length - offset);
-                        var chunk = output.Substring(offset, len);
-                        offset += len;
+                    var len = Math.Min(MaxOutboundTextChunkChars, output.Length - offset);
+                    var chunk = output.Substring(offset, len);
+                    offset += len;
 
-                        var closedFlag = isClosed && offset >= output.Length;
-                        await _connection.SendAsync("SendTerminalOutput", sessionId, chunk, closedFlag).ConfigureAwait(false);
-                    }
+                    var closedFlag = isClosed && offset >= output.Length;
+                    await _connection.SendAsync("SendTerminalOutput", sessionId, chunk, closedFlag).ConfigureAwait(false);
                 }
+            }
 
-                _logger.LogDebug("Terminal output sent for session {SessionId}: {Length} chars, closed={IsClosed}", 
-                    sessionId, output.Length, isClosed);
+            _logger.LogDebug("Terminal output sent for session {SessionId}: {Length} chars, closed={IsClosed}",
+                sessionId, output.Length, isClosed);
         }
         catch (Exception ex)
         {
@@ -821,7 +821,7 @@ public sealed class ConnectionManager : IAsyncDisposable
             // Notify server of ping success
             await _connection.SendAsync("PingResponse", _nodeId, true, (DateTime?)null)
                 .ConfigureAwait(false);
-            
+
             _logger.LogInformation("Admin ping response sent successfully, backoff reset");
         }
         catch (Exception ex)

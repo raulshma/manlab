@@ -63,7 +63,7 @@ public class NetworkScannerServiceTests
         Assert.NotNull(result);
         Assert.Equal("localhost", result.Query);
     }
-    
+
     [Fact]
     public async Task ScanPortsAsync_WithLocalhost_FindsSomethingOrCompletes()
     {
@@ -72,7 +72,7 @@ public class NetworkScannerServiceTests
         Assert.Equal("127.0.0.1", result.Host);
         Assert.Equal(2, result.ScannedPorts);
     }
-    
+
     [Fact]
     public async Task GetDeviceInfoAsync_WithLocalhost_ReturnsInfo()
     {
@@ -101,18 +101,18 @@ public class NetworkScannerServiceTests
         Assert.Equal("127.0.0.1", result.Hostname);
         Assert.NotEmpty(result.Hops);
     }
-    
+
     [Fact]
     public async Task DnsPropagationCheckAsync_WithValidQuery_ReturnsResult()
     {
-         var result = await _service.DnsPropagationCheckAsync(
-             "google.com", 
-             new[] { "8.8.8.8" }, 
-             new[] { DnsRecordType.A }
-         );
-         Assert.NotNull(result);
-         Assert.Equal("google.com", result.Query);
-         Assert.NotNull(result.Servers);
+        var result = await _service.DnsPropagationCheckAsync(
+            "google.com",
+            new[] { "8.8.8.8" },
+            new[] { DnsRecordType.A }
+        );
+        Assert.NotNull(result);
+        Assert.Equal("google.com", result.Query);
+        Assert.NotNull(result.Servers);
     }
 
     [Fact]
@@ -121,12 +121,12 @@ public class NetworkScannerServiceTests
         // /30 -> 4 addresses. Implementation skips network & broadcast for >= /24.
         // So expected count is 2 (e.g., .1 and .2)
         var result = _service.ParseCidr("192.168.1.0/30").ToList();
-        
+
         Assert.Equal(2, result.Count);
         Assert.Contains(result, ip => ip.ToString() == "192.168.1.1");
         Assert.Contains(result, ip => ip.ToString() == "192.168.1.2");
     }
-    
+
 
 
     [Fact]
