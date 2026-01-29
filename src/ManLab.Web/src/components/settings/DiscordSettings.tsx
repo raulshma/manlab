@@ -46,7 +46,6 @@ export function DiscordSettings() {
         setEnabled(true);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
   const mutation = useMutation({
