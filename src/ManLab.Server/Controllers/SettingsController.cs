@@ -3,6 +3,7 @@ using ManLab.Server.Services;
 using ManLab.Server.Services.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Net.Http.Headers;
 
 namespace ManLab.Server.Controllers;
 
@@ -14,17 +15,20 @@ public class SettingsController : ControllerBase
     private readonly ISettingsService _settingsService;
     private readonly ILogger<SettingsController> _logger;
     private readonly DiscordWebhookNotificationService _discordService; // Direct dependency for testing, ideally use interface/event
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public SettingsController(
         ISettingsService settingsService,
         ILogger<SettingsController> logger,
-        // Using concrete type here to access the test method we'll add, 
+        // Using concrete type here to access the test method we'll add,
         // or we could add SendTestMessage to INotificationService
-        DiscordWebhookNotificationService discordService)
+        DiscordWebhookNotificationService discordService,
+        IHttpClientFactory httpClientFactory)
     {
         _settingsService = settingsService;
         _logger = logger;
         _discordService = discordService;
+        _httpClientFactory = httpClientFactory;
     }
 
     [HttpGet]
@@ -178,7 +182,7 @@ public class SettingsController : ControllerBase
 
         try
         {
-            var httpClient = new HttpClient();
+            var httpClient = _httpClientFactory.CreateClient();
             httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("ManLab/1.0");
             httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
 

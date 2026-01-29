@@ -92,7 +92,8 @@ public sealed class TerminalSessionService
         // Cache for fast lookups
         _cache.Set(GetCacheKey(sessionId), session, new MemoryCacheEntryOptions
         {
-            AbsoluteExpiration = expiresAt
+            AbsoluteExpiration = expiresAt,
+            Size = 1 // Track size for cache limits
         });
 
         _logger.LogInformation("Terminal session created {SessionId} for node {NodeId} by {RequestedBy}",

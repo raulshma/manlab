@@ -16,7 +16,7 @@ internal sealed class ApplicationPerformanceCollector
 {
     private readonly ILogger _logger;
     private readonly AgentConfiguration _config;
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     // Metrics aggregation state
     private readonly Dictionary<string, ApplicationMetricsAggregator> _appMetrics = new();
@@ -27,14 +27,11 @@ internal sealed class ApplicationPerformanceCollector
     private DateTime _lastSampleAtUtc;
     private ApplicationPerformanceTelemetry? _cached;
 
-    public ApplicationPerformanceCollector(ILogger logger, AgentConfiguration config)
+    public ApplicationPerformanceCollector(ILogger logger, AgentConfiguration config, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _config = config;
-        _httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(5)
-        };
+        _httpClientFactory = httpClientFactory;
     }
 
     public ApplicationPerformanceTelemetry? Collect()
@@ -176,7 +173,8 @@ internal sealed class ApplicationPerformanceCollector
         try
         {
             var uri = new Uri(endpoint);
-            var response = _httpClient.GetAsync(endpoint).GetAwaiter().GetResult();
+            var httpClient = _httpClientFactory.CreateClient();
+            var response = httpClient.GetAsync(endpoint).GetAwaiter().GetResult();
             sw.Stop();
 
             return new ApplicationMetrics
@@ -255,11 +253,27 @@ internal sealed class ApplicationPerformanceCollector
 
         try
         {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             using var client = new TcpClient();
-            var connectTask = client.ConnectAsync(config.Host, config.Port);
-            isReachable = connectTask.Wait(TimeSpan.FromSeconds(2));
+
+            try
+            {
+                client.ConnectAsync(config.Host, config.Port, cts.Token)
+                    .GetAwaiter()
+                    .GetResult();
+                isReachable = true;
+            }
+            catch (OperationCanceledException)
+            {
+                // Timeout - connection failed
+                isReachable = false;
+            }
         }
-        catch { }
+        catch
+        {
+            // Connection failed
+            isReachable = false;
+        }
 
         sw.Stop();
 

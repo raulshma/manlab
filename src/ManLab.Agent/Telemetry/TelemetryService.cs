@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using ManLab.Agent.Configuration;
 using ManLab.Shared.Dtos;
 using Microsoft.Extensions.Logging;
+using System.Net.Http;
 
 namespace ManLab.Agent.Telemetry;
 
@@ -23,7 +24,8 @@ public sealed class TelemetryService : IAsyncDisposable
         ILoggerFactory loggerFactory,
         AgentConfiguration config,
         Func<TelemetryData, Task> sendTelemetry,
-        Func<bool>? shouldSendTelemetry = null)
+        Func<bool>? shouldSendTelemetry = null,
+        IHttpClientFactory? httpClientFactory = null)
     {
         _logger = loggerFactory.CreateLogger<TelemetryService>();
         _config = config;
@@ -31,29 +33,35 @@ public sealed class TelemetryService : IAsyncDisposable
         _shouldSendTelemetry = shouldSendTelemetry;
 
         // Select the appropriate collector based on the current platform
-        _collector = CreateCollector(loggerFactory, config);
+        _collector = CreateCollector(loggerFactory, config, httpClientFactory);
         _logger.LogInformation("Telemetry collector initialized for {OS}", GetOSName());
     }
 
-    private static ITelemetryCollector CreateCollector(ILoggerFactory loggerFactory, AgentConfiguration config)
+    private static ITelemetryCollector CreateCollector(ILoggerFactory loggerFactory, AgentConfiguration config, IHttpClientFactory? httpClientFactory)
     {
+        // Use a default HttpClientFactory if none is provided (for testing/backward compatibility)
+        httpClientFactory ??= new DefaultHttpClientFactory();
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             return new WindowsTelemetryCollector(
                 loggerFactory.CreateLogger<WindowsTelemetryCollector>(),
-                config);
+                config,
+                httpClientFactory);
         }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
             return new LinuxTelemetryCollector(
                 loggerFactory.CreateLogger<LinuxTelemetryCollector>(),
-                config);
+                config,
+                httpClientFactory);
         }
         else
         {
             return new LinuxTelemetryCollector(
                 loggerFactory.CreateLogger<LinuxTelemetryCollector>(),
-                config);
+                config,
+                httpClientFactory);
         }
     }
 
@@ -158,5 +166,25 @@ public sealed class TelemetryService : IAsyncDisposable
     {
         await StopAsync().ConfigureAwait(false);
         _cts.Dispose();
+    }
+}
+
+/// <summary>
+/// Default implementation of IHttpClientFactory for backward compatibility.
+/// Uses a shared HttpClient instance to avoid socket exhaustion issues.
+/// </summary>
+internal sealed class DefaultHttpClientFactory : IHttpClientFactory
+{
+    private readonly Lazy<HttpClient> _lazyClient = new(() => new HttpClient
+    {
+        Timeout = TimeSpan.FromSeconds(30)
+    });
+
+    public HttpClient CreateClient(string name)
+    {
+        // Return a shared HttpClient instance to avoid socket exhaustion
+        // This is a simple implementation for the Agent which doesn't use DI
+        // In production Server, IHttpClientFactory from DI should be used
+        return _lazyClient.Value;
     }
 }

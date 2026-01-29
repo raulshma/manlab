@@ -4,6 +4,7 @@ using ManLab.Shared.Dtos;
 using Microsoft.Extensions.Logging;
 using ManLab.Agent.Configuration;
 using ManLab.Agent.Networking;
+using System.Net.Http;
 
 namespace ManLab.Agent.Telemetry;
 
@@ -22,7 +23,7 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
     private readonly EnhancedGpuTelemetryCollector _enhancedGpuCollector;
     private readonly ApplicationPerformanceCollector _apmCollector;
     private readonly ProcessTelemetryCollector _processCollector;
-    
+
     // Previous CPU times for calculating usage
     private long _prevIdleTime;
     private long _prevKernelTime;
@@ -43,7 +44,7 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
     private RollingPingWindow? _pingWindow;
     private string? _resolvedPingTarget;
 
-    public WindowsTelemetryCollector(ILogger<WindowsTelemetryCollector> logger, AgentConfiguration config)
+    public WindowsTelemetryCollector(ILogger<WindowsTelemetryCollector> logger, AgentConfiguration config, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _config = config;
@@ -53,7 +54,7 @@ public partial class WindowsTelemetryCollector : ITelemetryCollector
         _upsCollector = new UpsTelemetryCollector(_logger, _config);
         _enhancedNetworkCollector = new EnhancedNetworkTelemetryCollector(_logger, _config);
         _enhancedGpuCollector = new EnhancedGpuTelemetryCollector(_logger, _config);
-        _apmCollector = new ApplicationPerformanceCollector(_logger, _config);
+        _apmCollector = new ApplicationPerformanceCollector(_logger, _config, httpClientFactory);
         _processCollector = new ProcessTelemetryCollector(_logger);
     }
 

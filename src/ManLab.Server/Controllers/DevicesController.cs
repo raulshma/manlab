@@ -124,12 +124,6 @@ public class DevicesController : ControllerBase
     [ResponseCache(Duration = 5, VaryByQueryKeys = ["count"])]
     public async Task<ActionResult<IEnumerable<TelemetryDto>>> GetTelemetry(Guid id, [FromQuery] int count = 10)
     {
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
-
         var telemetry = await _dbContext.TelemetrySnapshots
             .AsNoTracking()
             .Where(t => t.NodeId == id)
@@ -158,12 +152,6 @@ public class DevicesController : ControllerBase
         if (count <= 0) count = 120;
         count = Math.Min(count, 2_000);
 
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
-
         var items = await _dbContext.TelemetrySnapshots
             .AsNoTracking()
             .Where(t => t.NodeId == id)
@@ -189,12 +177,6 @@ public class DevicesController : ControllerBase
     {
         if (count <= 0) count = 120;
         count = Math.Min(count, 2_000);
-
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
 
         var items = await _dbContext.TelemetrySnapshots
             .AsNoTracking()
@@ -224,12 +206,6 @@ public class DevicesController : ControllerBase
         [FromQuery] DateTime? toUtc,
         [FromQuery] string? resolution = "auto")
     {
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
-
         var now = DateTime.UtcNow;
         var from = NormalizeUtc(fromUtc ?? now.AddHours(-1));
         var to = NormalizeUtc(toUtc ?? now);
@@ -369,12 +345,6 @@ public class DevicesController : ControllerBase
     [ResponseCache(Duration = 5)]
     public async Task<ActionResult<IEnumerable<ProcessTelemetry>>> GetProcessTelemetry(Guid id)
     {
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
-
         var latest = await _dbContext.TelemetrySnapshots
             .AsNoTracking()
             .Where(t => t.NodeId == id && t.ProcessTelemetryJson != null)
@@ -407,12 +377,6 @@ public class DevicesController : ControllerBase
         if (count <= 0) count = 200;
         count = Math.Min(count, 5_000);
 
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
-
         var items = await _dbContext.ServiceStatusSnapshots
             .AsNoTracking()
             .Where(s => s.NodeId == id)
@@ -439,12 +403,6 @@ public class DevicesController : ControllerBase
     {
         if (count <= 0) count = 200;
         count = Math.Min(count, 5_000);
-
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
 
         var items = await _dbContext.SmartDriveSnapshots
             .AsNoTracking()
@@ -473,12 +431,6 @@ public class DevicesController : ControllerBase
     {
         if (count <= 0) count = 500;
         count = Math.Min(count, 10_000);
-
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
 
         var items = await _dbContext.GpuSnapshots
             .AsNoTracking()
@@ -511,12 +463,6 @@ public class DevicesController : ControllerBase
         if (count <= 0) count = 500;
         count = Math.Min(count, 10_000);
 
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
-
         var items = await _dbContext.UpsSnapshots
             .AsNoTracking()
             .Where(u => u.NodeId == id)
@@ -545,12 +491,6 @@ public class DevicesController : ControllerBase
     {
         if (count <= 0) count = 120;
         count = Math.Min(count, 2_000);
-
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
 
         var items = await _dbContext.TelemetrySnapshots
             .AsNoTracking()
@@ -687,12 +627,6 @@ public class DevicesController : ControllerBase
     [HttpGet("{id:guid}/commands")]
     public async Task<ActionResult<IEnumerable<CommandDto>>> GetCommands(Guid id, [FromQuery] int count = 20)
     {
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
-
         var commands = await _dbContext.CommandQueue
             .AsNoTracking()
             .Where(c => c.NodeId == id)
@@ -719,12 +653,6 @@ public class DevicesController : ControllerBase
     [HttpGet("{id:guid}/settings")]
     public async Task<ActionResult<IEnumerable<NodeSettingDto>>> GetNodeSettings(Guid id)
     {
-        var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
-        if (!nodeExists)
-        {
-            return NotFound();
-        }
-
         var settings = await _dbContext.NodeSettings
             .AsNoTracking()
             .Where(s => s.NodeId == id)
@@ -750,6 +678,7 @@ public class DevicesController : ControllerBase
     [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
     public async Task<IActionResult> UpsertNodeSettings(Guid id, [FromBody] List<UpsertNodeSettingRequest> settings)
     {
+        // Verify node exists before modifying settings
         var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
         if (!nodeExists)
         {
@@ -1102,6 +1031,7 @@ public class DevicesController : ControllerBase
     [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
     public async Task<IActionResult> RequestPing(Guid id)
     {
+        // Check node exists before sending ping
         var nodeExists = await _dbContext.Nodes.AnyAsync(n => n.Id == id);
         if (!nodeExists)
         {

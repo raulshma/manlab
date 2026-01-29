@@ -84,7 +84,8 @@ public sealed class FileBrowserSessionService
 
         _cache.Set(GetCacheKey(sessionId), session, new MemoryCacheEntryOptions
         {
-            AbsoluteExpiration = session.ExpiresAt
+            AbsoluteExpiration = session.ExpiresAt,
+            Size = 1 // Track size for cache limits
         });
 
         _logger.LogInformation("File browser session created {SessionId} for node {NodeId} policy {PolicyId}", sessionId, nodeId, policyId);
@@ -122,7 +123,8 @@ public sealed class FileBrowserSessionService
 
         _cache.Set(GetCacheKey(sessionId), session, new MemoryCacheEntryOptions
         {
-            AbsoluteExpiration = session.ExpiresAt
+            AbsoluteExpiration = session.ExpiresAt,
+            Size = 1 // Track size for cache limits
         });
 
         _logger.LogInformation("File browser system session created {SessionId} for node {NodeId}", sessionId, nodeId);

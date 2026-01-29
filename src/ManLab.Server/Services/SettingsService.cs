@@ -43,8 +43,12 @@ public class SettingsService : ISettingsService
         var setting = await db.SystemSettings.FindAsync(key);
         var value = setting?.Value;
 
-        // Cache for 5 minutes
-        _cache.Set($"{CacheKeyPrefix}{key}", value, TimeSpan.FromMinutes(5));
+        // Cache for 5 minutes with size tracking
+        _cache.Set($"{CacheKeyPrefix}{key}", value, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
+            Size = 1
+        });
 
         return value;
     }
@@ -91,14 +95,42 @@ public class SettingsService : ISettingsService
 
         await db.SaveChangesAsync();
 
-        // Update cache
-        _cache.Set($"{CacheKeyPrefix}{key}", value, TimeSpan.FromMinutes(5));
+        // Invalidate cache for this setting and for GetAll
+        _cache.Remove($"{CacheKeyPrefix}{key}");
+        _cache.Remove($"{CacheKeyPrefix}All");
+
+        // If value is not null, cache it
+        if (value != null)
+        {
+            _cache.Set($"{CacheKeyPrefix}{key}", value, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
+                Size = 1
+            });
+        }
     }
 
     public async Task<List<SystemSetting>> GetAllAsync()
     {
+        const string allCacheKey = $"{CacheKeyPrefix}All";
+
+        // Check cache first
+        if (_cache.TryGetValue(allCacheKey, out List<SystemSetting>? cachedSettings))
+        {
+            return cachedSettings ?? new List<SystemSetting>();
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
-        return await db.SystemSettings.OrderBy(s => s.Category).ThenBy(s => s.Key).ToListAsync();
+        var settings = await db.SystemSettings.OrderBy(s => s.Category).ThenBy(s => s.Key).ToListAsync();
+
+        // Cache for 2 minutes with size tracking
+        _cache.Set(allCacheKey, settings, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2),
+            Size = settings.Count
+        });
+
+        return settings;
     }
 }

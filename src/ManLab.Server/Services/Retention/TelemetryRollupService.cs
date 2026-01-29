@@ -83,10 +83,11 @@ public sealed class TelemetryRollupService : BackgroundService
         {
             await RollupHourlyAsync(db, nodeId, currentHour, cancellationToken);
             await RollupDailyAsync(db, nodeId, currentDay, cancellationToken);
-            
-            await db.SaveChangesAsync(cancellationToken);
-            db.ChangeTracker.Clear();
         }
+
+        // Batch save all changes for all nodes instead of saving per node
+        await db.SaveChangesAsync(cancellationToken);
+        db.ChangeTracker.Clear();
     }
 
     private async Task RollupHourlyAsync(DataContext db, Guid nodeId, DateTime currentHour, CancellationToken ct)

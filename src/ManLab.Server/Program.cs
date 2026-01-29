@@ -81,7 +81,10 @@ builder.Services.AddSingleton<AuditHubFilter>();
 builder.Services.AddHttpContextAccessor();
 
 
-builder.Services.AddMemoryCache();
+builder.Services.AddMemoryCache(options =>
+{
+    options.SizeLimit = 1024; // Maximum cache size (in arbitrary units)
+});
 builder.Services.AddResponseCaching();
 
 // Auth options (JWT)
@@ -339,7 +342,12 @@ if (string.IsNullOrWhiteSpace(connectionString))
 
 builder.Services.AddDbContext<DataContext>(options =>
 {
-    options.UseNpgsql(connectionString);
+    options.UseNpgsql(connectionString, npgsqlOptions =>
+    {
+        npgsqlOptions.MaxBatchSize(100);
+        npgsqlOptions.CommandTimeout(30);
+        npgsqlOptions.EnableRetryOnFailure(3, TimeSpan.FromSeconds(30), null);
+    });
     options.AddInterceptors(new BoundedTextSaveChangesInterceptor());
     // Allow startup to proceed even if model changes exist; migrations will still be applied.
     options.ConfigureWarnings(warnings =>
