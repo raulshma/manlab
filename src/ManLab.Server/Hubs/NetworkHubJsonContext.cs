@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using ManLab.Server.Services.Monitoring;
 using ManLab.Server.Services.Network;
 
 namespace ManLab.Server.Hubs;
@@ -57,4 +58,6 @@ namespace ManLab.Server.Hubs;
 [JsonSerializable(typeof(System.Net.NetworkInformation.IPStatus))]
 [JsonSerializable(typeof(SyslogMessage))]
 [JsonSerializable(typeof(PacketCaptureRecord))]
+[JsonSerializable(typeof(ProcessAlert))]
+[JsonSerializable(typeof(List<ProcessAlert>))]
 public partial class NetworkHubJsonContext : JsonSerializerContext;

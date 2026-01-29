@@ -230,11 +230,11 @@ public sealed class MonitorJobsController : ControllerBase
         {
             case "agent-update":
                 await _settings.SetValueAsync(
-                    SettingKeys.AutoUpdate.JobEnabled, 
-                    request.Enabled.ToString().ToLowerInvariant(), 
-                    "AutoUpdate", 
+                    SettingKeys.AutoUpdate.JobEnabled,
+                    request.Enabled.ToString().ToLowerInvariant(),
+                    "AutoUpdate",
                     "Whether agent update job is enabled");
-                
+
                 if (request.Enabled)
                 {
                     var customSchedule = await _settings.GetValueAsync(SettingKeys.AutoUpdate.JobSchedule);
@@ -249,11 +249,11 @@ public sealed class MonitorJobsController : ControllerBase
 
             case "system-update":
                 await _settings.SetValueAsync(
-                    SettingKeys.SystemUpdate.JobEnabled, 
-                    request.Enabled.ToString().ToLowerInvariant(), 
-                    "SystemUpdate", 
+                    SettingKeys.SystemUpdate.JobEnabled,
+                    request.Enabled.ToString().ToLowerInvariant(),
+                    "SystemUpdate",
                     "Whether system update job is enabled");
-                
+
                 if (request.Enabled)
                 {
                     var customSchedule = await _settings.GetValueAsync(SettingKeys.SystemUpdate.JobSchedule);
@@ -265,6 +265,60 @@ public sealed class MonitorJobsController : ControllerBase
                     await _systemUpdateScheduler.RemoveGlobalSystemUpdateJobAsync(ct);
                     return Ok(new { message = "System update job disabled" });
                 }
+
+            default:
+                return BadRequest(new { error = $"Unknown job type: {jobType}. Valid types: agent-update, system-update" });
+        }
+    }
+
+    /// <summary>
+    /// Updates the approval mode for a global update job (agent-update or system-update).
+    /// </summary>
+    [HttpPut("global/{jobType}/approval")]
+    [Authorize(Policy = Permissions.PolicyPrefix + Permissions.DevicesManage)]
+    public async Task<ActionResult> UpdateGlobalJobApproval(
+        string jobType,
+        [FromBody] UpdateJobApprovalRequest request,
+        CancellationToken ct)
+    {
+        switch (jobType.ToLowerInvariant())
+        {
+            case "agent-update":
+                if (request.ApprovalMode != "automatic" && request.ApprovalMode != "manual")
+                {
+                    return BadRequest(new { error = "Approval mode must be 'automatic' or 'manual'" });
+                }
+
+                await _settings.SetValueAsync(
+                    SettingKeys.AutoUpdate.JobApprovalMode,
+                    request.ApprovalMode,
+                    "AutoUpdate",
+                    "Job-level approval mode for agent updates");
+
+                // Reschedule job to apply new setting
+                if (await _settings.GetValueAsync(SettingKeys.AutoUpdate.JobEnabled, true))
+                {
+                    var customSchedule = await _settings.GetValueAsync(SettingKeys.AutoUpdate.JobSchedule);
+                    await _autoUpdateScheduler.ScheduleGlobalAutoUpdateJobAsync(customSchedule, ct);
+                }
+
+                return Ok(new { message = $"Agent update job approval mode set to {request.ApprovalMode}", approvalMode = request.ApprovalMode });
+
+            case "system-update":
+                await _settings.SetValueAsync(
+                    SettingKeys.SystemUpdate.JobAutoApprove,
+                    request.AutoApprove.ToString().ToLowerInvariant(),
+                    "SystemUpdate",
+                    "Job-level auto-approve setting for system updates");
+
+                // Reschedule job to apply new setting
+                if (await _settings.GetValueAsync(SettingKeys.SystemUpdate.JobEnabled, true))
+                {
+                    var customSchedule = await _settings.GetValueAsync(SettingKeys.SystemUpdate.JobSchedule);
+                    await _systemUpdateScheduler.ScheduleGlobalSystemUpdateJobAsync(customSchedule, ct);
+                }
+
+                return Ok(new { message = $"System update job auto-approve set to {request.AutoApprove}", autoApprove = request.AutoApprove });
 
             default:
                 return BadRequest(new { error = $"Unknown job type: {jobType}. Valid types: agent-update, system-update" });
@@ -615,6 +669,12 @@ public sealed record UpdateJobScheduleRequest
 public sealed record UpdateJobEnabledRequest
 {
     public bool Enabled { get; init; }
+}
+
+public sealed record UpdateJobApprovalRequest
+{
+    public string ApprovalMode { get; init; } = "manual"; // For agent-update: "automatic" or "manual"
+    public bool AutoApprove { get; init; } // For system-update: true or false
 }
 
 public sealed record JobExecutionHistoryDto

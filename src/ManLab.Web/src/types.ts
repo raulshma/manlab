@@ -1547,3 +1547,42 @@ export interface PendingSystemUpdate {
   createdAt: string;
   packageCount: number;
 }
+
+// ============================================================================
+// Update Jobs Configuration Types
+// ============================================================================
+
+/**
+ * Configuration for update jobs (agent-update and system-update).
+ * Matches the UpdateJobsConfigDto from the server.
+ */
+export interface UpdateJobsConfigDto {
+  agentUpdate: AgentUpdateJobConfigDto;
+  systemUpdate: SystemUpdateJobConfigDto;
+}
+
+/**
+ * Configuration for the agent update job.
+ */
+export interface AgentUpdateJobConfigDto {
+  enabled: boolean;
+  schedule: string;
+  approvalMode: "automatic" | "manual";
+}
+
+/**
+ * Configuration for the system update job.
+ */
+export interface SystemUpdateJobConfigDto {
+  enabled: boolean;
+  schedule: string;
+  autoApprove: boolean;
+}
+
+/**
+ * Request to update update jobs configuration.
+ */
+export interface UpdateUpdateJobsConfigRequest {
+  agentUpdate?: Partial<AgentUpdateJobConfigDto>;
+  systemUpdate?: Partial<SystemUpdateJobConfigDto>;
+}

@@ -1,3 +1,4 @@
+using ManLab.Server.Constants;
 using Quartz;
 
 namespace ManLab.Server.Services;
@@ -16,15 +17,18 @@ public sealed class AutoUpdateScheduler
     private readonly ISchedulerFactory _schedulerFactory;
     private readonly ILogger<AutoUpdateScheduler> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly ISettingsService _settingsService;
 
     public AutoUpdateScheduler(
         ISchedulerFactory schedulerFactory,
         ILogger<AutoUpdateScheduler> logger,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        ISettingsService settingsService)
     {
         _schedulerFactory = schedulerFactory;
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _settingsService = settingsService;
     }
 
     /// <summary>
@@ -40,9 +44,13 @@ public sealed class AutoUpdateScheduler
 
         var effectiveCron = cronExpression ?? DefaultCronExpression;
 
+        // Get job-level approval mode setting
+        var approvalMode = await _settingsService.GetValueAsync(SettingKeys.AutoUpdate.JobApprovalMode, "manual");
+
         var job = JobBuilder.Create<AutoUpdateJob>()
             .WithIdentity(jobKey)
             .WithDescription("Periodically checks all nodes for available agent updates")
+            .UsingJobData("approvalMode", approvalMode)
             .Build();
 
         var trigger = TriggerBuilder.Create()
@@ -89,9 +97,12 @@ public sealed class AutoUpdateScheduler
 
         try
         {
+            // Get job-level approval mode setting
+            var approvalMode = await _settingsService.GetValueAsync(SettingKeys.AutoUpdate.JobApprovalMode, "manual");
+
             // Execute the job logic directly, skipping Quartz scheduler
             // This ensures immediate execution and proper error handling
-            await autoUpdateService.CheckAndApplyUpdatesAsync(force: true, ct);
+            await autoUpdateService.CheckAndApplyUpdatesAsync(force: true, approvalMode, ct);
             _logger.LogInformation("Auto-update job execution completed");
         }
         catch (Exception ex)

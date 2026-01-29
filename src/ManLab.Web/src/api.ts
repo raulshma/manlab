@@ -78,6 +78,9 @@ import type {
   NodeAutoUpdateStatus,
   // Pending updates types
   PendingUpdatesSummary,
+  // Update jobs config types
+  UpdateJobsConfigDto,
+  UpdateUpdateJobsConfigRequest,
 } from "./types";
 
 const API_BASE = "/api";
@@ -2467,4 +2470,39 @@ export async function fetchPendingUpdates(): Promise<PendingUpdatesSummary> {
   const data = await response.json();
   console.log('[API] Pending updates response:', data);
   return data;
+}
+
+// ============================================================================
+// Update Jobs Configuration API Functions
+// ============================================================================
+
+/**
+ * Gets update job configuration (agent-update and system-update jobs).
+ */
+export async function fetchUpdateJobsConfig(): Promise<UpdateJobsConfigDto> {
+  const response = await fetch(`${API_BASE}/settings/update-jobs`, {
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch update jobs config: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Updates update job configuration.
+ */
+export async function updateUpdateJobsConfig(
+  config: UpdateUpdateJobsConfigRequest
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/settings/update-jobs`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const error = data.error || data.message || response.statusText;
+    throw new Error(error || `Failed to update update jobs config: ${response.statusText}`);
+  }
 }

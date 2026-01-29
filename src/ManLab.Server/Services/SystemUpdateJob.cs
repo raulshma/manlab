@@ -22,12 +22,19 @@ public sealed class SystemUpdateJob : IJob
     public async Task Execute(IJobExecutionContext context)
     {
         _logger.LogDebug("System update job started at {Time}", DateTime.UtcNow);
-        var force = context.MergedJobDataMap.GetBoolean("force");
 
         try
         {
+            // Default to false if "force" key is not present (scheduled job execution)
+            var force = context.MergedJobDataMap.ContainsKey("force") &&
+                       context.MergedJobDataMap.GetBoolean("force");
+
+            // Get auto-approval setting from job data map (defaults to false)
+            var autoApprove = !context.MergedJobDataMap.ContainsKey("autoApprove") ||
+                             context.MergedJobDataMap.GetBoolean("autoApprove");
+
             // Delegate to the service's method
-            await _systemUpdateService.CheckAndCreatePendingUpdatesAsync(force, context.CancellationToken);
+            await _systemUpdateService.CheckAndCreatePendingUpdatesAsync(force, autoApprove, context.CancellationToken);
             _logger.LogDebug("System update job completed at {Time}", DateTime.UtcNow);
         }
         catch (Exception ex)

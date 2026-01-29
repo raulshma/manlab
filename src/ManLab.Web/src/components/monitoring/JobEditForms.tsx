@@ -536,6 +536,8 @@ export function GlobalJobEditForm({
   jobType,
   schedule,
   enabled,
+  approvalMode,
+  autoApprove,
   onChange,
   onSave,
   onCancel,
@@ -544,7 +546,9 @@ export function GlobalJobEditForm({
   jobType: "agent-update" | "system-update";
   schedule: string;
   enabled: boolean;
-  onChange: (data: { schedule: string; enabled: boolean }) => void;
+  approvalMode?: "automatic" | "manual";
+  autoApprove?: boolean;
+  onChange: (data: { schedule: string; enabled: boolean; approvalMode?: "automatic" | "manual"; autoApprove?: boolean }) => void;
   onSave: () => void;
   onCancel: () => void;
   isSaving: boolean;
@@ -556,7 +560,7 @@ export function GlobalJobEditForm({
       <div className="text-sm text-muted-foreground p-3 bg-background rounded border">
         <p className="font-medium mb-1">{jobLabel} Job</p>
         <p>
-          This is a global job that runs across all nodes. 
+          This is a global job that runs across all nodes.
           {jobType === "agent-update" && " It checks for and applies agent updates to all managed nodes."}
           {jobType === "system-update" && " It checks for and applies OS-level system updates to all managed nodes."}
         </p>
@@ -568,12 +572,12 @@ export function GlobalJobEditForm({
           <Label>Schedule</Label>
           <CronExpressionEditor
             value={schedule}
-            onChange={(newSchedule) => onChange({ schedule: newSchedule, enabled })}
+            onChange={(newSchedule) => onChange({ schedule: newSchedule, enabled, approvalMode, autoApprove })}
             disabled={isSaving}
           />
         </div>
 
-        {/* Enabled Toggle */}
+        {/* Settings Column */}
         <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="enabled">Job Status</Label>
@@ -581,7 +585,7 @@ export function GlobalJobEditForm({
               <Switch
                 id="enabled"
                 checked={enabled}
-                onCheckedChange={(checked) => onChange({ schedule, enabled: checked })}
+                onCheckedChange={(checked) => onChange({ schedule, enabled: checked, approvalMode, autoApprove })}
                 disabled={isSaving}
               />
               <div className="flex-1">
@@ -589,13 +593,59 @@ export function GlobalJobEditForm({
                   {enabled ? "Enabled" : "Disabled"}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {enabled 
-                    ? "Job will run according to schedule" 
+                  {enabled
+                    ? "Job will run according to schedule"
                     : "Job is paused and will not run"}
                 </p>
               </div>
             </div>
           </div>
+
+          {/* Approval Settings - Agent Update */}
+          {jobType === "agent-update" && (
+            <div className="space-y-2">
+              <Label htmlFor="approvalMode">Approval Mode</Label>
+              <Select
+                value={approvalMode ?? "manual"}
+                onValueChange={(value) => onChange({ schedule, enabled, approvalMode: value as "automatic" | "manual", autoApprove })}
+              >
+                <SelectTrigger id="approvalMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manual">Manual Approval Required</SelectItem>
+                  <SelectItem value="automatic">Automatic</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {approvalMode === "automatic"
+                  ? "Updates will be installed automatically when available."
+                  : "Updates will require manual approval before installation."}
+              </p>
+            </div>
+          )}
+
+          {/* Approval Settings - System Update */}
+          {jobType === "system-update" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between p-4 bg-background rounded-lg border">
+                <div className="flex-1">
+                  <Label htmlFor="autoApprove" className="cursor-pointer">Auto-approve Updates</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {autoApprove
+                      ? "Updates will be installed automatically."
+                      : "Updates will require manual approval."}
+                  </p>
+                </div>
+                <Switch
+                  id="autoApprove"
+                  checked={autoApprove ?? false}
+                  onCheckedChange={(checked) => onChange({ schedule, enabled, approvalMode, autoApprove: checked })}
+                  disabled={isSaving}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Additional Info */}
           <div className="space-y-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-md">

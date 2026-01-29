@@ -51,9 +51,11 @@ public sealed class SystemUpdateService
     /// Checks all nodes with system update enabled and creates pending updates if available.
     /// This method is called by the scheduled Quartz job or when manually triggered.
     /// </summary>
-    public async Task CheckAndCreatePendingUpdatesAsync(bool force = false, CancellationToken cancellationToken = default)
+    /// <param name="force">Whether to force checking all nodes regardless of schedule.</param>
+    /// <param name="jobAutoApprove">Job-level auto-approve setting. If provided, overrides node-level settings.</param>
+    public async Task CheckAndCreatePendingUpdatesAsync(bool force = false, bool? jobAutoApprove = null, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("System update job starting (Force: {Force})", force);
+        _logger.LogInformation("System update job starting (Force: {Force}, JobAutoApprove: {JobAutoApprove})", force, jobAutoApprove);
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
@@ -71,13 +73,11 @@ public sealed class SystemUpdateService
 
         _logger.LogInformation("System update check: {Count} online nodes with system update enabled (Force: {Force})", nodesWithSystemUpdate.Count, force);
 
-        // Create history entry for manual triggers even if no nodes to process
-        if (force)
-        {
-            _logger.LogInformation("Creating history entry for manual trigger");
-            await CreateHistoryEntryForManualTriggerAsync(db, nodesWithSystemUpdate.Count, cancellationToken);
-            _logger.LogInformation("History entry created successfully");
-        }
+        // Always create history entry for all job runs (for visibility in history)
+        var triggerType = force ? "Manual" : "Scheduled";
+        _logger.LogInformation("Creating history entry for {TriggerType} job execution", triggerType);
+        await CreateHistoryEntryAsync(db, nodesWithSystemUpdate.Count, triggerType, cancellationToken);
+        _logger.LogInformation("History entry created successfully");
 
         if (nodesWithSystemUpdate.Count == 0)
         {
@@ -89,7 +89,7 @@ public sealed class SystemUpdateService
         {
             try
             {
-                await ProcessNodeSystemUpdateAsync(db, node, force, cancellationToken);
+                await ProcessNodeSystemUpdateAsync(db, node, force, jobAutoApprove, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -101,7 +101,7 @@ public sealed class SystemUpdateService
     /// <summary>
     /// Processes system update for a single node.
     /// </summary>
-    private async Task ProcessNodeSystemUpdateAsync(DataContext db, Node node, bool force, CancellationToken cancellationToken)
+    private async Task ProcessNodeSystemUpdateAsync(DataContext db, Node node, bool force, bool? jobAutoApprove, CancellationToken cancellationToken)
     {
         var settings = await GetNodeSettingsAsync(db, node.Id, cancellationToken);
         if (!settings.Enabled && !force)
@@ -114,9 +114,17 @@ public sealed class SystemUpdateService
         if (!force && DateTime.TryParse(lastCheckAtStr, out var lastCheckAt))
         {
             var timeSinceLastCheck = DateTime.UtcNow - lastCheckAt;
-            if (timeSinceLastCheck.TotalMinutes < MinCheckIntervalMinutes)
+            
+            // If check was in the future, treat as invalid and allow check
+            if (timeSinceLastCheck.TotalMinutes < 0)
             {
-                _logger.LogDebug("Node {NodeId} was checked recently, skipping to avoid excessive checks", node.Id);
+                 _logger.LogWarning("Node {NodeId}: Last check time was in the future ({Time}), proceeding with check to correct.", node.Id, lastCheckAt);
+            }
+            // If check was recent, skip
+            else if (timeSinceLastCheck.TotalMinutes < MinCheckIntervalMinutes)
+            {
+                _logger.LogInformation("Node {NodeId}: Checked {Minutes} minutes ago (min interval: {MinInterval}), skipping", 
+                    node.Id, (int)timeSinceLastCheck.TotalMinutes, MinCheckIntervalMinutes);
                 return;
             }
         }
@@ -160,7 +168,9 @@ public sealed class SystemUpdateService
             IncludeDriverUpdates = settings.IncludeDriverUpdates
         };
 
-        var updateId = await CreatePendingUpdateAsync(node.Id, options, cancellationToken);
+        // Use job-level auto-approve if provided, otherwise use node-level setting
+        var effectiveAutoApprove = jobAutoApprove ?? settings.AutoApproveUpdates;
+        var updateId = await CreatePendingUpdateAsync(node.Id, options, effectiveAutoApprove, cancellationToken);
 
         if (updateId.HasValue)
         {
@@ -203,9 +213,9 @@ public sealed class SystemUpdateService
     }
 
     /// <summary>
-    /// Creates a history entry for manual trigger.
+    /// Creates a history entry for job run (both scheduled and manual).
     /// </summary>
-    private async Task CreateHistoryEntryForManualTriggerAsync(DataContext db, int nodeCount, CancellationToken cancellationToken)
+    private async Task CreateHistoryEntryAsync(DataContext db, int nodeCount, string triggerType, CancellationToken cancellationToken)
     {
         try
         {
@@ -225,12 +235,12 @@ public sealed class SystemUpdateService
             var rowsSaved = await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
-            _logger.LogInformation("Created system update history entry {HistoryId}: Checked {Count} nodes (saved {Rows} row(s))",
-                history.Id, nodeCount, rowsSaved);
+            _logger.LogInformation("Created system update history entry {HistoryId}: {TriggerType} check, found {Count} nodes (saved {Rows} row(s))",
+                history.Id, triggerType, nodeCount, rowsSaved);
 
             // Also create an audit entry for visibility
             await CreateAuditEntryDirectlyAsync(db, "systemupdate.check",
-                $"Manual trigger completed. Checked {nodeCount} online nodes with system update enabled.", cancellationToken);
+                $"{triggerType} check completed. Found {nodeCount} online node(s) with system update enabled.", cancellationToken);
         }
         catch (Exception ex)
         {
@@ -351,6 +361,7 @@ public sealed class SystemUpdateService
     public async Task<Guid?> CreatePendingUpdateAsync(
         Guid nodeId,
         SystemUpdateOptions options,
+        bool? autoApprove = null,
         CancellationToken cancellationToken = default)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -375,9 +386,9 @@ public sealed class SystemUpdateService
 
         var settings = await GetNodeSettingsAsync(db, nodeId, cancellationToken);
 
-        // Check if auto-approve is enabled
-        var autoApprove = settings.AutoApproveUpdates;
-        var initialStatus = autoApprove ? "Approved" : "Pending";
+        // Use provided auto-approve value, or fall back to node-level setting
+        var effectiveAutoApprove = autoApprove ?? settings.AutoApproveUpdates;
+        var initialStatus = effectiveAutoApprove ? "Approved" : "Pending";
 
         // Create update history record
         var update = new SystemUpdateHistory
@@ -397,7 +408,7 @@ public sealed class SystemUpdateService
         await db.SaveChangesAsync(cancellationToken);
 
         // Store pending update ID if not auto-approved
-        if (!autoApprove)
+        if (!effectiveAutoApprove)
         {
             await UpdateNodeSettingAsync(db, nodeId, SettingKeys.SystemUpdate.PendingUpdateId, update.Id.ToString(), cancellationToken);
 
@@ -413,7 +424,7 @@ public sealed class SystemUpdateService
             update.Id, nodeId, initialStatus);
 
         // If auto-approved, start execution
-        if (autoApprove)
+        if (effectiveAutoApprove)
         {
             _ = Task.Run(() => ExecuteUpdateAsync(update.Id, cancellationToken), cancellationToken);
         }

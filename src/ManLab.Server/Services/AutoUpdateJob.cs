@@ -25,8 +25,16 @@ public sealed class AutoUpdateJob : IJob
 
         try
         {
-            var force = context.MergedJobDataMap.GetBoolean("force");
-            await _autoUpdateService.CheckAndApplyUpdatesAsync(force, context.CancellationToken);
+            // Default to false if "force" key is not present (scheduled job execution)
+            var force = context.MergedJobDataMap.ContainsKey("force") &&
+                       context.MergedJobDataMap.GetBoolean("force");
+
+            // Get approval mode from job data map (defaults to "manual")
+            var approvalMode = context.MergedJobDataMap.ContainsKey("approvalMode")
+                ? context.MergedJobDataMap.GetString("approvalMode")
+                : "manual";
+
+            await _autoUpdateService.CheckAndApplyUpdatesAsync(force, approvalMode, context.CancellationToken);
             _logger.LogDebug("Auto-update job completed at {Time}", DateTime.UtcNow);
         }
         catch (Exception ex)

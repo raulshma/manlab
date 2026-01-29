@@ -15,7 +15,7 @@ public static class CompiledQueries
     /// </summary>
     public static readonly Func<DataContext, string, Task<Node?>> GetNodeByAuthKeyHashAsync =
         EF.CompileAsyncQuery((DataContext db, string tokenHash) =>
-            db.Nodes.FirstOrDefault(n => n.AuthKeyHash != null && n.AuthKeyHash == tokenHash));
+            db.Nodes.SingleOrDefault(n => n.AuthKeyHash != null && n.AuthKeyHash == tokenHash));
 
     /// <summary>
     /// Checks if a node exists by ID.
@@ -30,7 +30,7 @@ public static class CompiledQueries
     /// </summary>
     public static readonly Func<DataContext, Guid, Task<Node?>> GetNodeByIdAsync =
         EF.CompileAsyncQuery((DataContext db, Guid nodeId) =>
-            db.Nodes.FirstOrDefault(n => n.Id == nodeId));
+            db.Nodes.SingleOrDefault(n => n.Id == nodeId));
 
     /// <summary>
     /// Gets an unused enrollment token by hash.
@@ -38,7 +38,7 @@ public static class CompiledQueries
     /// </summary>
     public static readonly Func<DataContext, string, DateTime, Task<EnrollmentToken?>> GetValidEnrollmentTokenAsync =
         EF.CompileAsyncQuery((DataContext db, string tokenHash, DateTime utcNow) =>
-            db.EnrollmentTokens.FirstOrDefault(t =>
+            db.EnrollmentTokens.SingleOrDefault(t =>
                 t.TokenHash == tokenHash &&
                 t.UsedAt == null &&
                 t.ExpiresAt > utcNow));

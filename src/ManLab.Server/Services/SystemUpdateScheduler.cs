@@ -1,3 +1,4 @@
+using ManLab.Server.Constants;
 using Quartz;
 
 namespace ManLab.Server.Services;
@@ -16,15 +17,18 @@ public sealed class SystemUpdateScheduler
     private readonly ISchedulerFactory _schedulerFactory;
     private readonly ILogger<SystemUpdateScheduler> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly ISettingsService _settingsService;
 
     public SystemUpdateScheduler(
         ISchedulerFactory schedulerFactory,
         ILogger<SystemUpdateScheduler> logger,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        ISettingsService settingsService)
     {
         _schedulerFactory = schedulerFactory;
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _settingsService = settingsService;
     }
 
     /// <summary>
@@ -40,9 +44,13 @@ public sealed class SystemUpdateScheduler
 
         var effectiveCron = cronExpression ?? DefaultCronExpression;
 
+        // Get job-level auto-approve setting
+        var autoApprove = await _settingsService.GetValueAsync(SettingKeys.SystemUpdate.JobAutoApprove, false);
+
         var job = JobBuilder.Create<SystemUpdateJob>()
             .WithIdentity(jobKey)
             .WithDescription("Periodically checks all nodes for available system updates")
+            .UsingJobData("autoApprove", autoApprove)
             .Build();
 
         var trigger = TriggerBuilder.Create()
@@ -89,9 +97,12 @@ public sealed class SystemUpdateScheduler
 
         try
         {
+            // Get job-level auto-approve setting
+            var autoApprove = await _settingsService.GetValueAsync(SettingKeys.SystemUpdate.JobAutoApprove, false);
+
             // Execute the job logic directly, skipping Quartz scheduler
             // This ensures immediate execution and proper error handling
-            await systemUpdateService.CheckAndCreatePendingUpdatesAsync(force: true, ct);
+            await systemUpdateService.CheckAndCreatePendingUpdatesAsync(force: true, autoApprove, ct);
             _logger.LogInformation("System update job execution completed");
         }
         catch (Exception ex)

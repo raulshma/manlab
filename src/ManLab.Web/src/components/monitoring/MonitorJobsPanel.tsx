@@ -16,11 +16,11 @@ import {
   fetchScheduledNetworkTools,
   updateScheduledNetworkTool,
   runScheduledNetworkTool,
-  updateGlobalJobSchedule,
-  updateGlobalJobEnabled,
   triggerGlobalJob,
+  fetchUpdateJobsConfig,
+  updateUpdateJobsConfig,
 } from "@/api";
-import type { MonitorJobSummary, HttpMonitorConfig, TrafficMonitorConfig, ScheduledNetworkToolConfig } from "@/types";
+import type { MonitorJobSummary, HttpMonitorConfig, TrafficMonitorConfig, ScheduledNetworkToolConfig, UpdateUpdateJobsConfigRequest } from "@/types";
 import {
   HttpMonitorEditForm,
   TrafficMonitorEditForm,
@@ -68,6 +68,8 @@ export function MonitorJobsPanel() {
     type: "agent-update" | "system-update";
     schedule: string;
     enabled: boolean;
+    approvalMode?: "automatic" | "manual";
+    autoApprove?: boolean;
   } | null>(null);
 
   const [expandedJobKey, setExpandedJobKey] = useState<string | null>(null);
@@ -77,6 +79,12 @@ export function MonitorJobsPanel() {
     queryKey: ["monitoring", "jobs"],
     queryFn: fetchMonitorJobs,
     refetchInterval: 15000,
+  });
+
+  const { data: updateJobsConfig } = useQuery({
+    queryKey: ["settings", "update-jobs"],
+    queryFn: fetchUpdateJobsConfig,
+    refetchInterval: 30000,
   });
 
   const { data: httpMonitors } = useQuery({
@@ -190,22 +198,37 @@ export function MonitorJobsPanel() {
   });
 
   const updateGlobalJobMutation = useMutation({
-    mutationFn: async ({
-      type,
-      schedule,
-      enabled,
-    }: {
+    mutationFn: async (data: {
       type: "agent-update" | "system-update";
       schedule: string;
       enabled: boolean;
+      approvalMode?: "automatic" | "manual";
+      autoApprove?: boolean;
     }) => {
-      // Update schedule
-      await updateGlobalJobSchedule(type, schedule);
-      // Update enabled state
-      await updateGlobalJobEnabled(type, enabled);
+      const { type, schedule, enabled, approvalMode, autoApprove } = data;
+
+      // Build the update request
+      const updateRequest: UpdateUpdateJobsConfigRequest = {};
+
+      if (type === "agent-update") {
+        updateRequest.agentUpdate = {
+          enabled,
+          schedule,
+          approvalMode: approvalMode ?? "manual",
+        };
+      } else {
+        updateRequest.systemUpdate = {
+          enabled,
+          schedule,
+          autoApprove: autoApprove ?? false,
+        };
+      }
+
+      await updateUpdateJobsConfig(updateRequest);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["monitoring"] });
+      await queryClient.invalidateQueries({ queryKey: ["settings", "update-jobs"] });
       handleCancelEdit();
     },
   });
@@ -245,11 +268,18 @@ export function MonitorJobsPanel() {
         setEditingJobId(job.id);
       }
     } else if (job.type === "system-update" || job.type === "agent-update") {
-      // For global jobs, use the schedule and enabled from the job
+      // For global jobs, use the schedule and enabled from the job,
+      // and approval settings from the update jobs config
+      const config = updateJobsConfig;
+      const approvalSettings = job.type === "agent-update"
+        ? { approvalMode: config?.agentUpdate.approvalMode ?? "manual" }
+        : { autoApprove: config?.systemUpdate.autoApprove ?? false };
+
       setEditingGlobalJob({
         type: job.type,
         schedule: job.schedule,
         enabled: job.enabled,
+        ...approvalSettings,
       });
       setEditingJobId(job.id);
     }
@@ -432,6 +462,8 @@ export function MonitorJobsPanel() {
                         jobType={editingGlobalJob.type}
                         schedule={editingGlobalJob.schedule}
                         enabled={editingGlobalJob.enabled}
+                        approvalMode={editingGlobalJob.approvalMode}
+                        autoApprove={editingGlobalJob.autoApprove}
                         onChange={(data) => setEditingGlobalJob({ ...editingGlobalJob, ...data })}
                         onSave={handleSaveGlobalJob}
                         onCancel={handleCancelEdit}

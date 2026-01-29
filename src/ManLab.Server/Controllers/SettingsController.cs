@@ -3,6 +3,7 @@ using ManLab.Server.Services;
 using ManLab.Server.Services.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Quartz;
 using System.Net.Http.Headers;
 
 namespace ManLab.Server.Controllers;
@@ -164,6 +165,113 @@ public class SettingsController : ControllerBase
     }
 
     /// <summary>
+    /// Gets update job configuration.
+    /// </summary>
+    [HttpGet("update-jobs")]
+    public async Task<ActionResult<UpdateJobsConfigDto>> GetUpdateJobsConfig()
+    {
+        // Agent update job settings
+        var agentJobEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.AutoUpdate.JobEnabled, true);
+        var agentJobSchedule = await _settingsService.GetValueAsync(Constants.SettingKeys.AutoUpdate.JobSchedule, "0 */15 * * * ?");
+        var agentJobApprovalMode = await _settingsService.GetValueAsync(Constants.SettingKeys.AutoUpdate.JobApprovalMode, "manual");
+
+        // System update job settings
+        var systemJobEnabled = await _settingsService.GetValueAsync(Constants.SettingKeys.SystemUpdate.JobEnabled, true);
+        var systemJobSchedule = await _settingsService.GetValueAsync(Constants.SettingKeys.SystemUpdate.JobSchedule, "0 0 */6 * * ?");
+        var systemJobAutoApprove = await _settingsService.GetValueAsync(Constants.SettingKeys.SystemUpdate.JobAutoApprove, false);
+
+        return Ok(new UpdateJobsConfigDto
+        {
+            AgentUpdate = new AgentUpdateJobConfigDto
+            {
+                Enabled = agentJobEnabled,
+                Schedule = agentJobSchedule,
+                ApprovalMode = agentJobApprovalMode
+            },
+            SystemUpdate = new SystemUpdateJobConfigDto
+            {
+                Enabled = systemJobEnabled,
+                Schedule = systemJobSchedule,
+                AutoApprove = systemJobAutoApprove
+            }
+        });
+    }
+
+    /// <summary>
+    /// Updates update job configuration.
+    /// </summary>
+    [HttpPut("update-jobs")]
+    public async Task<ActionResult> UpdateUpdateJobsConfig([FromBody] UpdateUpdateJobsConfigRequest request)
+    {
+        // Validate cron expressions
+        if (!string.IsNullOrWhiteSpace(request.AgentUpdate?.Schedule) &&
+            !Quartz.CronExpression.IsValidExpression(request.AgentUpdate.Schedule))
+        {
+            return BadRequest(new { error = "Invalid agent update job schedule (invalid cron expression)" });
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.SystemUpdate?.Schedule) &&
+            !Quartz.CronExpression.IsValidExpression(request.SystemUpdate.Schedule))
+        {
+            return BadRequest(new { error = "Invalid system update job schedule (invalid cron expression)" });
+        }
+
+        // Validate approval mode
+        if (request.AgentUpdate != null &&
+            request.AgentUpdate.ApprovalMode != "automatic" &&
+            request.AgentUpdate.ApprovalMode != "manual")
+        {
+            return BadRequest(new { error = "Agent update approval mode must be 'automatic' or 'manual'" });
+        }
+
+        // Update agent update job settings
+        if (request.AgentUpdate != null)
+        {
+            await _settingsService.SetValueAsync(
+                Constants.SettingKeys.AutoUpdate.JobEnabled,
+                request.AgentUpdate.Enabled.ToString().ToLowerInvariant(),
+                "AutoUpdate",
+                "Whether the agent update job is enabled");
+
+            await _settingsService.SetValueAsync(
+                Constants.SettingKeys.AutoUpdate.JobSchedule,
+                request.AgentUpdate.Schedule ?? "0 */15 * * * ?",
+                "AutoUpdate",
+                "Cron expression for the agent update job schedule");
+
+            await _settingsService.SetValueAsync(
+                Constants.SettingKeys.AutoUpdate.JobApprovalMode,
+                request.AgentUpdate.ApprovalMode ?? "manual",
+                "AutoUpdate",
+                "Job-level approval mode for agent updates ('automatic' or 'manual')");
+        }
+
+        // Update system update job settings
+        if (request.SystemUpdate != null)
+        {
+            await _settingsService.SetValueAsync(
+                Constants.SettingKeys.SystemUpdate.JobEnabled,
+                request.SystemUpdate.Enabled.ToString().ToLowerInvariant(),
+                "SystemUpdate",
+                "Whether the system update job is enabled");
+
+            await _settingsService.SetValueAsync(
+                Constants.SettingKeys.SystemUpdate.JobSchedule,
+                request.SystemUpdate.Schedule ?? "0 0 */6 * * ?",
+                "SystemUpdate",
+                "Cron expression for the system update job schedule");
+
+            await _settingsService.SetValueAsync(
+                Constants.SettingKeys.SystemUpdate.JobAutoApprove,
+                request.SystemUpdate.AutoApprove.ToString().ToLowerInvariant(),
+                "SystemUpdate",
+                "Job-level auto-approve setting for system updates");
+        }
+
+        return NoContent();
+    }
+
+    /// <summary>
     /// Tests GitHub API connectivity and fetches available releases.
     /// </summary>
     [HttpPost("github-update/test")]
@@ -281,4 +389,42 @@ public record GitHubTestResultDto
     public bool Success { get; init; }
     public string? Error { get; init; }
     public string[] Releases { get; init; } = Array.Empty<string>();
+}
+
+/// <summary>
+/// DTO for update jobs configuration.
+/// </summary>
+public record UpdateJobsConfigDto
+{
+    public AgentUpdateJobConfigDto AgentUpdate { get; init; } = new();
+    public SystemUpdateJobConfigDto SystemUpdate { get; init; } = new();
+}
+
+/// <summary>
+/// DTO for agent update job configuration.
+/// </summary>
+public record AgentUpdateJobConfigDto
+{
+    public bool Enabled { get; init; }
+    public string Schedule { get; init; } = "0 */15 * * * ?";
+    public string ApprovalMode { get; init; } = "manual";
+}
+
+/// <summary>
+/// DTO for system update job configuration.
+/// </summary>
+public record SystemUpdateJobConfigDto
+{
+    public bool Enabled { get; init; }
+    public string Schedule { get; init; } = "0 0 */6 * * ?";
+    public bool AutoApprove { get; init; }
+}
+
+/// <summary>
+/// Request DTO for updating update jobs configuration.
+/// </summary>
+public record UpdateUpdateJobsConfigRequest
+{
+    public AgentUpdateJobConfigDto? AgentUpdate { get; init; }
+    public SystemUpdateJobConfigDto? SystemUpdate { get; init; }
 }

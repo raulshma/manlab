@@ -56,9 +56,11 @@ public sealed class AutoUpdateService
     /// Checks all nodes with auto-update enabled and applies updates if eligible.
     /// This method is called by the scheduled Quartz job.
     /// </summary>
-    public async Task CheckAndApplyUpdatesAsync(bool force = false, CancellationToken cancellationToken = default)
+    /// <param name="force">Whether to force checking all nodes regardless of schedule.</param>
+    /// <param name="jobApprovalMode">Job-level approval mode ("automatic" or "manual"). If provided, overrides node-level settings.</param>
+    public async Task CheckAndApplyUpdatesAsync(bool force = false, string? jobApprovalMode = null, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Auto-update job starting (Force: {Force})", force);
+        _logger.LogInformation("Auto-update job starting (Force: {Force}, JobApprovalMode: {JobApprovalMode})", force, jobApprovalMode);
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
@@ -76,16 +78,14 @@ public sealed class AutoUpdateService
 
         _logger.LogInformation("Auto-update check: {Count} online nodes with auto-update enabled (Force: {Force})", nodesWithAutoUpdate.Count, force);
 
-        // Always create an audit entry for manual triggers to show job ran
+        // Always create an audit entry to show job ran (for visibility in history)
         // Write directly to DB (bypass queue) for immediate visibility
-        if (force)
-        {
-            _logger.LogInformation("Creating audit entry for manual trigger");
-            await CreateAuditEntryDirectlyAsync(db, "auto-update.check",
-                $"Manual trigger completed. Checked {nodesWithAutoUpdate.Count} online nodes with auto-update enabled.",
-                cancellationToken);
-            _logger.LogInformation("Audit entry created successfully");
-        }
+        var triggerType = force ? "Manual" : "Scheduled";
+        _logger.LogInformation("Creating audit entry for {TriggerType} job execution", triggerType);
+        await CreateAuditEntryDirectlyAsync(db, "auto-update.check",
+            $"{triggerType} check completed. Found {nodesWithAutoUpdate.Count} online node(s) with auto-update enabled.",
+            cancellationToken);
+        _logger.LogInformation("Audit entry created successfully");
 
         if (nodesWithAutoUpdate.Count == 0)
         {
@@ -97,7 +97,7 @@ public sealed class AutoUpdateService
         {
             try
             {
-                await ProcessNodeAutoUpdateAsync(db, node, force, cancellationToken);
+                await ProcessNodeAutoUpdateAsync(db, node, force, jobApprovalMode, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -109,27 +109,44 @@ public sealed class AutoUpdateService
     /// <summary>
     /// Processes auto-update for a single node.
     /// </summary>
-    private async Task ProcessNodeAutoUpdateAsync(DataContext db, Node node, bool force, CancellationToken cancellationToken)
+    private async Task ProcessNodeAutoUpdateAsync(DataContext db, Node node, bool force, string? jobApprovalMode, CancellationToken cancellationToken)
     {
+        _logger.LogInformation("Processing auto-update check for node {NodeId} ({NodeName})", node.Id, node.Hostname);
+        
         var settings = await GetNodeAutoUpdateSettingsAsync(db, node.Id, cancellationToken);
         if (!settings.IsEnabled && !force)
         {
+            _logger.LogInformation("Node {NodeId}: Auto-update not enabled, skipping", node.Id);
             return;
         }
+
+        // Use job-level approval mode if provided, otherwise use node-level setting
+        var effectiveApprovalMode = jobApprovalMode ?? settings.ApprovalMode;
 
         // Check if within maintenance window (skip if forced)
         if (!force && !IsWithinMaintenanceWindow(settings.MaintenanceWindow))
         {
-            _logger.LogDebug("Node {NodeId} is outside maintenance window, skipping auto-update", node.Id);
+            _logger.LogInformation("Node {NodeId}: Outside maintenance window, skipping auto-update", node.Id);
             return;
         }
 
         // Check if we've recently checked (min interval protection) (skip if forced)
-        if (!force && settings.LastCheckAt.HasValue &&
-            DateTime.UtcNow.Subtract(settings.LastCheckAt.Value).TotalMinutes < MinCheckIntervalMinutes)
+        if (!force && settings.LastCheckAt.HasValue)
         {
-            _logger.LogDebug("Node {NodeId} was checked recently, skipping to avoid excessive checks", node.Id);
-            return;
+            var timeSinceLastCheck = DateTime.UtcNow.Subtract(settings.LastCheckAt.Value);
+            
+            // If check was in the future (negative duration), treat as invalid and allow check to self-heal
+            if (timeSinceLastCheck.TotalMinutes < 0)
+            {
+                 _logger.LogWarning("Node {NodeId}: Last check time was in the future ({Time}), proceeding with check to correct.", node.Id, settings.LastCheckAt.Value);
+            }
+            // If check was recent (positive and less than interval), skip
+            else if (timeSinceLastCheck.TotalMinutes < MinCheckIntervalMinutes)
+            {
+                _logger.LogInformation("Node {NodeId}: Checked {Minutes} minutes ago (min interval: {MinInterval}), skipping", 
+                    node.Id, (int)timeSinceLastCheck.TotalMinutes, MinCheckIntervalMinutes);
+                return;
+            }
         }
 
         // Update last check time
@@ -137,7 +154,7 @@ public sealed class AutoUpdateService
 
         // Check for available update
         var (hasUpdate, latestVersion, source) = await CheckForUpdateAsync(node.Id, settings.Channel, cancellationToken);
-        
+
         if (force)
         {
             await AuditAsync(db, node.Id, "auto-update.check", $"Forced check completed. Update available: {hasUpdate} (Latest: {latestVersion ?? "none"})");
@@ -145,7 +162,7 @@ public sealed class AutoUpdateService
 
         if (!hasUpdate || latestVersion == null)
         {
-            _logger.LogDebug("Node {NodeId} is already up to date", node.Id);
+            _logger.LogInformation("Node {NodeId}: Already up to date (current: {Version})", node.Id, node.AgentVersion ?? "unknown");
             return;
         }
 
@@ -153,14 +170,14 @@ public sealed class AutoUpdateService
             node.Id, node.AgentVersion ?? "unknown", latestVersion, source);
 
         // Check if update is already pending approval
-        if (settings.ApprovalMode == "manual" && settings.PendingVersion == latestVersion)
+        if (effectiveApprovalMode == "manual" && settings.PendingVersion == latestVersion)
         {
-            _logger.LogDebug("Node {NodeId} already has pending update {Version} awaiting approval", node.Id, latestVersion);
+            _logger.LogInformation("Node {NodeId}: Update to {Version} already pending approval", node.Id, latestVersion);
             return;
         }
 
         // Handle approval mode
-        if (settings.ApprovalMode == "manual")
+        if (effectiveApprovalMode == "manual")
         {
             await SetPendingUpdateAsync(db, node.Id, latestVersion);
             _logger.LogInformation("Node {NodeId} update to {Version} requires manual approval", node.Id, latestVersion);
@@ -225,17 +242,8 @@ public sealed class AutoUpdateService
         try
         {
             var client = _httpClientFactory.CreateClient();
-            var url = $"/api/binaries/agent/release-catalog?channel={channel}";
-
-            // Use the server's base URL from HttpContext if available
-            var request = _httpContextAccessor.HttpContext?.Request;
-            if (request != null)
-            {
-                var scheme = request.Scheme;
-                var host = request.Host.Value;
-                var baseUrl = $"{scheme}://{host}";
-                client.BaseAddress = new Uri(baseUrl);
-            }
+            var baseUrl = GetServerBaseUrl();
+            var url = $"{baseUrl}/api/binaries/agent/release-catalog?channel={channel}";
 
             var response = await client.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)

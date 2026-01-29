@@ -135,6 +135,11 @@ public static class SettingKeys
         /// Global setting: Cron expression for the auto-update job schedule.
         /// </summary>
         public const string JobSchedule = "AutoUpdate.Job.Schedule";
+
+        /// <summary>
+        /// Global setting: Approval mode for the auto-update job ("automatic" or "manual").
+        /// </summary>
+        public const string JobApprovalMode = "AutoUpdate.Job.ApprovalMode";
     }
 
     public static class Discord
@@ -296,6 +301,11 @@ public static class SettingKeys
         /// Global setting: Cron expression for the system update job schedule.
         /// </summary>
         public const string JobSchedule = "SystemUpdate.Job.Schedule";
+
+        /// <summary>
+        /// Global setting: Whether to auto-approve system updates at the job level.
+        /// </summary>
+        public const string JobAutoApprove = "SystemUpdate.Job.AutoApprove";
     }
 
     public static class ProcessMonitoring

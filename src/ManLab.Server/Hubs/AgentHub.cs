@@ -53,6 +53,7 @@ public class AgentHub : Hub
     private readonly StreamingDownloadService _streamingDownloads;
     private readonly IProcessMonitoringConfigurationService _processMonitoringConfig;
     private readonly ProcessAlertingService _processAlerting;
+    private readonly IHubContext<AgentHub> _hubContext;
 
     public AgentHub(
         ILogger<AgentHub> logger,
@@ -63,7 +64,8 @@ public class AgentHub : Hub
         DownloadSessionService downloadSessions,
         StreamingDownloadService streamingDownloads,
         IProcessMonitoringConfigurationService processMonitoringConfig,
-        ProcessAlertingService processAlerting)
+        ProcessAlertingService processAlerting,
+        IHubContext<AgentHub> hubContext)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
@@ -74,6 +76,7 @@ public class AgentHub : Hub
         _streamingDownloads = streamingDownloads;
         _processMonitoringConfig = processMonitoringConfig;
         _processAlerting = processAlerting;
+        _hubContext = hubContext;
     }
 
     /// <summary>
@@ -455,7 +458,7 @@ public class AgentHub : Hub
                     // Broadcast alerts to dashboard (non-blocking)
                     try
                     {
-                        await Clients.Group(DashboardGroupName).SendAsync("processalerts", nodeId, alerts);
+                        await _hubContext.Clients.Group(DashboardGroupName).SendAsync("processalerts", nodeId, alerts);
                     }
                     catch (Exception broadcastEx)
                     {
