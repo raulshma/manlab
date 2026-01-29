@@ -1,67 +1,65 @@
-import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Activity, Network, Globe, Signal } from "lucide-react";
-import { MonitorJobsPanel } from "../components/monitoring/MonitorJobsPanel";
-import { HttpMonitorsPanel } from "../components/monitoring/HttpMonitorsPanel";
-import { TrafficMonitorPanel } from "../components/monitoring/TrafficMonitorPanel";
-import { EnhancedNetworkTelemetryPanel } from "../components/monitoring/EnhancedNetworkTelemetryPanel";
+import { MonitorJobsPanel } from "@/components/monitoring/MonitorJobsPanel";
+import { HttpMonitorsPanel } from "@/components/monitoring/HttpMonitorsPanel";
+import { TrafficMonitorPanel } from "@/components/monitoring/TrafficMonitorPanel";
+import { EnhancedNetworkTelemetryPanel } from "@/components/monitoring/EnhancedNetworkTelemetryPanel";
+import { MonitoringHistoryPanel } from "@/components/monitoring/MonitoringHistoryPanel";
+import { Activity, Radio, BarChart3, LineChart, History } from "lucide-react";
 
 export function MonitoringPage() {
-  const [activeTab, setActiveTab] = useState("jobs");
-
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-          <Activity className="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Monitoring</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage background monitors and review health signals.
-          </p>
-        </div>
+    <div className="container mx-auto p-6 space-y-6 max-w-7xl">
+      <div className="flex flex-col gap-2">
+        <h1 className="text-3xl font-bold tracking-tight">Monitoring</h1>
+        <p className="text-muted-foreground">
+          Real-time system metrics, network analysis, and service health status.
+        </p>
       </div>
 
-      <Card className="border-0 shadow-none sm:border sm:shadow">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <CardHeader className="pb-2">
-            <TabsList className="grid w-full grid-cols-1 sm:grid-cols-4">
-              <TabsTrigger value="jobs" className="gap-2">
-                <Activity className="h-4 w-4" />
-                Jobs
-              </TabsTrigger>
-              <TabsTrigger value="http" className="gap-2">
-                <Globe className="h-4 w-4" />
-                HTTP Health
-              </TabsTrigger>
-              <TabsTrigger value="traffic" className="gap-2">
-                <Network className="h-4 w-4" />
-                Traffic
-              </TabsTrigger>
-              <TabsTrigger value="enhanced" className="gap-2">
-                <Signal className="h-4 w-4" />
-                Network Telemetry
-              </TabsTrigger>
-            </TabsList>
-          </CardHeader>
-          <CardContent>
-            <TabsContent value="jobs" className="mt-0">
-              <MonitorJobsPanel />
-            </TabsContent>
-            <TabsContent value="http" className="mt-0">
-              <HttpMonitorsPanel />
-            </TabsContent>
-            <TabsContent value="traffic" className="mt-0">
-              <TrafficMonitorPanel />
-            </TabsContent>
-            <TabsContent value="enhanced" className="mt-0">
-              <EnhancedNetworkTelemetryPanel />
-            </TabsContent>
-          </CardContent>
-        </Tabs>
-      </Card>
+      <Tabs defaultValue="jobs" className="space-y-4">
+        <TabsList className="bg-muted/50 p-1">
+          <TabsTrigger value="jobs" className="gap-2">
+            <Activity className="h-4 w-4" />
+            Jobs
+          </TabsTrigger>
+          <TabsTrigger value="history" className="gap-2">
+            <History className="h-4 w-4" />
+            History
+          </TabsTrigger>
+          <TabsTrigger value="http" className="gap-2">
+            <BarChart3 className="h-4 w-4" />
+            HTTP Health
+          </TabsTrigger>
+          <TabsTrigger value="traffic" className="gap-2">
+            <LineChart className="h-4 w-4" />
+            Traffic
+          </TabsTrigger>
+          <TabsTrigger value="network" className="gap-2">
+            <Radio className="h-4 w-4" />
+            Network Telemetry
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="jobs" className="space-y-4">
+          <MonitorJobsPanel />
+        </TabsContent>
+
+        <TabsContent value="history" className="space-y-4">
+          <MonitoringHistoryPanel />
+        </TabsContent>
+
+        <TabsContent value="http" className="space-y-4">
+          <HttpMonitorsPanel />
+        </TabsContent>
+
+        <TabsContent value="traffic" className="space-y-4">
+          <TrafficMonitorPanel />
+        </TabsContent>
+
+        <TabsContent value="network" className="space-y-4">
+          <EnhancedNetworkTelemetryPanel />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

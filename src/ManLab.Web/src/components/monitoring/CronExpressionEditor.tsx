@@ -217,6 +217,7 @@ export function CronExpressionEditor({
     // Check if current value matches a preset
     const matchingPreset = CRON_PRESETS.find((p) => p.value === value);
     if (matchingPreset) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedPreset(matchingPreset.value);
       setMode("preset");
     } else {

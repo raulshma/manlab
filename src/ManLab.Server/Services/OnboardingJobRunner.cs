@@ -168,7 +168,21 @@ public sealed class OnboardingJobRunner
             machine.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
 
-            if (!ServerBaseUrl.TryNormalizeInstallerOrigin(request.ServerBaseUrl, out var serverUri, out var serverUrlError, out var changed)
+            // If a target node is specified, we treat this as an update-in-place.
+            // IMPORTANT: do NOT mint a new token in update mode; doing so would create a new node identity.
+            var updateMode = request.TargetNodeId.HasValue;
+
+            // When updating an existing node, use the persisted ServerBaseUrlOverride from the onboarding machine
+            // if available. This ensures we use the base URL configured for the node (the URL that was used
+            // during the initial install), rather than the user-provided URL which might be localhost.
+            var effectiveServerBaseUrl = request.ServerBaseUrl;
+            if (updateMode && !string.IsNullOrWhiteSpace(machine.ServerBaseUrlOverride))
+            {
+                effectiveServerBaseUrl = machine.ServerBaseUrlOverride;
+                await PublishLogAsync(machineId, $"Using persisted serverBaseUrl from onboarding machine: '{effectiveServerBaseUrl}'");
+            }
+
+            if (!ServerBaseUrl.TryNormalizeInstallerOrigin(effectiveServerBaseUrl, out var serverUri, out var serverUrlError, out var changed)
                 || serverUri is null)
             {
                 await FailAsync(db, machine, serverUrlError ?? "Invalid serverBaseUrl (must be an absolute URL).", machineId);
@@ -195,49 +209,49 @@ public sealed class OnboardingJobRunner
             {
                 await PublishLogAsync(
                     machineId,
-                    $"Note: Normalized serverBaseUrl from '{request.ServerBaseUrl}' to '{serverUri}' (installer expects an origin, not a path)."
+                    $"Note: Normalized serverBaseUrl from '{effectiveServerBaseUrl}' to '{serverUri}' (installer expects an origin, not a path)."
                 );
             }
 
             // For SSH onboarding, the serverBaseUrl must be reachable FROM the target device.
             // Common misconfiguration: using http://localhost:xxxx which points to the target itself.
-            if (serverUri.IsLoopback
-                || string.Equals(serverUri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(serverUri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(serverUri.Host, "::1", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(serverUri.Host, "0.0.0.0", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(serverUri.Host, "::", StringComparison.OrdinalIgnoreCase))
+            // Skip this validation in update mode when using the persisted override (already validated during initial install).
+            if (!updateMode || string.IsNullOrWhiteSpace(machine.ServerBaseUrlOverride))
             {
-                var msg =
-                    $"Invalid serverBaseUrl for remote install: '{serverUri}'. " +
-                    "The Raspberry Pi must be able to reach the ManLab server at that address. " +
-                    "Do not use localhost/127.0.0.1/0.0.0.0; use a LAN IP or DNS name (e.g. http://192.168.x.y:5247). " +
-                    "Also ensure the value is an origin (no /api, no /hubs/agent).";
-
-                await PublishLogAsync(machineId, "ERROR: " + msg);
-                await FailAsync(db, machine, msg, machineId);
-                TryEmitUpdateCompleted(false, "Agent update failed", msg);
-                rateLimit.RecordFailure(request.RateLimitKey);
-                await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                if (serverUri.IsLoopback
+                    || string.Equals(serverUri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(serverUri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(serverUri.Host, "::1", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(serverUri.Host, "0.0.0.0", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(serverUri.Host, "::", StringComparison.OrdinalIgnoreCase))
                 {
-                    TimestampUtc = DateTime.UtcNow,
-                    Actor = request.Actor,
-                    ActorIp = request.ActorIp,
-                    Action = "ssh.install.result",
-                    MachineId = machineId,
-                    Host = machine.Host,
-                    Port = machine.Port,
-                    Username = machine.Username,
-                    HostKeyFingerprint = machine.HostKeyFingerprint,
-                    Success = false,
-                    Error = "Invalid serverBaseUrl for remote install"
-                });
-                return;
-            }
+                    var msg =
+                        $"Invalid serverBaseUrl for remote install: '{serverUri}'. " +
+                        "The Raspberry Pi must be able to reach the ManLab server at that address. " +
+                        "Do not use localhost/127.0.0.1/0.0.0.0; use a LAN IP or DNS name (e.g. http://192.168.x.y:5247). " +
+                        "Also ensure the value is an origin (no /api, no /hubs/agent).";
 
-            // If a target node is specified, we treat this as an update-in-place.
-            // IMPORTANT: do NOT mint a new token in update mode; doing so would create a new node identity.
-            var updateMode = request.TargetNodeId.HasValue;
+                    await PublishLogAsync(machineId, "ERROR: " + msg);
+                    await FailAsync(db, machine, msg, machineId);
+                    TryEmitUpdateCompleted(false, "Agent update failed", msg);
+                    rateLimit.RecordFailure(request.RateLimitKey);
+                    await audit.RecordAsync(new Data.Entities.SshAuditEvent
+                    {
+                        TimestampUtc = DateTime.UtcNow,
+                        Actor = request.Actor,
+                        ActorIp = request.ActorIp,
+                        Action = "ssh.install.result",
+                        MachineId = machineId,
+                        Host = machine.Host,
+                        Port = machine.Port,
+                        Username = machine.Username,
+                        HostKeyFingerprint = machine.HostKeyFingerprint,
+                        Success = false,
+                        Error = "Invalid serverBaseUrl for remote install"
+                    });
+                    return;
+                }
+            }
             string enrollmentToken;
             string? tokenHash = null;
 

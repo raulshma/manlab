@@ -15,13 +15,16 @@ public sealed class SystemUpdateScheduler
 
     private readonly ISchedulerFactory _schedulerFactory;
     private readonly ILogger<SystemUpdateScheduler> _logger;
+    private readonly IServiceProvider _serviceProvider;
 
     public SystemUpdateScheduler(
         ISchedulerFactory schedulerFactory,
-        ILogger<SystemUpdateScheduler> logger)
+        ILogger<SystemUpdateScheduler> logger,
+        IServiceProvider serviceProvider)
     {
         _schedulerFactory = schedulerFactory;
         _logger = logger;
+        _serviceProvider = serviceProvider;
     }
 
     /// <summary>
@@ -75,20 +78,26 @@ public sealed class SystemUpdateScheduler
     }
 
     /// <summary>
-    /// Manually triggers the system update job.
+    /// Manually triggers the system update job synchronously.
     /// </summary>
     public async Task TriggerSystemUpdateJobAsync(CancellationToken ct = default)
     {
-        var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
-        var jobKey = new JobKey(JobKey, JobGroup);
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var systemUpdateService = scope.ServiceProvider.GetRequiredService<SystemUpdateService>();
 
-        if (!await scheduler.CheckExists(jobKey, ct).ConfigureAwait(false))
+        _logger.LogInformation("Manually triggering system update job (synchronous)");
+
+        try
         {
-            _logger.LogWarning("System update job does not exist, scheduling it first");
-            await ScheduleGlobalSystemUpdateJobAsync(null, ct).ConfigureAwait(false);
+            // Execute the job logic directly, skipping Quartz scheduler
+            // This ensures immediate execution and proper error handling
+            await systemUpdateService.CheckAndCreatePendingUpdatesAsync(force: true, ct);
+            _logger.LogInformation("System update job execution completed");
         }
-
-        await scheduler.TriggerJob(jobKey, ct).ConfigureAwait(false);
-        _logger.LogInformation("Manually triggered system update job");
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "System update job execution failed");
+            throw;
+        }
     }
 }

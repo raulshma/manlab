@@ -59,6 +59,9 @@ import type {
   TrafficMonitorConfig,
   TrafficSample,
   MonitorJobSummary,
+  JobExecutionHistory,
+  GlobalJobHistoryEntry,
+  RunningJob,
   ScheduledNetworkToolConfig,
   ProcessTelemetry,
   // System update types
@@ -72,6 +75,8 @@ import type {
   AutoUpdateSettings,
   UpdateAutoUpdateSettingsRequest,
   NodeAutoUpdateStatus,
+  // Pending updates types
+  PendingUpdatesSummary,
 } from "./types";
 
 const API_BASE = "/api";
@@ -1651,6 +1656,31 @@ export async function fetchMonitorJobs(): Promise<MonitorJobSummary[]> {
   return response.json();
 }
 
+export async function fetchJobHistory(id: string, type: string): Promise<JobExecutionHistory[]> {
+  const response = await fetch(`${API_BASE}/monitoring/jobs/${id}/history?type=${type}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch job history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+
+export async function fetchGlobalJobHistory(count: number = 50): Promise<GlobalJobHistoryEntry[]> {
+  const response = await fetch(`${API_BASE}/monitoring/jobs/history?count=${count}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch global job history: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function fetchRunningJobs(): Promise<RunningJob[]> {
+  const response = await fetch(`${API_BASE}/monitoring/jobs/running`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch running jobs: ${response.statusText}`);
+  }
+  return response.json();
+}
+
 export async function fetchHttpMonitors(): Promise<HttpMonitorConfig[]> {
   const response = await fetch(`${API_BASE}/monitoring/http`);
   if (!response.ok) {
@@ -2335,4 +2365,23 @@ export async function approveSystemReboot(updateId: string): Promise<void> {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || `Failed to approve reboot: ${response.statusText}`);
   }
+}
+
+// ============================================================================
+// Pending Updates API Functions
+// ============================================================================
+
+/**
+ * Fetches all pending updates (agent and system) for the current user.
+ */
+export async function fetchPendingUpdates(): Promise<PendingUpdatesSummary> {
+  const response = await fetch(`${API_BASE}/updates/pending`, {
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch pending updates: ${response.statusText}`);
+  }
+  const data = await response.json();
+  console.log('[API] Pending updates response:', data);
+  return data;
 }

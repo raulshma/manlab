@@ -25,7 +25,8 @@ public sealed class AutoUpdateJob : IJob
 
         try
         {
-            await _autoUpdateService.CheckAndApplyUpdatesAsync(context.CancellationToken);
+            var force = context.MergedJobDataMap.GetBoolean("force");
+            await _autoUpdateService.CheckAndApplyUpdatesAsync(force, context.CancellationToken);
             _logger.LogDebug("Auto-update job completed at {Time}", DateTime.UtcNow);
         }
         catch (Exception ex)

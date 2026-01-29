@@ -15,13 +15,16 @@ public sealed class AutoUpdateScheduler
 
     private readonly ISchedulerFactory _schedulerFactory;
     private readonly ILogger<AutoUpdateScheduler> _logger;
+    private readonly IServiceProvider _serviceProvider;
 
     public AutoUpdateScheduler(
         ISchedulerFactory schedulerFactory,
-        ILogger<AutoUpdateScheduler> logger)
+        ILogger<AutoUpdateScheduler> logger,
+        IServiceProvider serviceProvider)
     {
         _schedulerFactory = schedulerFactory;
         _logger = logger;
+        _serviceProvider = serviceProvider;
     }
 
     /// <summary>
@@ -75,20 +78,26 @@ public sealed class AutoUpdateScheduler
     }
 
     /// <summary>
-    /// Manually triggers the auto-update job.
+    /// Manually triggers the auto-update job synchronously.
     /// </summary>
     public async Task TriggerAutoUpdateJobAsync(CancellationToken ct = default)
     {
-        var scheduler = await _schedulerFactory.GetScheduler(ct).ConfigureAwait(false);
-        var jobKey = new JobKey(JobKey, JobGroup);
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var autoUpdateService = scope.ServiceProvider.GetRequiredService<AutoUpdateService>();
 
-        if (!await scheduler.CheckExists(jobKey, ct).ConfigureAwait(false))
+        _logger.LogInformation("Manually triggering auto-update job (synchronous)");
+
+        try
         {
-            _logger.LogWarning("Auto-update job does not exist, scheduling it first");
-            await ScheduleGlobalAutoUpdateJobAsync(null, ct).ConfigureAwait(false);
+            // Execute the job logic directly, skipping Quartz scheduler
+            // This ensures immediate execution and proper error handling
+            await autoUpdateService.CheckAndApplyUpdatesAsync(force: true, ct);
+            _logger.LogInformation("Auto-update job execution completed");
         }
-
-        await scheduler.TriggerJob(jobKey, ct).ConfigureAwait(false);
-        _logger.LogInformation("Manually triggered auto-update job");
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Auto-update job execution failed");
+            throw;
+        }
     }
 }

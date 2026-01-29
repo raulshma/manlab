@@ -395,6 +395,26 @@ export function SignalRProvider({
     [queryClient]
   );
 
+  // Handle pending update created events
+  const handlePendingUpdateCreated = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["pendingUpdates"] });
+  }, [queryClient]);
+
+  // Handle pending update approved events
+  const handlePendingUpdateApproved = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["pendingUpdates"] });
+  }, [queryClient]);
+
+  // Handle pending update rejected events
+  const handlePendingUpdateRejected = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["pendingUpdates"] });
+  }, [queryClient]);
+
+  // Handle pending update cleared events
+  const handlePendingUpdateCleared = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["pendingUpdates"] });
+  }, [queryClient]);
+
   // Handle command output appended events (live command streaming)
   const handleCommandOutputAppended = useCallback(
     (nodeId: string, commandId: string, status: string, logs: string) => {
@@ -538,6 +558,10 @@ export function SignalRProvider({
     handleNodeErrorStateCleared,
     handleCommandOutputAppended,
     handleServerResourceUsage,
+    handlePendingUpdateCreated,
+    handlePendingUpdateApproved,
+    handlePendingUpdateRejected,
+    handlePendingUpdateCleared,
   });
 
   // Keep refs in sync with latest handlers
@@ -556,6 +580,10 @@ export function SignalRProvider({
       handleNodeErrorStateCleared,
       handleCommandOutputAppended,
       handleServerResourceUsage,
+      handlePendingUpdateCreated,
+      handlePendingUpdateApproved,
+      handlePendingUpdateRejected,
+      handlePendingUpdateCleared,
     };
   });
 
@@ -679,6 +707,25 @@ export function SignalRProvider({
     ) => handlersRef.current.handleCommandOutputAppended(...args);
     newConnection.on("CommandOutputAppended", commandOutputAppendedHandler);
 
+    // Register pending update handlers
+    const pendingUpdateCreatedHandler = (
+      ...args: Parameters<typeof handlePendingUpdateCreated>
+    ) => handlersRef.current.handlePendingUpdateCreated(...args);
+    const pendingUpdateApprovedHandler = (
+      ...args: Parameters<typeof handlePendingUpdateApproved>
+    ) => handlersRef.current.handlePendingUpdateApproved(...args);
+    const pendingUpdateRejectedHandler = (
+      ...args: Parameters<typeof handlePendingUpdateRejected>
+    ) => handlersRef.current.handlePendingUpdateRejected(...args);
+    const pendingUpdateClearedHandler = (
+      ...args: Parameters<typeof handlePendingUpdateCleared>
+    ) => handlersRef.current.handlePendingUpdateCleared(...args);
+
+    newConnection.on("PendingUpdateCreated", pendingUpdateCreatedHandler);
+    newConnection.on("PendingUpdateApproved", pendingUpdateApprovedHandler);
+    newConnection.on("PendingUpdateRejected", pendingUpdateRejectedHandler);
+    newConnection.on("PendingUpdateCleared", pendingUpdateClearedHandler);
+
     // Start the connection asynchronously
     // Wrap in an async IIFE to handle setState after the microtask
     const startConnection = async () => {
@@ -725,6 +772,10 @@ export function SignalRProvider({
       newConnection.off("NodeErrorStateChanged", nodeErrorStateChangedHandler);
       newConnection.off("NodeErrorStateCleared", nodeErrorStateClearedHandler);
       newConnection.off("CommandOutputAppended", commandOutputAppendedHandler);
+      newConnection.off("PendingUpdateCreated", pendingUpdateCreatedHandler);
+      newConnection.off("PendingUpdateApproved", pendingUpdateApprovedHandler);
+      newConnection.off("PendingUpdateRejected", pendingUpdateRejectedHandler);
+      newConnection.off("PendingUpdateCleared", pendingUpdateClearedHandler);
       newConnection.stop();
     };
   }, [finalHubUrl, queryClient, token]);

@@ -486,6 +486,36 @@ export interface MonitorJobSummary {
   nextRunAtUtc: string | null;
 }
 
+export interface JobExecutionHistory {
+  timestampUtc: string;
+  success: boolean;
+  durationMs: number;
+  message: string | null;
+  detailsJson: string | null;
+}
+
+export interface GlobalJobHistoryEntry {
+  id: string;
+  jobId: string | null;
+  jobName: string;
+  jobType: string;
+  timestampUtc: string;
+  success: boolean;
+  durationMs: number;
+  message: string | null;
+  detailsJson: string | null;
+}
+
+export interface RunningJob {
+  jobGroup: string;
+  jobName: string;
+  triggerGroup: string;
+  triggerName: string;
+  fireTimeUtc: string;
+  runTimeMs: number;
+  progress: number | null;
+}
+
 /**
  * Monitoring: Scheduled network tool configuration
  */
@@ -1442,3 +1472,39 @@ export interface RejectUpdateRequest {
 }
 
 // not a JSON initiation response. See `downloadSshZip()` in `api.ts`.
+
+// ============================================================================
+// Pending Updates Types
+// ============================================================================
+
+/**
+ * Summary of pending updates (agent and system).
+ */
+export interface PendingUpdatesSummary {
+  totalCount: number;
+  agentUpdates: PendingAgentUpdate[];
+  systemUpdates: PendingSystemUpdate[];
+}
+
+/**
+ * Pending agent update information.
+ */
+export interface PendingAgentUpdate {
+  nodeId: string;
+  hostname: string;
+  currentVersion: string;
+  pendingVersion: string;
+  lastCheckAt: string | null;
+}
+
+/**
+ * Pending system update information.
+ */
+export interface PendingSystemUpdate {
+  updateId: string;
+  nodeId: string;
+  hostname: string;
+  updateType: string;
+  createdAt: string;
+  packageCount: number;
+}

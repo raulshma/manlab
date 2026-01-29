@@ -20,19 +20,22 @@ public sealed class MonitorJobsController : ControllerBase
     private readonly AutoUpdateScheduler _autoUpdateScheduler;
     private readonly SystemUpdateScheduler _systemUpdateScheduler;
     private readonly ISettingsService _settings;
+    private readonly ILogger<MonitorJobsController> _logger;
 
     public MonitorJobsController(
-        DataContext db, 
+        DataContext db,
         ISchedulerFactory schedulerFactory,
         AutoUpdateScheduler autoUpdateScheduler,
         SystemUpdateScheduler systemUpdateScheduler,
-        ISettingsService settings)
+        ISettingsService settings,
+        ILogger<MonitorJobsController> logger)
     {
         _db = db;
         _schedulerFactory = schedulerFactory;
         _autoUpdateScheduler = autoUpdateScheduler;
         _systemUpdateScheduler = systemUpdateScheduler;
         _settings = settings;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -289,6 +292,308 @@ public sealed class MonitorJobsController : ControllerBase
                 return BadRequest(new { error = $"Unknown job type: {jobType}. Valid types: agent-update, system-update" });
         }
     }
+
+
+
+    [HttpGet("{id}/history")]
+    public async Task<ActionResult<List<JobExecutionHistoryDto>>> GetJobHistory(Guid id, [FromQuery] string type, CancellationToken ct)
+    {
+        _logger.LogInformation("GetJobHistory called: Id={Id}, Type={Type}", id, type);
+
+        var history = new List<JobExecutionHistoryDto>();
+
+        if (string.Equals(type, "http", StringComparison.OrdinalIgnoreCase))
+        {
+             var checks = await _db.HttpMonitorChecks
+                .AsNoTracking()
+                .Where(c => c.MonitorId == id)
+                .OrderByDescending(c => c.TimestampUtc)
+                .Take(20)
+                .ToListAsync(ct);
+             
+             history = checks.Select(c => new JobExecutionHistoryDto
+             {
+                 TimestampUtc = c.TimestampUtc,
+                 Success = c.Success,
+                 DurationMs = c.ResponseTimeMs,
+                 Message = c.ErrorMessage ?? (c.Success ? $"Status: {c.StatusCode}" : "Failed"),
+                 DetailsJson = System.Text.Json.JsonSerializer.Serialize(new { c.StatusCode, c.KeywordMatched, c.SslDaysRemaining })
+             }).ToList();
+        }
+        else if (string.Equals(type, "network-tool", StringComparison.OrdinalIgnoreCase))
+        {
+            var config = await _db.ScheduledNetworkToolConfigs.FindAsync(new object[] { id }, ct);
+            if (config != null)
+            {
+                var target = config.Target ?? config.ToolType;
+                var toolType = $"scheduled-{config.ToolType}";
+                
+                var entries = await _db.NetworkToolHistory
+                   .AsNoTracking()
+                   .Where(h => h.ToolType == toolType && h.Target == target)
+                   .OrderByDescending(h => h.TimestampUtc)
+                   .Take(20)
+                   .ToListAsync(ct);
+
+                history = entries.Select(h => new JobExecutionHistoryDto
+                {
+                    TimestampUtc = h.TimestampUtc,
+                    Success = h.Success,
+                    DurationMs = h.DurationMs,
+                    Message = h.ErrorMessage ?? (h.Success ? "Completed" : "Failed"),
+                    DetailsJson = h.ResultJson
+                }).ToList();
+            }
+        }
+        else if (string.Equals(type, "traffic", StringComparison.OrdinalIgnoreCase))
+        {
+             var config = await _db.TrafficMonitorConfigs.FindAsync(new object[] { id }, ct);
+             if (config != null)
+             {
+                 var entries = await _db.NetworkToolHistory
+                    .AsNoTracking()
+                    .Where(h => h.ToolType == "monitor-traffic")
+                    .OrderByDescending(h => h.TimestampUtc)
+                    .Take(20)
+                    .ToListAsync(ct);
+                 
+                 // If specific interface is configured, we could filter here, 
+                 // but NetworkToolHistory stores it in InputJson. 
+                 // For now, returning all traffic monitor history is acceptable provided there is usually only one.
+                 
+                 history = entries.Select(h => new JobExecutionHistoryDto
+                 {
+                     TimestampUtc = h.TimestampUtc,
+                     Success = h.Success,
+                     DurationMs = h.DurationMs,
+                     Message = h.ErrorMessage,
+                     DetailsJson = h.ResultJson
+                 }).ToList();
+             }
+        }
+        else if (string.Equals(type, "system-update", StringComparison.OrdinalIgnoreCase))
+        {
+            var updates = await _db.SystemUpdateHistories
+                .AsNoTracking()
+                .OrderByDescending(x => x.StartedAt)
+                .Take(20)
+                .ToListAsync(ct);
+
+            history = updates.Select(x => new JobExecutionHistoryDto
+            {
+                TimestampUtc = x.StartedAt,
+                Success = x.Status == "Completed" || x.Status == "Succeeded",
+                DurationMs = x.CompletedAt.HasValue ? (int)(x.CompletedAt.Value - x.StartedAt).TotalMilliseconds : 0,
+                Message = $"{x.Status} (Node: {x.NodeId})",
+                DetailsJson = System.Text.Json.JsonSerializer.Serialize(new { x.NodeId, PackageCount = GetPackageCount(x.PackagesJson) })
+            }).ToList();
+        }
+        else if (string.Equals(type, "agent-update", StringComparison.OrdinalIgnoreCase))
+        {
+            // Agent updates are tracked in audit logs since they don't have a dedicated history table besides node settings
+            var audits = await _db.AuditEvents
+                .AsNoTracking()
+                .Where(x => x.Category == "auto-update")
+                .OrderByDescending(x => x.TimestampUtc)
+                .Take(20)
+                .ToListAsync(ct);
+
+            _logger.LogInformation("Found {Count} audit entries for agent-update", audits.Count);
+
+            history = audits.Select(x => new JobExecutionHistoryDto
+            {
+                TimestampUtc = x.TimestampUtc,
+                Success = x.Success ?? false,
+                DurationMs = 0, // Audit logs don't track duration
+                Message = x.Message,
+                DetailsJson = System.Text.Json.JsonSerializer.Serialize(new { x.NodeId, x.EventName })
+            }).ToList();
+        }
+
+        _logger.LogInformation("Returning {Count} history entries for type {Type}", history.Count, type);
+        return Ok(history);
+    }
+
+    private int GetPackageCount(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return 0;
+        try 
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array ? doc.RootElement.GetArrayLength() : 0;
+        }
+        catch { return 0; }
+    }
+
+    [HttpGet("history")]
+    public async Task<ActionResult<List<GlobalJobHistoryDto>>> GetGlobalHistory([FromQuery] int count = 50, CancellationToken ct = default)
+    {
+        var countPerType = count;
+
+        var httpHistory = await _db.HttpMonitorChecks
+            .AsNoTracking()
+            .OrderByDescending(x => x.TimestampUtc)
+            .Take(countPerType)
+            .Select(x => new GlobalJobHistoryDto
+            {
+                Id = x.Id.ToString(),
+                JobId = x.MonitorId.ToString(),
+                JobName = x.Monitor != null ? x.Monitor.Name : "Unknown HTTP Monitor",
+                JobType = "http",
+                TimestampUtc = x.TimestampUtc,
+                Success = x.Success,
+                DurationMs = x.ResponseTimeMs,
+                Message = x.ErrorMessage ?? (x.Success ? $"Status: {x.StatusCode}" : "Failed"),
+                DetailsJson = null
+            })
+            .ToListAsync(ct);
+
+        var netHistory = await _db.NetworkToolHistory
+            .AsNoTracking()
+            .OrderByDescending(x => x.TimestampUtc)
+            .Take(countPerType)
+            .Select(x => new GlobalJobHistoryDto
+            {
+                Id = x.Id.ToString(),
+                JobId = null,
+                JobName = x.ToolType + (string.IsNullOrEmpty(x.Target) ? "" : $" ({x.Target})"),
+                JobType = x.ToolType == "Traffic" ? "traffic" : "network-tool",
+                TimestampUtc = x.TimestampUtc,
+                Success = x.Success,
+                DurationMs = x.DurationMs,
+                Message = x.ErrorMessage ?? (x.Success ? "Success" : "Failed"),
+                DetailsJson = null
+            })
+            .ToListAsync(ct);
+
+        var sysUpdates = await _db.SystemUpdateHistories
+            .AsNoTracking()
+            .OrderByDescending(x => x.StartedAt)
+            .Take(countPerType)
+            .Select(x => new GlobalJobHistoryDto
+            {
+                Id = x.Id.ToString(),
+                JobId = x.Id.ToString(),
+                JobName = "System Update",
+                JobType = "system-update",
+                TimestampUtc = x.StartedAt,
+                Success = x.Status == "Completed" || x.Status == "Succeeded",
+                DurationMs = x.CompletedAt.HasValue ? (int)(x.CompletedAt.Value - x.StartedAt).TotalMilliseconds : 0,
+                Message = x.Status,
+                DetailsJson = null
+            })
+            .ToListAsync(ct);
+
+        // Agent update history from audit logs
+        var agentUpdateAudits = await _db.AuditEvents
+            .AsNoTracking()
+            .Where(x => x.Category == "auto-update")
+            .OrderByDescending(x => x.TimestampUtc)
+            .Take(countPerType)
+            .Select(x => new GlobalJobHistoryDto
+            {
+                Id = x.Id.ToString(),
+                JobId = x.NodeId == Guid.Empty ? null : x.NodeId.ToString(),
+                JobName = "Agent Updates",
+                JobType = "agent-update",
+                TimestampUtc = x.TimestampUtc,
+                Success = x.Success ?? false,
+                DurationMs = 0,
+                Message = x.Message,
+                DetailsJson = null
+            })
+            .ToListAsync(ct);
+
+        var allHistory = httpHistory
+            .Concat(netHistory)
+            .Concat(sysUpdates)
+            .Concat(agentUpdateAudits)  // ← Added agent updates!
+            .OrderByDescending(x => x.TimestampUtc)
+            .Take(count)
+            .ToList();
+
+        return Ok(allHistory);
+    }
+
+    [HttpGet("running")]
+    public async Task<ActionResult<List<RunningJobDto>>> GetRunningJobs(CancellationToken ct)
+    {
+        var scheduler = await _schedulerFactory.GetScheduler(ct);
+        var executingJobs = await scheduler.GetCurrentlyExecutingJobs(ct);
+        
+        var running = executingJobs.Select(context => new RunningJobDto
+        {
+            JobGroup = context.JobDetail.Key.Group,
+            JobName = context.JobDetail.Key.Name,
+            TriggerGroup = context.Trigger.Key.Group,
+            TriggerName = context.Trigger.Key.Name,
+            FireTimeUtc = context.FireTimeUtc.UtcDateTime,
+            RunTimeMs = (int)(DateTime.UtcNow - context.FireTimeUtc.UtcDateTime).TotalMilliseconds,
+        }).ToList();
+
+        return Ok(running);
+    }
+
+    /// <summary>
+    /// Diagnostic endpoint to check if audit logs are being created.
+    /// </summary>
+    [HttpGet("audit-health")]
+    public async Task<ActionResult> GetAuditHealth(CancellationToken ct)
+    {
+        var recentAudits = await _db.AuditEvents
+            .AsNoTracking()
+            .OrderByDescending(x => x.TimestampUtc)
+            .Take(10)
+            .Select(x => new
+            {
+                x.Id,
+                x.TimestampUtc,
+                x.Category,
+                x.EventName,
+                x.Message,
+                x.Success
+            })
+            .ToListAsync(ct);
+
+        var autoUpdateAudits = await _db.AuditEvents
+            .AsNoTracking()
+            .Where(x => x.Category == "auto-update")
+            .OrderByDescending(x => x.TimestampUtc)
+            .Take(5)
+            .Select(x => new
+            {
+                x.Id,
+                x.TimestampUtc,
+                x.EventName,
+                x.Message
+            })
+            .ToListAsync(ct);
+
+        var systemUpdateAudits = await _db.AuditEvents
+            .AsNoTracking()
+            .Where(x => x.Category == "system-update")
+            .OrderByDescending(x => x.TimestampUtc)
+            .Take(5)
+            .Select(x => new
+            {
+                x.Id,
+                x.TimestampUtc,
+                x.EventName,
+                x.Message
+            })
+            .ToListAsync(ct);
+
+        return Ok(new
+        {
+            recentAuditCount = recentAudits.Count,
+            latestAudit = recentAudits.FirstOrDefault(),
+            autoUpdateAuditCount = autoUpdateAudits.Count,
+            latestAutoUpdateAudit = autoUpdateAudits.FirstOrDefault(),
+            systemUpdateAuditCount = systemUpdateAudits.Count,
+            latestSystemUpdateAudit = systemUpdateAudits.FirstOrDefault(),
+            categories = recentAudits.Select(x => x.Category).Distinct().ToList()
+        });
+    }
 }
 
 public sealed record MonitorJobSummaryDto
@@ -311,3 +616,37 @@ public sealed record UpdateJobEnabledRequest
 {
     public bool Enabled { get; init; }
 }
+
+public sealed record JobExecutionHistoryDto
+{
+    public DateTime TimestampUtc { get; init; }
+    public bool Success { get; init; }
+    public int DurationMs { get; init; }
+    public string? Message { get; init; }
+    public string? DetailsJson { get; init; }
+}
+
+public sealed record GlobalJobHistoryDto
+{
+    public required string Id { get; init; }
+    public string? JobId { get; init; }
+    public required string JobName { get; init; }
+    public required string JobType { get; init; }
+    public DateTime TimestampUtc { get; init; }
+    public bool Success { get; init; }
+    public int DurationMs { get; init; }
+    public string? Message { get; init; }
+    public string? DetailsJson { get; init; }
+}
+
+public sealed record RunningJobDto
+{
+    public required string JobGroup { get; init; }
+    public required string JobName { get; init; }
+    public required string TriggerGroup { get; init; }
+    public required string TriggerName { get; init; }
+    public DateTime FireTimeUtc { get; init; }
+    public int RunTimeMs { get; init; }
+    public int? Progress { get; init; }
+}
+

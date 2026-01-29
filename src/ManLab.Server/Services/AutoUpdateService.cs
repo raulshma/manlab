@@ -5,7 +5,9 @@ using ManLab.Server.Data.Enums;
 using ManLab.Server.Services.Audit;
 using ManLab.Server.Services.Ssh;
 using ManLab.Server.Services.Security;
+using ManLab.Server.Hubs;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
@@ -28,6 +30,7 @@ public sealed class AutoUpdateService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ISettingsService _settingsService;
+    private readonly IHubContext<AgentHub> _hubContext;
 
     public AutoUpdateService(
         IServiceScopeFactory scopeFactory,
@@ -36,7 +39,8 @@ public sealed class AutoUpdateService
         IOptions<BinaryDistributionOptions> binaryOptions,
         IHttpClientFactory httpClientFactory,
         IHttpContextAccessor httpContextAccessor,
-        ISettingsService settingsService)
+        ISettingsService settingsService,
+        IHubContext<AgentHub> hubContext)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -45,14 +49,17 @@ public sealed class AutoUpdateService
         _httpClientFactory = httpClientFactory;
         _httpContextAccessor = httpContextAccessor;
         _settingsService = settingsService;
+        _hubContext = hubContext;
     }
 
     /// <summary>
     /// Checks all nodes with auto-update enabled and applies updates if eligible.
     /// This method is called by the scheduled Quartz job.
     /// </summary>
-    public async Task CheckAndApplyUpdatesAsync(CancellationToken cancellationToken = default)
+    public async Task CheckAndApplyUpdatesAsync(bool force = false, CancellationToken cancellationToken = default)
     {
+        _logger.LogInformation("Auto-update job starting (Force: {Force})", force);
+
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DataContext>();
 
@@ -67,13 +74,30 @@ public sealed class AutoUpdateService
             .Where(n => n.Status == NodeStatus.Online)
             .ToListAsync(cancellationToken);
 
-        _logger.LogDebug("Auto-update check: {Count} online nodes with auto-update enabled", nodesWithAutoUpdate.Count);
+        _logger.LogInformation("Auto-update check: {Count} online nodes with auto-update enabled (Force: {Force})", nodesWithAutoUpdate.Count, force);
+
+        // Always create an audit entry for manual triggers to show job ran
+        // Write directly to DB (bypass queue) for immediate visibility
+        if (force)
+        {
+            _logger.LogInformation("Creating audit entry for manual trigger");
+            await CreateAuditEntryDirectlyAsync(db, "auto-update.check",
+                $"Manual trigger completed. Checked {nodesWithAutoUpdate.Count} online nodes with auto-update enabled.",
+                cancellationToken);
+            _logger.LogInformation("Audit entry created successfully");
+        }
+
+        if (nodesWithAutoUpdate.Count == 0)
+        {
+            _logger.LogInformation("No nodes with auto-update enabled found");
+            return;
+        }
 
         foreach (var node in nodesWithAutoUpdate)
         {
             try
             {
-                await ProcessNodeAutoUpdateAsync(db, node, cancellationToken);
+                await ProcessNodeAutoUpdateAsync(db, node, force, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -85,23 +109,23 @@ public sealed class AutoUpdateService
     /// <summary>
     /// Processes auto-update for a single node.
     /// </summary>
-    private async Task ProcessNodeAutoUpdateAsync(DataContext db, Node node, CancellationToken cancellationToken)
+    private async Task ProcessNodeAutoUpdateAsync(DataContext db, Node node, bool force, CancellationToken cancellationToken)
     {
         var settings = await GetNodeAutoUpdateSettingsAsync(db, node.Id, cancellationToken);
-        if (!settings.IsEnabled)
+        if (!settings.IsEnabled && !force)
         {
             return;
         }
 
-        // Check if within maintenance window
-        if (!IsWithinMaintenanceWindow(settings.MaintenanceWindow))
+        // Check if within maintenance window (skip if forced)
+        if (!force && !IsWithinMaintenanceWindow(settings.MaintenanceWindow))
         {
             _logger.LogDebug("Node {NodeId} is outside maintenance window, skipping auto-update", node.Id);
             return;
         }
 
-        // Check if we've recently checked (min interval protection)
-        if (settings.LastCheckAt.HasValue &&
+        // Check if we've recently checked (min interval protection) (skip if forced)
+        if (!force && settings.LastCheckAt.HasValue &&
             DateTime.UtcNow.Subtract(settings.LastCheckAt.Value).TotalMinutes < MinCheckIntervalMinutes)
         {
             _logger.LogDebug("Node {NodeId} was checked recently, skipping to avoid excessive checks", node.Id);
@@ -113,6 +137,12 @@ public sealed class AutoUpdateService
 
         // Check for available update
         var (hasUpdate, latestVersion, source) = await CheckForUpdateAsync(node.Id, settings.Channel, cancellationToken);
+        
+        if (force)
+        {
+            await AuditAsync(db, node.Id, "auto-update.check", $"Forced check completed. Update available: {hasUpdate} (Latest: {latestVersion ?? "none"})");
+        }
+
         if (!hasUpdate || latestVersion == null)
         {
             _logger.LogDebug("Node {NodeId} is already up to date", node.Id);
@@ -135,6 +165,11 @@ public sealed class AutoUpdateService
             await SetPendingUpdateAsync(db, node.Id, latestVersion);
             _logger.LogInformation("Node {NodeId} update to {Version} requires manual approval", node.Id, latestVersion);
             await AuditAsync(db, node.Id, "auto-update.pending", $"Update to version {latestVersion} pending approval");
+
+            // Send SignalR event
+            await _hubContext.Clients.Group(AgentHub.DashboardGroupName)
+                .SendAsync("PendingUpdateCreated", node.Id, "agent", (object?)null);
+
             return;
         }
 
@@ -408,6 +443,13 @@ public sealed class AutoUpdateService
         OnboardingJobRunner.InstallRequest request;
         var credentialService = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<CredentialEncryptionService>();
 
+        // Decrypt sudo password if available
+        string? sudoPassword = null;
+        if (!string.IsNullOrWhiteSpace(machine.EncryptedSudoPassword))
+        {
+            sudoPassword = await credentialService.DecryptAsync(machine.EncryptedSudoPassword);
+        }
+
         if (machine.AuthMode == SshAuthMode.Password && !string.IsNullOrWhiteSpace(machine.EncryptedSshPassword))
         {
             // Password authentication
@@ -418,8 +460,8 @@ public sealed class AutoUpdateService
                 ServerBaseUrl: serverBaseUrl,
                 Force: true,
                 Auth: new SshProvisioningService.PasswordAuth(password),
-                SudoPassword: null,
-                RunAsRoot: false,
+                SudoPassword: sudoPassword,
+                RunAsRoot: sudoPassword != null,
                 AgentInstall: new SshProvisioningService.AgentInstallOptions(
                     Source: installSource,
                     Channel: settings.Channel,
@@ -481,6 +523,10 @@ public sealed class AutoUpdateService
         await UpdateNodeSettingAsync(db, node.Id, SettingKeys.AutoUpdate.FailureCount, "0");
 
         await AuditAsync(db, node.Id, "auto-update.started", $"Automatic update to version {targetVersion} initiated");
+
+        // Send SignalR event for approval
+        await _hubContext.Clients.Group(AgentHub.DashboardGroupName)
+            .SendAsync("PendingUpdateApproved", node.Id, "agent", (object?)null);
     }
 
     /// <summary>
@@ -631,7 +677,7 @@ public sealed class AutoUpdateService
     }
 
     /// <summary>
-    /// Records an audit event.
+    /// Records an audit event (enqueued, written asynchronously).
     /// </summary>
     private async Task AuditAsync(DataContext db, Guid nodeId, string eventName, string message)
     {
@@ -646,6 +692,44 @@ public sealed class AutoUpdateService
             Success = true,
             Message = message
         });
+    }
+
+    /// <summary>
+    /// Records an audit event directly to the database (synchronous, bypasses queue).
+    /// Used for manual triggers to ensure immediate visibility in history.
+    /// </summary>
+    private async Task CreateAuditEntryDirectlyAsync(DataContext db, string eventName, string message, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+            var auditEvent = new AuditEvent
+            {
+                Id = Guid.NewGuid(),
+                Kind = "activity",
+                EventName = eventName,
+                Category = "auto-update",
+                Source = "system",
+                ActorType = "system",
+                NodeId = Guid.Empty,
+                Success = true,
+                Message = message,
+                TimestampUtc = DateTime.UtcNow
+            };
+
+            db.AuditEvents.Add(auditEvent);
+            var rowsSaved = await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            _logger.LogInformation("Created audit entry {AuditId}: {EventName} - {Message} (saved {Rows} row(s))",
+                auditEvent.Id, eventName, message, rowsSaved);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create audit entry: {EventName} - {Message}", eventName, message);
+            throw;
+        }
     }
 
     /// <summary>

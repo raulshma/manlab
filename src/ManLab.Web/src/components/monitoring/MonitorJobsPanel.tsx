@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Play, PauseCircle, PlayCircle, Settings2, Cpu, Server } from "lucide-react";
+import { RefreshCw, Play, PauseCircle, PlayCircle, Settings2, Cpu, Server, ChevronDown, ChevronUp, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -27,6 +27,7 @@ import {
   NetworkToolEditForm,
   GlobalJobEditForm,
 } from "./JobEditForms";
+import { JobExecutionHistoryTable } from "./JobExecutionHistoryTable";
 
 function formatDate(value: string | null): string {
   if (!value) return "—";
@@ -68,6 +69,8 @@ export function MonitorJobsPanel() {
     schedule: string;
     enabled: boolean;
   } | null>(null);
+
+  const [expandedJobKey, setExpandedJobKey] = useState<string | null>(null);
 
   // Queries
   const { data: jobs, isLoading, refetch, isFetching } = useQuery({
@@ -284,6 +287,14 @@ export function MonitorJobsPanel() {
     }
   };
 
+  const toggleHistory = (key: string) => {
+    if (expandedJobKey === key) {
+      setExpandedJobKey(null);
+    } else {
+      setExpandedJobKey(key);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -305,10 +316,13 @@ export function MonitorJobsPanel() {
             const jobTypeInfo = getJobTypeInfo(job.type);
             const canToggle = job.type === "http" || job.type === "traffic";
             const canRun = job.type === "http" || job.type === "traffic" || job.type === "network-tool" || job.type === "agent-update" || job.type === "system-update";
+            const canShowHistory = job.type === "http" || job.type === "network-tool" || job.type === "traffic" || job.type === "agent-update" || job.type === "system-update";
             const isEditing = editingJobId === job.id;
+            const jobKey = `${job.type}-${job.id}`;
+            const isExpanded = expandedJobKey === jobKey;
 
             return (
-              <div key={`${job.type}-${job.id}`} className="flex flex-col p-4">
+              <div key={jobKey} className="flex flex-col p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
                     <div className="flex items-center gap-2">
@@ -370,6 +384,16 @@ export function MonitorJobsPanel() {
                     ) : (
                       <PlayCircle className="h-4 w-4 text-muted-foreground" />
                     )}
+                    {canShowHistory && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => toggleHistory(jobKey)}
+                        title="Show History"
+                      >
+                        {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -414,6 +438,17 @@ export function MonitorJobsPanel() {
                         isSaving={updateGlobalJobMutation.isPending}
                       />
                     )}
+                  </div>
+                )}
+                
+                {/* History Table */}
+                {isExpanded && (
+                  <div className="mt-4">
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+                       <History className="h-4 w-4" />
+                       Execution History
+                    </h4>
+                    <JobExecutionHistoryTable jobId={job.id} jobType={job.type} />
                   </div>
                 )}
               </div>
