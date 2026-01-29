@@ -19,6 +19,7 @@ import { ScriptsSettings } from "@/components/settings/ScriptsSettings";
 import { GitHubReleaseSettings } from "@/components/settings/GitHubReleaseSettings";
 import { NetworkSettings } from "@/components/settings/NetworkSettings";
 import { AuthSettings } from "@/components/settings/AuthSettings";
+import { ProcessMonitoringSettings } from "@/components/settings/ProcessMonitoringSettings";
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -73,6 +74,7 @@ export function SettingsPage() {
           <TabsTrigger value="scripts">Scripts</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
         </TabsList>
         <TabsContent value="general" className="space-y-4">
           <Card>
@@ -140,7 +142,10 @@ export function SettingsPage() {
         <TabsContent value="notifications" className="space-y-4">
             <DiscordSettings />
         </TabsContent>
-        
+        <TabsContent value="monitoring" className="space-y-4">
+            <ProcessMonitoringSettings />
+        </TabsContent>
+
       </Tabs>
     </div>
   );

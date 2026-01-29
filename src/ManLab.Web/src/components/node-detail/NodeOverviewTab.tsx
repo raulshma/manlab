@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchNodeTelemetry, fetchNodeNetworkTelemetry, fetchNodePingTelemetry, fetchGpuHistory } from "../../api";
+import { fetchNodeTelemetry, fetchNodeNetworkTelemetry, fetchNodePingTelemetry, fetchGpuHistory, fetchProcessTelemetry } from "../../api";
 import { SystemInfoPanel } from "../SystemInfoPanel";
+import { ProcessMonitoringPanel } from "../ProcessMonitoringPanel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Clock, RefreshCw } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
@@ -59,6 +60,12 @@ export function NodeOverviewTab({ nodeId, node, onPing, isPingPending }: NodeOve
         refetchInterval: 10000,
     });
 
+    const { data: processTelemetry } = useQuery({
+        queryKey: ["processTelemetry", nodeId],
+        queryFn: () => fetchProcessTelemetry(nodeId),
+        refetchInterval: 10000,
+    });
+
     return (
         <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
             {/* Backoff Status Alert */}
@@ -93,6 +100,15 @@ export function NodeOverviewTab({ nodeId, node, onPing, isPingPending }: NodeOve
                         </Button>
                     </AlertDescription>
                 </Alert>
+            )}
+
+            {/* Process Monitoring */}
+            {processTelemetry && processTelemetry.length > 0 && (
+                <ProcessMonitoringPanel
+                    processes={processTelemetry}
+                    nodeName={node.hostname}
+                    showNodeName={false}
+                />
             )}
 
             <SystemInfoPanel

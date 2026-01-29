@@ -297,4 +297,25 @@ public static class SettingKeys
         /// </summary>
         public const string JobSchedule = "SystemUpdate.Job.Schedule";
     }
+
+    public static class ProcessMonitoring
+    {
+        // Global settings
+        public const string Enabled = "ProcessMonitoring.Enabled";
+        public const string DefaultTopCpuCount = "ProcessMonitoring.DefaultTopCpuCount";
+        public const string DefaultTopMemoryCount = "ProcessMonitoring.DefaultTopMemoryCount";
+        public const string DefaultRefreshIntervalSeconds = "ProcessMonitoring.DefaultRefreshIntervalSeconds";
+        public const string DefaultCpuAlertThreshold = "ProcessMonitoring.DefaultCpuAlertThreshold";
+        public const string DefaultMemoryAlertThreshold = "ProcessMonitoring.DefaultMemoryAlertThreshold";
+        public const string DefaultExcludePatterns = "ProcessMonitoring.DefaultExcludePatterns";
+        public const string AlertCooldownMinutes = "ProcessMonitoring.AlertCooldownMinutes";
+
+        // Per-node settings (prefix with node ID)
+        public const string NodeTopCpuCountPrefix = "ProcessMonitoring.Node.TopCpuCount.";
+        public const string NodeTopMemoryCountPrefix = "ProcessMonitoring.Node.TopMemoryCount.";
+        public const string NodeRefreshIntervalSecondsPrefix = "ProcessMonitoring.Node.RefreshIntervalSeconds.";
+        public const string NodeCpuAlertThresholdPrefix = "ProcessMonitoring.Node.CpuAlertThreshold.";
+        public const string NodeMemoryAlertThresholdPrefix = "ProcessMonitoring.Node.MemoryAlertThreshold.";
+        public const string NodeExcludePatternsPrefix = "ProcessMonitoring.Node.ExcludePatterns.";
+    }
 }

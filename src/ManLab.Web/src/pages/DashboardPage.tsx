@@ -19,9 +19,10 @@ import { DashboardStatsCard } from "@/components/dashboard/DashboardStatsCard";
 import { IssuesPanel } from "@/components/dashboard/IssuesPanel";
 import { FleetHealthChart } from "@/components/dashboard/FleetHealthChart";
 import { ServerResourceUsagePanel } from "@/components/ServerResourceUsagePanel";
-import { fetchNodes, fetchNodeTelemetry } from "@/api";
+import { ProcessMonitoringPanel } from "@/components/ProcessMonitoringPanel";
+import { fetchNodes, fetchNodeTelemetry, fetchProcessTelemetry } from "@/api";
 import { mapWithConcurrency } from "@/lib/async";
-import type { Node, Telemetry } from "@/types";
+import type { Node, Telemetry, ProcessTelemetry } from "@/types";
 import { cn } from "@/lib/utils";
 import { useSignalR } from "@/SignalRContext";
 import {
@@ -37,6 +38,7 @@ import {
 } from "lucide-react";
 
 type FleetLatestTelemetry = Record<string, Telemetry | null>;
+type FleetProcessTelemetry = Record<string, ProcessTelemetry[]>;
 
 async function fetchFleetLatestTelemetry(nodes: Node[]): Promise<FleetLatestTelemetry> {
   const ids = nodes.map((n) => n.id);
@@ -53,6 +55,23 @@ async function fetchFleetLatestTelemetry(nodes: Node[]): Promise<FleetLatestTele
     { concurrency: 6 }
   );
   return Object.fromEntries(rows);
+}
+
+async function fetchFleetProcessTelemetry(nodes: Node[]): Promise<FleetProcessTelemetry> {
+  const ids = nodes.map((n) => n.id);
+  const rows = await mapWithConcurrency(
+    ids,
+    async (nodeId) => {
+      try {
+        const items = await fetchProcessTelemetry(nodeId);
+        return [nodeId, items ?? []] as const;
+      } catch {
+        return [nodeId, []] as const;
+      }
+    },
+    { concurrency: 10 }
+  );
+  return Object.fromEntries(rows) as FleetProcessTelemetry;
 }
 
 function percent(n: number | null | undefined): string {
@@ -93,6 +112,16 @@ export function DashboardPage() {
     enabled: effectiveNodes.length > 0,
     staleTime: 5_000,
     refetchInterval: 30_000,
+  });
+
+  // Fetch process telemetry for each node
+  // Only fetch if we have nodes - use longer stale time to reduce network calls
+  const { data: processTelemetry } = useQuery({
+    queryKey: ["fleetProcessTelemetry", effectiveNodes.map((n) => n.id)],
+    queryFn: () => fetchFleetProcessTelemetry(effectiveNodes),
+    enabled: effectiveNodes.length > 0 && effectiveNodes.length <= 20, // Only fetch for small fleets
+    staleTime: 30_000, // Cache for 30 seconds - process data changes less frequently
+    refetchInterval: 60_000, // Poll every minute instead of 30 seconds
   });
 
   // Compute fleet statistics
@@ -317,6 +346,14 @@ export function DashboardPage() {
         </div>
 
         <ServerResourceUsagePanel data={serverResourceUsage} />
+
+        {/* Fleet Process Monitoring */}
+        {processTelemetry && (
+          <ProcessMonitoringPanel
+            processes={Object.values(processTelemetry).flat()}
+            maxItems={5}
+          />
+        )}
 
         {/* Top Nodes Table */}
         {topCpuNodes.length > 0 && (

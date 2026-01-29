@@ -19,6 +19,7 @@ import { NodeUpdatePage } from "./pages/NodeUpdatePage";
 import { NetworkScannerPage } from "./pages/NetworkScannerPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
 import { DockerStudioPage } from "./pages/DockerStudioPage";
+import { ProcessesPage } from "./pages/ProcessesPage";
 import { UsersPage } from "./pages/UsersPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { Toaster } from "@/components/ui/sonner";
@@ -49,6 +50,7 @@ function AppRoutes() {
         <Route path="/network" element={<NetworkScannerPage />} />
         <Route path="/monitoring" element={<MonitoringPage />} />
         <Route path="/docker" element={<DockerStudioPage />} />
+        <Route path="/processes" element={<ProcessesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

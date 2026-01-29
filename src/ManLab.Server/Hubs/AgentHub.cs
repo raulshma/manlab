@@ -6,6 +6,7 @@ using ManLab.Server.Services.Security;
 using ManLab.Server.Services.Agents;
 using ManLab.Server.Services.Enhancements;
 using ManLab.Server.Services.Audit;
+using ManLab.Server.Services.Monitoring;
 using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -50,6 +51,8 @@ public class AgentHub : Hub
     private readonly IAuditLog _audit;
     private readonly DownloadSessionService _downloadSessions;
     private readonly StreamingDownloadService _streamingDownloads;
+    private readonly IProcessMonitoringConfigurationService _processMonitoringConfig;
+    private readonly ProcessAlertingService _processAlerting;
 
     public AgentHub(
         ILogger<AgentHub> logger,
@@ -58,7 +61,9 @@ public class AgentHub : Hub
         Services.Monitoring.DashboardConnectionTracker dashboardConnections,
         IAuditLog audit,
         DownloadSessionService downloadSessions,
-        StreamingDownloadService streamingDownloads)
+        StreamingDownloadService streamingDownloads,
+        IProcessMonitoringConfigurationService processMonitoringConfig,
+        ProcessAlertingService processAlerting)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
@@ -67,6 +72,8 @@ public class AgentHub : Hub
         _audit = audit;
         _downloadSessions = downloadSessions;
         _streamingDownloads = streamingDownloads;
+        _processMonitoringConfig = processMonitoringConfig;
+        _processAlerting = processAlerting;
     }
 
     /// <summary>
@@ -421,6 +428,50 @@ public class AgentHub : Hub
         await dbContext.SaveChangesAsync();
 
         _logger.HeartbeatReceived(nodeId);
+
+        // Evaluate process alerts asynchronously (don't block heartbeat)
+        // Fire-and-forget pattern - errors are logged but don't fail the heartbeat
+        if (data.TopProcesses is { Count: > 0 })
+        {
+            // Capture process data to avoid closure issues
+            var processesCopy = data.TopProcesses.ToList();
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var config = await _processMonitoringConfig.GetNodeConfigAsync(nodeId);
+                    if (!config.Enabled || processesCopy.Count == 0)
+                    {
+                        return;
+                    }
+
+                    var alerts = _processAlerting.EvaluateAlerts(processesCopy, config, nodeId);
+                    if (alerts.Count == 0)
+                    {
+                        return;
+                    }
+
+                    // Broadcast alerts to dashboard (non-blocking)
+                    try
+                    {
+                        await Clients.Group(DashboardGroupName).SendAsync("processalerts", nodeId, alerts);
+                    }
+                    catch (Exception broadcastEx)
+                    {
+                        _logger.LogWarning(broadcastEx, "Failed to broadcast process alerts for node {NodeId}", nodeId);
+                    }
+
+                    // Send notifications
+                    await _processAlerting.SendAlertNotificationsAsync(alerts);
+                }
+                catch (Exception ex)
+                {
+                    // Log but don't throw - heartbeat should not fail due to alert processing
+                    _logger.LogError(ex, "Failed to evaluate/notify process alerts for node {NodeId}", nodeId);
+                }
+            });
+        }
 
         // Node status transitions are handled on Register() (Online) and HealthMonitorService (Offline).
         // Avoid additional DB round-trips in the hot heartbeat path.

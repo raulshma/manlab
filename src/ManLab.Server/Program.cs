@@ -234,6 +234,13 @@ builder.Services.AddOptions<BinaryDistributionOptions>()
 
 builder.Services.AddSingleton<ISettingsService, SettingsService>();
 
+// Process monitoring configuration and alerting
+builder.Services.AddOptions<ProcessMonitoringOptions>()
+    .Bind(builder.Configuration.GetSection(ProcessMonitoringOptions.SectionName))
+    .ValidateDataAnnotations();
+builder.Services.AddSingleton<IProcessMonitoringConfigurationService, ProcessMonitoringConfigurationService>();
+builder.Services.AddSingleton<ProcessAlertingService>();
+
 builder.Services.AddSingleton<DiscordWebhookNotificationService>();
 builder.Services.AddSingleton<INotificationService>(sp => sp.GetRequiredService<DiscordWebhookNotificationService>());
 

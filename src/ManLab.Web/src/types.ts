@@ -83,6 +83,45 @@ export interface ProcessTelemetry {
 }
 
 /**
+ * Process monitoring configuration.
+ */
+export interface ProcessMonitoringConfig {
+  enabled: boolean;
+  topCpuCount: number;
+  topMemoryCount: number;
+  refreshIntervalSeconds: number;
+  cpuAlertThreshold: number;
+  memoryAlertThreshold: number;
+  excludePatterns: string[];
+}
+
+/**
+ * Process alert generated when a process exceeds thresholds.
+ */
+export interface ProcessAlert {
+  nodeId: string;
+  processId: number;
+  processName: string;
+  alertType: 'Cpu' | 'Memory';
+  currentValue: number;
+  threshold: number;
+  timestampUtc: string;
+}
+
+/**
+ * User preferences for process monitoring view (stored in localStorage).
+ */
+export interface ProcessMonitoringViewPrefs {
+  nodeId: string;
+  sortBy: 'cpu' | 'memory' | 'name';
+  sortOrder: 'asc' | 'desc';
+  showOnlyAlerts: boolean;
+  minCpuFilter: number;
+  minMemoryFilter: number;
+  searchQuery: string;
+}
+
+/**
  * Node status change event from SignalR.
  */
 export interface NodeStatusChange {

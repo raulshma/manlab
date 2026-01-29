@@ -18,7 +18,7 @@ import {
   LogLevel,
 } from "@microsoft/signalr";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Node, NodeStatus, AgentBackoffStatus, ServerResourceUsage } from "./types";
+import type { Node, NodeStatus, AgentBackoffStatus, ServerResourceUsage, ProcessAlert } from "./types";
 import { useAuth } from "@/auth/AuthContext";
 
 /**
@@ -95,6 +95,8 @@ interface SignalRContextValue {
   agentBackoffStatus: Map<string, AgentBackoffStatus>;
   /** Map of commandId -> accumulated output logs */
   commandOutputLogs: Map<string, CommandOutputEntry[]>;
+  /** Map of nodeId -> array of process alerts for that node */
+  processAlerts: Map<string, ProcessAlert[]>;
   /** Merge server-side command output snapshot (fills gaps during reload). */
   syncCommandOutputSnapshot: (
     commandId: string,
@@ -160,6 +162,9 @@ export function SignalRProvider({
   );
   const [commandOutputLogs, setCommandOutputLogs] = useState<Map<string, CommandOutputEntry[]>>(
     () => loadCommandOutputLogs()
+  );
+  const [processAlerts, setProcessAlerts] = useState<Map<string, ProcessAlert[]>>(
+    new Map()
   );
   const queryClient = useQueryClient();
 
@@ -297,6 +302,22 @@ export function SignalRProvider({
           newMap.delete(nodeId);
         } else {
           newMap.set(nodeId, { nodeId, consecutiveFailures, nextRetryTimeUtc });
+        }
+        return newMap;
+      });
+    },
+    []
+  );
+
+  // Handle process alerts
+  const handleProcessAlerts = useCallback(
+    (nodeId: string, alerts: ProcessAlert[]) => {
+      setProcessAlerts((prev) => {
+        const newMap = new Map(prev);
+        if (alerts.length === 0) {
+          newMap.delete(nodeId);
+        } else {
+          newMap.set(nodeId, alerts);
         }
         return newMap;
       });
@@ -553,6 +574,7 @@ export function SignalRProvider({
     handleLocalAgentStatusChanged,
     handleAgentBackoffStatus,
     handleAgentPingResponse,
+    handleProcessAlerts,
     handleNodeDeleted,
     handleNodeErrorStateChanged,
     handleNodeErrorStateCleared,
@@ -575,6 +597,7 @@ export function SignalRProvider({
       handleLocalAgentStatusChanged,
       handleAgentBackoffStatus,
       handleAgentPingResponse,
+      handleProcessAlerts,
       handleNodeDeleted,
       handleNodeErrorStateChanged,
       handleNodeErrorStateCleared,
@@ -685,6 +708,13 @@ export function SignalRProvider({
     newConnection.on("AgentBackoffStatus", agentBackoffStatusHandler);
     newConnection.on("AgentPingResponse", agentPingResponseHandler);
 
+    // Register process alerts handler
+    const processAlertsHandler = (
+      ...args: Parameters<typeof handleProcessAlerts>
+    ) => handlersRef.current.handleProcessAlerts(...args);
+    newConnection.on("ProcessAlerts", processAlertsHandler);
+    newConnection.on("processalerts", processAlertsHandler); // camelCase
+
     // Register node deleted handler
     const nodeDeletedHandler = (
       ...args: Parameters<typeof handleNodeDeleted>
@@ -790,6 +820,7 @@ export function SignalRProvider({
         serverResourceUsage,
         agentBackoffStatus,
         commandOutputLogs,
+        processAlerts,
         syncCommandOutputSnapshot,
         subscribeToLocalAgentLogs,
         subscribeToCommandOutput,

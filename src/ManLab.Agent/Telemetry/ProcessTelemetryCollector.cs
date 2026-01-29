@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using ManLab.Shared.Dtos;
 using Microsoft.Extensions.Logging;
 
@@ -17,11 +18,38 @@ public sealed class ProcessTelemetryCollector
         _logger = logger;
     }
 
-    public List<ProcessTelemetry> Collect(int maxItems = 10)
+    /// <summary>
+    /// Collects process telemetry with optional filtering and configurable limits.
+    /// </summary>
+    /// <param name="maxCpuItems">Maximum number of top CPU processes to return (default: 10).</param>
+    /// <param name="maxMemoryItems">Maximum number of top memory processes to return (default: 10).</param>
+    /// <param name="excludePatterns">Optional array of wildcard patterns to exclude (e.g., "system*", "idle").</param>
+    /// <returns>List of process telemetry entries.</returns>
+    public List<ProcessTelemetry> Collect(int maxCpuItems = 10, int maxMemoryItems = 10, string[]? excludePatterns = null)
     {
         var now = DateTime.UtcNow;
         var list = new List<ProcessTelemetry>();
         var activePids = new HashSet<int>();
+
+        // Precompile exclusion patterns if provided
+        Regex[]? exclusionRegexes = null;
+        if (excludePatterns != null && excludePatterns.Length > 0)
+        {
+            try
+            {
+                exclusionRegexes = excludePatterns
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Select(pattern => new Regex(
+                        "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$",
+                        RegexOptions.IgnoreCase | RegexOptions.Compiled))
+                    .ToArray();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to compile exclusion patterns, proceeding without filtering");
+                exclusionRegexes = null;
+            }
+        }
 
         Process[] processes;
         try
@@ -41,6 +69,27 @@ public sealed class ProcessTelemetryCollector
             try
             {
                 var pid = process.Id;
+                var processName = process.ProcessName;
+
+                // Apply exclusion patterns
+                if (exclusionRegexes != null && exclusionRegexes.Length > 0)
+                {
+                    var isExcluded = false;
+                    foreach (var regex in exclusionRegexes)
+                    {
+                        if (regex.IsMatch(processName))
+                        {
+                            isExcluded = true;
+                            break;
+                        }
+                    }
+
+                    if (isExcluded)
+                    {
+                        continue;
+                    }
+                }
+
                 activePids.Add(pid);
                 var cpuPercent = TryComputeCpuPercent(pid, process, now);
                 var memoryBytes = process.WorkingSet64;
@@ -48,7 +97,7 @@ public sealed class ProcessTelemetryCollector
                 list.Add(new ProcessTelemetry
                 {
                     ProcessId = pid,
-                    ProcessName = process.ProcessName,
+                    ProcessName = processName,
                     CpuPercent = cpuPercent,
                     MemoryBytes = memoryBytes
                 });
@@ -89,13 +138,14 @@ public sealed class ProcessTelemetryCollector
             return list;
         }
 
-        var max = Math.Max(1, maxItems);
+        var maxCpu = Math.Max(1, maxCpuItems);
+        var maxMemory = Math.Max(1, maxMemoryItems);
         var selectedIds = new HashSet<int>();
 
         var byCpu = list.ToArray();
         Array.Sort(byCpu, static (a, b) => (b.CpuPercent ?? -1).CompareTo(a.CpuPercent ?? -1));
         var cpuCount = 0;
-        for (var i = 0; i < byCpu.Length && cpuCount < max; i++)
+        for (var i = 0; i < byCpu.Length && cpuCount < maxCpu; i++)
         {
             if (!byCpu[i].CpuPercent.HasValue)
             {
@@ -109,12 +159,12 @@ public sealed class ProcessTelemetryCollector
         }
 
         Array.Sort(byCpu, static (a, b) => (b.MemoryBytes ?? 0).CompareTo(a.MemoryBytes ?? 0));
-        for (var i = 0; i < byCpu.Length && selectedIds.Count < max * 2; i++)
+        for (var i = 0; i < byCpu.Length && selectedIds.Count < maxCpu + maxMemory; i++)
         {
             selectedIds.Add(byCpu[i].ProcessId);
         }
 
-        var result = new List<ProcessTelemetry>(Math.Min(list.Count, max * 2));
+        var result = new List<ProcessTelemetry>(Math.Min(list.Count, maxCpu + maxMemory));
         foreach (var item in list)
         {
             if (selectedIds.Contains(item.ProcessId))
@@ -134,9 +184,9 @@ public sealed class ProcessTelemetryCollector
             return (b.MemoryBytes ?? 0).CompareTo(a.MemoryBytes ?? 0);
         });
 
-        if (result.Count > max)
+        if (result.Count > maxCpu + maxMemory)
         {
-            result.RemoveRange(max, result.Count - max);
+            result.RemoveRange(maxCpu + maxMemory, result.Count - (maxCpu + maxMemory));
         }
 
         return result;

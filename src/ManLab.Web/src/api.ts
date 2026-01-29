@@ -64,6 +64,7 @@ import type {
   RunningJob,
   ScheduledNetworkToolConfig,
   ProcessTelemetry,
+  ProcessMonitoringConfig,
   // System update types
   SystemUpdateSettings,
   SystemUpdateAvailability,
@@ -461,6 +462,88 @@ export async function fetchProcessTelemetry(
     throw new Error(`Failed to fetch process telemetry: ${response.statusText}`);
   }
   return response.json();
+}
+
+/**
+ * Fetches the global process monitoring configuration.
+ */
+export async function fetchProcessMonitoringGlobalConfig(): Promise<ProcessMonitoringConfig> {
+  const response = await fetch(`${API_BASE}/processmonitoring/global`, {
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch global process monitoring config: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Updates the global process monitoring configuration.
+ */
+export async function updateProcessMonitoringGlobalConfig(
+  config: ProcessMonitoringConfig
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/processmonitoring/global`, {
+    method: 'PUT',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to update global process monitoring config: ${response.statusText}`);
+  }
+}
+
+/**
+ * Fetches the process monitoring configuration for a specific node.
+ */
+export async function fetchProcessMonitoringNodeConfig(
+  nodeId: string
+): Promise<ProcessMonitoringConfig> {
+  const response = await fetch(`${API_BASE}/processmonitoring/node/${nodeId}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch node process monitoring config: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Updates the process monitoring configuration for a specific node.
+ */
+export async function updateProcessMonitoringNodeConfig(
+  nodeId: string,
+  config: ProcessMonitoringConfig
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/processmonitoring/node/${nodeId}`, {
+    method: 'PUT',
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to update node process monitoring config: ${response.statusText}`);
+  }
+}
+
+/**
+ * Resets the process monitoring configuration for a specific node to global defaults.
+ */
+export async function resetProcessMonitoringNodeConfig(
+  nodeId: string
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/processmonitoring/node/${nodeId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to reset node process monitoring config: ${response.statusText}`);
+  }
 }
 
 /**

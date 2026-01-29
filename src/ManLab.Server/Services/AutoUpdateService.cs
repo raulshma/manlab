@@ -702,28 +702,32 @@ public sealed class AutoUpdateService
     {
         try
         {
-            using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-
-            var auditEvent = new AuditEvent
+            // Note: Using execution strategy for retry support
+            var strategy = db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async (ct) =>
             {
-                Id = Guid.NewGuid(),
-                Kind = "activity",
-                EventName = eventName,
-                Category = "auto-update",
-                Source = "system",
-                ActorType = "system",
-                NodeId = Guid.Empty,
-                Success = true,
-                Message = message,
-                TimestampUtc = DateTime.UtcNow
-            };
+                var auditEvent = new AuditEvent
+                {
+                    Id = Guid.NewGuid(),
+                    Kind = "activity",
+                    EventName = eventName,
+                    Category = "auto-update",
+                    Source = "system",
+                    ActorType = "system",
+                    NodeId = Guid.Empty,
+                    Success = true,
+                    Message = message,
+                    TimestampUtc = DateTime.UtcNow
+                };
 
-            db.AuditEvents.Add(auditEvent);
-            var rowsSaved = await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+                db.AuditEvents.Add(auditEvent);
+                var rowsSaved = await db.SaveChangesAsync(ct);
 
-            _logger.LogInformation("Created audit entry {AuditId}: {EventName} - {Message} (saved {Rows} row(s))",
-                auditEvent.Id, eventName, message, rowsSaved);
+                _logger.LogInformation("Created audit entry {AuditId}: {EventName} - {Message} (saved {Rows} row(s))",
+                    auditEvent.Id, eventName, message, rowsSaved);
+
+                return rowsSaved;
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
