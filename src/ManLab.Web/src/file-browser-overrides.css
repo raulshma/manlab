@@ -1,0 +1,241 @@
+/* Dark mode overrides for @cubone/react-file-manager */
+
+/* Base container overrides */
+.dark .file-browser-wrapper {
+  background-color: var(--card) !important;
+  border-color: var(--border) !important;
+}
+
+.dark .file-browser-host {
+  color: var(--foreground) !important;
+}
+
+/* Library specific overrides */
+.dark .files,
+.dark .sb-folders-list,
+.dark .toolbar,
+.dark .bread-crumb-container .breadcrumb,
+.dark .file-previewer,
+.dark .fm-upload-file,
+.dark .fm-progress {
+  background-color: var(--card) !important;
+  color: var(--foreground) !important;
+  border-color: var(--border) !important;
+}
+
+/* Toolbar items */
+.dark .toolbar .item-action {
+  background-color: var(--secondary) !important;
+  color: var(--secondary-foreground) !important;
+  border: 1px solid var(--border) !important;
+}
+
+.dark .toolbar .item-action:hover {
+  background-color: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+}
+
+.dark .toolbar .fm-toolbar .toggle-view {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border-color: var(--border) !important;
+}
+
+.dark .toolbar .fm-toolbar .toggle-view ul li:hover {
+  background-color: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+}
+
+/* Breadcrumbs */
+.dark .bread-crumb-container .breadcrumb .folder-name {
+  color: var(--foreground) !important;
+}
+
+.dark .bread-crumb-container .breadcrumb .folder-name:hover {
+  color: var(--primary) !important;
+}
+
+.dark .bread-crumb-container .breadcrumb .folder-name-btn:hover,
+.dark .bread-crumb-container .breadcrumb .folder-name-btn:focus {
+  background-color: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+}
+
+.dark .hidden-folders-container {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border: 1px solid var(--border);
+}
+
+.dark .hidden-folders-container li:hover {
+  background-color: var(--accent) !important;
+}
+
+/* Sidebar/Navigation */
+.dark .sb-folders-list .sb-folders-list-item:hover {
+  background-color: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+}
+
+.dark .sb-folders-list .active-list-item {
+  background-color: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+}
+
+/* Files Grid/List */
+.dark .files .file-item:hover {
+  background-color: var(--accent) !important;
+}
+
+.dark .files .file-item .file-name {
+  color: var(--foreground) !important;
+}
+
+.dark .files .file-selected {
+  background-color: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+}
+
+.dark .files .file-drop-zone {
+  background-color: var(--accent) !important;
+}
+
+/* Rename Input */
+.dark .rename-file {
+  background-color: var(--input) !important;
+  color: var(--foreground) !important;
+  border-color: var(--ring) !important;
+}
+
+/* List View Header */
+.dark .files.list .files-header {
+  background-color: var(--muted) !important;
+  color: var(--muted-foreground) !important;
+  border-bottom-color: var(--border) !important;
+}
+
+.dark .files.list .files-header .file-name:hover,
+.dark .files.list .files-header .file-date:hover,
+.dark .files.list .files-header .file-size:hover {
+  background-color: var(--accent) !important;
+}
+
+.dark .files.list .file-item-container:hover {
+  background-color: var(--accent) !important;
+}
+
+/* Context Menu */
+.dark .fm-context-menu {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border-color: var(--border) !important;
+}
+
+.dark .fm-context-menu .file-context-menu-list ul li:hover,
+.dark .fm-context-menu .file-context-menu-list ul li.active {
+  background-color: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+}
+
+.dark .fm-context-menu .file-context-menu-list .divider {
+  border-bottom-color: var(--border) !important;
+}
+
+.dark .fm-context-menu .file-context-menu-list .sub-menu {
+  background-color: var(--popover) !important;
+  border-color: var(--border) !important;
+}
+
+/* Dialogs/Modals */
+.dark .dialog,
+.dark .dialog[open] {
+  background-color: var(--card) !important;
+  color: var(--card-foreground) !important;
+  border: 1px solid var(--border) !important;
+}
+
+.dark .dialog[open]::backdrop {
+  background-color: rgba(0, 0, 0, 0.8) !important;
+}
+
+.dark .fm-modal-header {
+  border-bottom-color: var(--border) !important;
+}
+
+.dark .fm-modal-header .fm-modal-heading {
+  color: var(--foreground) !important;
+}
+
+.dark .file-delete-confirm .file-delete-confirm-text {
+  border-bottom-color: var(--border) !important;
+}
+
+/* Scrollbars */
+.dark .sb-folders-list::-webkit-scrollbar-thumb,
+.dark .files::-webkit-scrollbar-thumb,
+.dark .bread-crumb-container .breadcrumb::-webkit-scrollbar-thumb,
+.dark .fm-upload-file .files-progress ul::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground) !important;
+}
+
+/* Upload */
+.dark .fm-upload-file .select-files .draggable-file-input {
+  background-color: var(--secondary) !important;
+  color: var(--secondary-foreground) !important;
+  border-color: var(--border) !important;
+}
+
+.dark .fm-upload-file .files-progress ul li {
+  border-bottom-color: var(--border) !important;
+}
+
+.dark .fm-upload-file .files-progress ul li .file .file-details .retry-upload:hover {
+  background-color: var(--accent) !important;
+}
+
+/* Buttons */
+.dark .fm-button-secondary {
+  background-color: var(--secondary) !important;
+  color: var(--secondary-foreground) !important;
+}
+
+.dark .fm-button-secondary:hover {
+  background-color: var(--accent) !important;
+}
+
+/* Text Selection */
+.dark .file-name::selection,
+.dark .folder-name::selection {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+/* Fix specific white background issues */
+.dark .sb-folders-list .folder-icon-default {
+  filter: invert(1) brightness(0.8);
+}
+
+.dark .files .file-item-container.file-drop-zone {
+  background-color: var(--accent) !important;
+}
+
+
+
+.dark .drag-move-tooltip {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border-color: var(--border) !important;
+  z-index: 9999 !important;
+}
+
+.dark .drag-move-tooltip .drop-zone-file-name {
+  color: var(--primary) !important;
+}
+
+/* Dragging state for file uploads */
+.dark .fm-upload-file .select-files .draggable-file-input.dragging {
+  border-color: var(--primary) !important;
+  background-color: var(--accent) !important;
+}
+
+

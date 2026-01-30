@@ -8,6 +8,58 @@ ManLab is a hub-and-spoke home-lab / fleet management system:
 
 The agent maintains a reverse connection to the server (SignalR) and periodically sends telemetry/heartbeats.
 
+## Key Features
+
+### Dashboard
+Overview of the system, showing connected nodes and their status.
+
+![Dashboard](docs/images/dashboard.png)
+
+### Network Scanner
+Discover devices on the network.
+
+![Network Scanner](docs/images/network.png)
+
+### Monitoring
+Real-time resource usage monitoring.
+
+![Monitoring](docs/images/monitoring.png)
+
+### Node Management
+Manage connected agents and their configurations.
+
+![Nodes](docs/images/nodes.png)
+
+### Docker Studio
+Manage Docker containers and images.
+
+![Docker Studio](docs/images/docker_studio.png)
+
+### Process Manager
+Monitor and manage system processes.
+
+![Processes](docs/images/processes.png)
+
+### File Browser
+Browse and manage files on connected nodes.
+
+![Files](docs/images/files.png)
+
+### Analytics
+View historical data and trends.
+
+![Analytics](docs/images/analytics.png)
+
+### Audit Logs
+Track system events and user actions.
+
+![Audit Logs](docs/images/audit_logs.png)
+
+### User Management
+Manage users and permissions.
+
+![Users](docs/images/users.png)
+
 ## Repo layout
 
 - `src/ManLab.Server`: REST API (`/api/*`) + SignalR hub (`/hubs/agent`) + DB migrations

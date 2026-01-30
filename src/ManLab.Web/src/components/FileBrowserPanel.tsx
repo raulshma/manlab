@@ -501,7 +501,7 @@ export function LegacyFileBrowserPanel({
                   </Alert>
                 )}
 
-                <div className={variant === "page" ? "min-h-[70vh]" : "min-h-105"}>
+                <div className={(variant === "page" ? "min-h-[70vh]" : "min-h-105") + " file-browser-host"}>
                   <FileManager
                     files={filesForUi}
                     isLoading={listQuery.isFetching}

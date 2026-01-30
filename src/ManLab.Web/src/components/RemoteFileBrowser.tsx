@@ -707,7 +707,7 @@ export function RemoteFileBrowser({
   }
 
   return (
-    <div className="rounded-md border border-border bg-card">
+    <div className="rounded-md border border-border bg-card file-browser-wrapper">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
           <Folder className="h-5 w-5 text-muted-foreground" />
@@ -911,7 +911,7 @@ export function RemoteFileBrowser({
               disabled={!isReady}
             />
 
-            <div className="min-h-[70vh]">
+            <div className="min-h-[70vh] file-browser-host">
               <FileManager
                 files={filesForUi}
                 isLoading={listQuery.isFetching}
