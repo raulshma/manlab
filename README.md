@@ -86,18 +86,116 @@ The Aspire AppHost orchestrates:
 
 ### Run
 
-- With Aspire CLI: run `aspire run` from the repo root
-- Without Aspire CLI: run the AppHost project `src/ManLab.AppHost` (e.g., from VS Code / Visual Studio)
+- **Option 1 (VS Code / CLI)**: Run `dotnet run --project src/ManLab.AppHost`
+- **Option 2 (Aspire CLI)**: Run `aspire run` from the repo root
 
 Open the Aspire dashboard URL shown in the terminal to view logs/traces/metrics and the allocated endpoints.
 
-## Docker deployment (recommended): Aspire Docker hosting integration
+## Docker deployment
 
-For a containerized deployment (Postgres + Server + Web), this repo uses Aspire’s Docker hosting integration.
+You can deploy the full stack (Postgres + Server + Web) using Docker Compose.
+
+### Option A: Use pre-built GitHub images (Fastest)
+
+Create a `docker-compose.yml` file:
+
+```yaml
+services:
+  postgres:
+    image: "docker.io/timescale/timescaledb:latest-pg17"
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "${PGPASSWORD:-changeme}"
+      LANG: "C.UTF-8"
+      LC_ALL: "C.UTF-8"
+    expose:
+      - "5432"
+    volumes:
+      - type: "volume"
+        target: "/var/lib/postgresql/data"
+        source: "manlab-db-data"
+        read_only: false
+    networks:
+      - "manlab-network"
+  server:
+    image: "${SERVER_IMAGE:-ghcr.io/raulshma/manlab-server:latest}"
+    restart: unless-stopped
+    environment:
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_EMIT_EXCEPTION_LOG_ATTRIBUTES: "true"
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_EMIT_EVENT_LOG_ATTRIBUTES: "true"
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY: "in_memory"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      HTTP_PORTS: "8080"
+      ConnectionStrings__manlab: "Host=postgres;Port=5432;Username=postgres;Password=${PGPASSWORD:-changeme};Database=manlab"
+      MANLAB_HOST: "postgres"
+      MANLAB_PORT: "5432"
+      MANLAB_USERNAME: "postgres"
+      MANLAB_PASSWORD: "${PGPASSWORD:-changeme}"
+      MANLAB_URI: "postgresql://postgres:${PGPASSWORD:-changeme}@postgres:5432/manlab"
+      MANLAB_JDBCCONNECTIONSTRING: "jdbc:postgresql://postgres:5432/manlab"
+      MANLAB_DATABASENAME: "manlab"
+    ports:
+      - "5247:8080"
+    expose:
+      - "8080"
+      - "${SERVER_PORT:-8081}"
+    depends_on:
+      postgres:
+        condition: "service_started"
+    networks:
+      - "manlab-network"
+  manlab-web:
+    restart: unless-stopped
+    image: "${WEB_IMAGE:-ghcr.io/raulshma/manlab-web:latest}"
+    environment:
+      SERVER_HTTP: "http://server:8080"
+      services__server__http__0: "http://server:8080"
+      SERVER_HTTPS: "https://server:${SERVER_PORT:-8081}"
+      SERVER_HTTP_EXTERNAL: "tcp://server:8080"
+      services__server__http-external__0: "tcp://server:8080"
+    ports:
+      - "8080:80"
+    depends_on:
+      server:
+        condition: "service_started"
+    networks:
+      - "manlab-network"
+networks:
+  manlab-network:
+    driver: "bridge"
+volumes:
+  manlab-db-data:
+    driver: "local"
+```
+
+Run it:
+
+```bash
+# Linux/macOS
+PGPASSWORD=your_secret_password docker compose up -d
+
+# Windows PowerShell
+$env:PGPASSWORD="your_secret_password"; docker compose up -d
+```
+
+> **Note**: If `latest` tag is not available, check [ManLab Packages](https://github.com/raulshma?tab=packages&repo_name=manlab) for the latest version tag.
+
+### Agent onboarding note
+
+When installing agents, use the **dashboard origin** as the server base URL (e.g. `http://<host>:5247`), not the internal server container port.
+
+---
+
+### Option B: Build from source (Aspire)
+
+For a custom containerized deployment, this repo uses Aspire’s Docker hosting integration.
 
 The source of truth is the Aspire app model in `src/ManLab.AppHost/AppHost.cs`.
 
-### 1) Publish a Docker Compose bundle
+#### 1) Publish a Docker Compose bundle
 
 - Run `aspire publish -o aspire-output` from the repo root.
 
@@ -106,7 +204,7 @@ This generates:
 - `aspire-output/docker-compose.yaml`
 - `aspire-output/.env`
 
-### 2) Set required environment variables
+#### 2) Set required environment variables
 
 Copy the example file and fill in values:
 
@@ -122,24 +220,18 @@ Tip: if you’re deploying using images already pushed to GHCR (for example from
 - Windows: `scripts/publish-compose-bundle.ps1 -ServerImage <ghcr-image> -WebImage <ghcr-image>`
 - Linux/macOS: `scripts/publish-compose-bundle.sh --server-image <ghcr-image> --web-image <ghcr-image>`
 
-### 3) Build/pull images
+#### 3) Build/pull images
 
 - Server image is built from `src/ManLab.Server/Dockerfile` (or pulled from your registry).
 - Web image is built from `src/ManLab.Web/Dockerfile` (nginx serves the SPA and reverse-proxies `/api` and `/hubs`).
 
-### 4) Run with Docker Compose
+#### 4) Run with Docker Compose
 
 - Run `docker compose -f aspire-output/docker-compose.yaml --env-file aspire-output/.env up -d`
 
 Then open:
 
 - Dashboard: `http://localhost:8080`
-
-### Agent onboarding note (important)
-
-In the containerized topology, the dashboard container is the reverse proxy.
-
-When installing agents (scripts or UI), use the **dashboard origin** as the server base URL (e.g. `http://<host>:8080`), not the internal server container port.
 
 ## Manual local run (no Aspire)
 
