@@ -230,12 +230,33 @@ const DashboardGrid = memo(function DashboardGrid({
     });
   }, [onSave]);
 
-  const handleSaveConfig = useCallback((newConfig: Record<string, unknown>) => {
+  const handleSaveConfig = useCallback((newConfig: Record<string, unknown>, newWidth?: number, newHeight?: number) => {
     if (configuringWidget) {
+      // Update config
       handleConfigChange(configuringWidget.id, newConfig);
+
+      // Update size if changed
+      if (newWidth !== undefined || newHeight !== undefined) {
+        setLayouts((prevLayouts) => {
+          const updatedLayouts = prevLayouts.map((widget) => {
+            if (widget.id === configuringWidget.id) {
+              return {
+                ...widget,
+                width: newWidth ?? widget.width,
+                height: newHeight ?? widget.height,
+              };
+            }
+            return widget;
+          });
+
+          onSave(updatedLayouts);
+          return updatedLayouts;
+        });
+      }
+
       setConfiguringWidget(null);
     }
-  }, [configuringWidget, handleConfigChange]);
+  }, [configuringWidget, handleConfigChange, onSave]);
 
   const handleResetLayout = useCallback(async () => {
     const confirmed = await confirm({
@@ -498,10 +519,10 @@ const DashboardGrid = memo(function DashboardGrid({
               return (
                 <div
                   key={widget.id}
-                  className="bg-card border shadow-sm hover:shadow-md transition-shadow rounded-lg"
+                  className="bg-card border shadow-sm hover:shadow-md transition-shadow rounded-lg h-full"
                 >
-                  <Card className="border-0 shadow-none hover:shadow-none transition-shadow h-full">
-                    <CardHeader className="flex items-start justify-between pb-3 drag-handle cursor-move">
+                  <Card className="border-0 shadow-none hover:shadow-none transition-shadow h-full flex flex-col overflow-hidden">
+                    <CardHeader className="flex items-start justify-between pb-3 drag-handle cursor-move shrink-0">
                       <div className="flex items-center gap-2">
                         <CardTitle className="text-base">
                           {widgetDef?.name || widget.type}
@@ -537,7 +558,7 @@ const DashboardGrid = memo(function DashboardGrid({
                         </div>
                       )}
                     </CardHeader>
-                    <CardContent className="p-4 min-h-[180px]">
+                    <CardContent className="p-4 flex-1 overflow-auto min-h-0">
                       {renderWidgetContent(widget, (newConfig) => handleConfigChange(widget.id, newConfig))}
                     </CardContent>
                   </Card>
@@ -561,6 +582,8 @@ const DashboardGrid = memo(function DashboardGrid({
                 key={configuringWidget.id}
                 widgetDefinition={getWidgetByType(configuringWidget.type) as WidgetTypeDefinitionDto}
                 initialConfig={configuringWidget.config}
+                initialWidth={configuringWidget.width}
+                initialHeight={configuringWidget.height}
                 onSave={handleSaveConfig}
                 onCancel={() => setConfiguringWidget(null)}
               />

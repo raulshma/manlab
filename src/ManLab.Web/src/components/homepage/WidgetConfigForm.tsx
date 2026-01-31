@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import type { WidgetTypeDefinitionDto, WidgetConfigPropertyDto } from "@/types/dashboard";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,21 +10,24 @@ import { Button } from "@/components/ui/button";
 
 interface WidgetConfigFormProps {
   widgetDefinition: WidgetTypeDefinitionDto;
-  initialConfig: Record<string, any>;
-  onSave: (config: Record<string, any>) => void;
+  initialConfig: Record<string, unknown>;
+  initialWidth?: number;
+  initialHeight?: number;
+  onSave: (config: Record<string, unknown>, width?: number, height?: number) => void;
   onCancel: () => void;
 }
 
 export function WidgetConfigForm({
   widgetDefinition,
   initialConfig,
+  initialWidth = 1,
+  initialHeight = 2,
   onSave,
   onCancel,
 }: WidgetConfigFormProps) {
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  const [formData, setFormData] = useState<Record<string, any>>(() => {
-    const config = { ...(initialConfig || {}) };
-    
+  const [formData, setFormData] = useState<Record<string, unknown>>(() => {
+    const config: Record<string, unknown> = { ...(initialConfig || {}) };
+
     Object.entries(widgetDefinition.configSchema).forEach(([key, schema]) => {
       if (config[key] === undefined && schema.defaultValue !== undefined) {
         config[key] = schema.defaultValue;
@@ -34,7 +37,10 @@ export function WidgetConfigForm({
     return config;
   });
 
-  const handleChange = (key: string, value: any) => {
+  const [width, setWidth] = useState(initialWidth);
+  const [height, setHeight] = useState(initialHeight);
+
+  const handleChange = (key: string, value: unknown) => {
     setFormData((prev) => ({
       ...prev,
       [key]: value,
@@ -42,7 +48,7 @@ export function WidgetConfigForm({
   };
 
   const renderField = (key: string, schema: WidgetConfigPropertyDto) => {
-    const value = formData[key];
+    const value = formData[key] as string | number | boolean | string[] | undefined;
 
     switch (schema.type) {
       case "text":
@@ -176,6 +182,39 @@ export function WidgetConfigForm({
   return (
     <div className="space-y-6">
       <div className="space-y-4">
+        {/* Widget Size Configuration */}
+        <div className="space-y-3 p-3 bg-muted/30 rounded-lg border">
+          <Label className="font-medium text-sm">Widget Size</Label>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="widget-width" className="text-xs text-muted-foreground">Width (columns)</Label>
+              <Input
+                id="widget-width"
+                type="number"
+                min={1}
+                max={4}
+                value={width}
+                onChange={(e) => setWidth(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="widget-height" className="text-xs text-muted-foreground">Height (rows)</Label>
+              <Input
+                id="widget-height"
+                type="number"
+                min={1}
+                max={10}
+                value={height}
+                onChange={(e) => setHeight(Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Width: 1-4 columns. Height: 1-10 rows (each row is ~200px)
+          </p>
+        </div>
+
+        {/* Widget-specific Configuration */}
         {Object.entries(widgetDefinition.configSchema).map(([key, schema]) => (
           <div key={key} className="space-y-2">
             {schema.type !== "boolean" && (
@@ -184,9 +223,9 @@ export function WidgetConfigForm({
                  {schema.required && <span className="text-red-500 ml-1">*</span>}
               </Label>
             )}
-            
+
             {renderField(key, schema)}
-            
+
             {schema.description && (
               <p className="text-xs text-muted-foreground">{schema.description}</p>
             )}
@@ -198,7 +237,7 @@ export function WidgetConfigForm({
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <Button onClick={() => onSave(formData)}>
+        <Button onClick={() => onSave(formData, width, height)}>
           Save Configuration
         </Button>
       </div>
