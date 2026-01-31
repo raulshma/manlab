@@ -70,7 +70,7 @@ import {
 
 export function NetworkSettings() {
   const queryClient = useQueryClient();
-  const { confirm, dialog } = useConfirm();
+  const { confirm } = useConfirm();
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: async () => {
@@ -947,7 +947,6 @@ export function NetworkSettings() {
           {isSaving ? "Saving..." : "Save Changes"}
         </Button>
       </CardFooter>
-      {dialog}
     </Card>
   );
 }

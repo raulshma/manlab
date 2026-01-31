@@ -220,8 +220,8 @@ function MiniNodeCard({ node, compactMode }: { node: NodeDto; compactMode: boole
       <div className="space-y-1">
         <div className="text-base font-semibold text-foreground">{node.hostname}</div>
         <div className="text-sm text-muted-foreground/70">{node.os}</div>
-        {node.version && (
-          <div className="text-xs text-muted-foreground/50">Version: {node.version}</div>
+        {node.agentVersion && (
+          <div className="text-xs text-muted-foreground/50">Version: {node.agentVersion}</div>
         )}
       </div>
       <a

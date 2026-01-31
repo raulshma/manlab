@@ -49,17 +49,17 @@ export const ServiceStatusWidget = memo(function ServiceStatusWidget({ config }:
         const results = await Promise.all(
           onlineNodes.slice(0, 5).map(async (node: Node) => {
             try {
-              const history = await fetchServiceStatusHistory(node.id, 1);
-              return { nodeId: node.id, history: history[0] || null };
+              const history = await fetchServiceStatusHistory(node.id, 100);
+              return { nodeId: node.id, history };
             } catch {
-              return { nodeId: node.id, history: null };
+              return { nodeId: node.id, history: [] };
             }
           })
         );
         return results;
       } else {
-        const history = await fetchServiceStatusHistory(nodeId, 1);
-        return [{ nodeId, history: history[0] || null }];
+        const history = await fetchServiceStatusHistory(nodeId, 100);
+        return [{ nodeId, history }];
       }
     },
     enabled: !!nodes && (nodeId !== "auto" || nodes.length > 0),
@@ -71,17 +71,27 @@ export const ServiceStatusWidget = memo(function ServiceStatusWidget({ config }:
     if (!nodes || !serviceData) return [];
 
     return serviceData
-      .filter((data) => data.history !== null)
+      .filter((data) => data.history.length > 0)
       .map((data) => {
         const node = nodes.find((n: Node) => n.id === data.nodeId);
-        const snapshot = data.history as ServiceStatusSnapshot;
+        const snapshots = data.history;
         
-        const services = (snapshot?.services || [])
+        // Group snapshots by service name and get the latest for each
+        const latestByService = new Map<string, ServiceStatusSnapshot>();
+        for (const snapshot of snapshots) {
+          const existing = latestByService.get(snapshot.serviceName);
+          if (!existing || new Date(snapshot.timestamp) > new Date(existing.timestamp)) {
+            latestByService.set(snapshot.serviceName, snapshot);
+          }
+        }
+        
+        // Convert to service items
+        const services = Array.from(latestByService.values())
           .slice(0, showAllServices ? undefined : maxServices)
-          .map((svc) => ({
-            name: svc.name,
-            status: svc.status.toLowerCase() as "running" | "stopped" | "failed" | "unknown",
-            lastChecked: snapshot.timestampUtc,
+          .map((snapshot) => ({
+            name: snapshot.serviceName,
+            status: snapshot.state.toLowerCase() as "running" | "stopped" | "failed" | "unknown",
+            lastChecked: snapshot.timestamp,
           }));
 
         const summary = {

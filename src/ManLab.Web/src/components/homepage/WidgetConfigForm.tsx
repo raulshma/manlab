@@ -58,7 +58,7 @@ export function WidgetConfigForm({
           <Input
             id={key}
             type={schema.type}
-            value={value || ""}
+            value={typeof value === "boolean" ? "" : (value as string | number | readonly string[] | undefined) || ""}
             onChange={(e) => handleChange(key, e.target.value)}
             placeholder={String(schema.defaultValue || "")}
             className="bg-background/50"
@@ -70,7 +70,7 @@ export function WidgetConfigForm({
           <Input
             id={key}
             type="number"
-            value={value || ""}
+            value={typeof value === "boolean" ? "" : (value as string | number | readonly string[] | undefined) || ""}
             min={schema.min}
             max={schema.max}
             onChange={(e) => handleChange(key, Number(e.target.value))}
@@ -122,7 +122,7 @@ export function WidgetConfigForm({
         return (
           <Textarea
             id={key}
-            value={value || ""}
+            value={typeof value === "boolean" ? "" : (value as string | number | readonly string[] | undefined) || ""}
             onChange={(e) => handleChange(key, e.target.value)}
             rows={5}
             placeholder={String(schema.defaultValue || "")}
