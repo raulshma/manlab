@@ -320,6 +320,7 @@ builder.Services.AddHostedService<AutoUpdateBootstrapper>();
 
 // System update services
 builder.Services.AddScoped<SystemUpdateService>();
+builder.Services.AddScoped<RssFeedService>();
 builder.Services.AddSingleton<SystemUpdateScheduler>();
 builder.Services.AddHostedService<SystemUpdateBootstrapper>();
 builder.Services.AddHostedService<OnboardingBootstrapper>();

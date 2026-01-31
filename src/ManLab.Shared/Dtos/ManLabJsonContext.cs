@@ -52,4 +52,11 @@ namespace ManLab.Shared.Dtos;
 [JsonSerializable(typeof(DownloadStatusChangedEvent))]
 [JsonSerializable(typeof(CancelCommandPayload))]
 [JsonSerializable(typeof(ServerResourceUsageDto))]
+[JsonSerializable(typeof(DashboardLayoutDto))]
+[JsonSerializable(typeof(DashboardWidgetDto))]
+[JsonSerializable(typeof(RssFeedResponse))]
+[JsonSerializable(typeof(RssFeedItemDto))]
+[JsonSerializable(typeof(RssFeedValidationResponse))]
+[JsonSerializable(typeof(WidgetTypeDefinitionDto))]
+[JsonSerializable(typeof(WidgetConfigPropertyDto))]
 public partial class ManLabJsonContext : JsonSerializerContext;

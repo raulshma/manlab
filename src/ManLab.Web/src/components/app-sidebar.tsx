@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Home, Server, Settings, Activity, FileText, Folder, BarChart3, Network, Radar, Boxes, Users, Bell } from "lucide-react"
+import { Home, Server, Settings, Activity, FileText, Folder, BarChart3, Network, Radar, Boxes, Users, Bell, LayoutDashboard } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useState } from "react"
 
@@ -100,6 +100,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SidebarMenuItem>
                   <SidebarMenuButton render={<NavLink to="/" />} isActive={location.pathname === "/" || location.pathname === ""}>
                     <Home />
+                    <span>Home</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton render={<NavLink to="/dashboard" />} isActive={location.pathname === "/dashboard"}>
+                    <LayoutDashboard />
                     <span>Dashboard</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

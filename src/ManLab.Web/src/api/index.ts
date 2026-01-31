@@ -81,7 +81,9 @@ import type {
   // Update jobs config types
   UpdateJobsConfigDto,
   UpdateUpdateJobsConfigRequest,
-} from "./types";
+} from "../types";
+import { DashboardLayoutDto, RssFeedResponse, WidgetTypeDefinitionDto } from "../types/dashboard";
+import { widgetTypes } from "../components/homepage/WidgetRegistry";
 
 const API_BASE = "/api";
 const TOKEN_KEY = "manlab:auth_token";
@@ -2505,4 +2507,47 @@ export async function updateUpdateJobsConfig(
     const error = data.error || data.message || response.statusText;
     throw new Error(error || `Failed to update update jobs config: ${response.statusText}`);
   }
+}
+
+// ==========================================
+// Dashboard API
+// ==========================================
+
+export async function fetchDashboardLayout(): Promise<DashboardLayoutDto> {
+  const response = await fetch(`${API_BASE}/dashboards/current`);
+  if (!response.ok) {
+     if (response.status === 404) {
+         // Return default layout or throw
+         throw new Error("Dashboard layout not found");
+     }
+     throw new Error(`Failed to fetch dashboard layout: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function saveDashboardLayout(layout: DashboardLayoutDto): Promise<DashboardLayoutDto> {
+   const response = await fetch(`${API_BASE}/dashboards/current`, {
+     method: "PUT",
+     headers: { "Content-Type": "application/json" },
+     body: JSON.stringify(layout)
+   });
+   if (!response.ok) throw new Error(`Failed to save dashboard layout: ${response.statusText}`);
+   // The backend returns Ok() (void) for save, not the layout. 
+   // But the function signature returns Promise<DashboardLayoutDto>.
+   // We should probably just return the layout we sent, or update signature.
+   // Looking at controller: return Ok();
+   // So we can just return 'layout' as a mock response, or null if the caller doesn't need it.
+   // Let's return 'layout' to satisfy the signature.
+   return layout;
+}
+
+export async function fetchWidgetTypes(): Promise<WidgetTypeDefinitionDto[]> {
+    return Promise.resolve(widgetTypes);
+}
+
+export async function fetchRssFeed(url: string, maxItems: number): Promise<RssFeedResponse> {
+    const encodedUrl = encodeURIComponent(url);
+    const response = await fetch(`${API_BASE}/dashboards/widgets/rss-feed?url=${encodedUrl}&maxItems=${maxItems}`);
+    if (!response.ok) throw new Error(`Failed to fetch RSS feed: ${response.statusText}`);
+    return response.json();
 }

@@ -82,6 +82,12 @@ public class DataContext : DbContext
     /// <summary>Detailed system update logs.</summary>
     public DbSet<SystemUpdateLog> SystemUpdateLogs => Set<SystemUpdateLog>();
 
+    /// <summary>Shared dashboard configurations.</summary>
+    public DbSet<UserDashboard> UserDashboards => Set<UserDashboard>();
+
+    /// <summary>Widget configurations for dashboards.</summary>
+    public DbSet<WidgetConfig> WidgetConfigs => Set<WidgetConfig>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -480,6 +486,30 @@ public class DataContext : DbContext
             entity.HasOne(e => e.UpdateHistory)
                 .WithMany(h => h.Logs)
                 .HasForeignKey(e => e.UpdateHistoryId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // User dashboard configuration
+        modelBuilder.Entity<UserDashboard>(entity =>
+        {
+            entity.HasIndex(e => e.IsDefault);
+            entity.HasIndex(e => e.UpdatedAt);
+
+            entity.HasMany(d => d.Widgets)
+                .WithOne(w => w.Dashboard)
+                .HasForeignKey(w => w.DashboardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Widget configuration
+        modelBuilder.Entity<WidgetConfig>(entity =>
+        {
+            entity.HasIndex(e => e.DashboardId);
+            entity.HasIndex(e => new { e.DashboardId, e.DisplayOrder });
+
+            entity.HasOne(w => w.Dashboard)
+                .WithMany(d => d.Widgets)
+                .HasForeignKey(w => w.DashboardId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

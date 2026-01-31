@@ -782,30 +782,6 @@ export function SignalRProvider({
     });
 
     return () => {
-      newConnection.off("NodeStatusChanged", nodeStatusChangedHandler);
-      newConnection.off("NodeRegistered", nodeRegisteredHandler);
-      newConnection.off("TelemetryReceived", telemetryUpdateHandler);
-      newConnection.off("telemetryReceived", telemetryUpdateHandler);
-      newConnection.off("telemetryreceived", telemetryUpdateHandler);
-      newConnection.off("CommandUpdated", commandUpdatedHandler);
-      newConnection.off("LocalAgentLog", localAgentLogHandler);
-      newConnection.off(
-        "LocalAgentStatusChanged",
-        localAgentStatusChangedHandler
-      );
-      newConnection.off("ServerResourceUsage", serverResourceUsageHandler);
-      newConnection.off("serverResourceUsage", serverResourceUsageHandler);
-      newConnection.off("serverresourceusage", serverResourceUsageHandler);
-      newConnection.off("AgentBackoffStatus", agentBackoffStatusHandler);
-      newConnection.off("AgentPingResponse", agentPingResponseHandler);
-      newConnection.off("NodeDeleted", nodeDeletedHandler);
-      newConnection.off("NodeErrorStateChanged", nodeErrorStateChangedHandler);
-      newConnection.off("NodeErrorStateCleared", nodeErrorStateClearedHandler);
-      newConnection.off("CommandOutputAppended", commandOutputAppendedHandler);
-      newConnection.off("PendingUpdateCreated", pendingUpdateCreatedHandler);
-      newConnection.off("PendingUpdateApproved", pendingUpdateApprovedHandler);
-      newConnection.off("PendingUpdateRejected", pendingUpdateRejectedHandler);
-      newConnection.off("PendingUpdateCleared", pendingUpdateClearedHandler);
       newConnection.stop();
     };
   }, [finalHubUrl, queryClient, token]);

@@ -7,6 +7,7 @@ import { AppLayout } from "./layout/AppLayout";
 import { AuthProvider } from "./auth/AuthContext";
 import { AuthGate } from "./auth/AuthGate";
 import { DashboardPage } from "./pages/DashboardPage";
+import { HomePage } from "./pages/HomePage";
 import { NodesPage } from "./pages/NodesPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { NodeDetailsPage } from "./pages/NodeDetailsPage";
@@ -38,7 +39,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route element={<AppLayout />}>
-        <Route path="/" element={<DashboardPage />} />
+        <Route path="/" element={<HomePage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/nodes" element={<NodesPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/nodes/:id" element={<NodeDetailsPage />} />
