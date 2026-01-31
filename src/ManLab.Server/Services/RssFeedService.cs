@@ -73,7 +73,7 @@ public class RssFeedService
                                 item.SelectSingleNode(".//*[local-name()='link' and @type='text/html']")?.Attributes?["href"]?.Value ??
                                 item.SelectSingleNode(".//*[local-name()='link']")?.InnerText ??
                                 string.Empty,
-                    Description = item.SelectSingleNode(".//*[local-name()='summary']")?.InnerText ?? string.Empty,
+                    Description = StripHtml(item.SelectSingleNode(".//*[local-name()='summary']")?.InnerText ?? string.Empty),
                     PublishedAt = item.SelectSingleNode(".//*[local-name()='published']")?.InnerText != null
                         ? System.DateTime.TryParse(item.SelectSingleNode(".//*[local-name()='published']")?.InnerText ?? "", out var pubDate)
                             ? pubDate
@@ -99,7 +99,7 @@ public class RssFeedService
                     Link = item.SelectSingleNode(".//*[local-name()='link']")?.InnerText ?? 
                                 item.SelectSingleNode(".//*[local-name()='guid']")?.InnerText ?? 
                                 string.Empty,
-                    Description = item.SelectSingleNode(".//*[local-name()='description']")?.InnerText ?? string.Empty,
+                    Description = StripHtml(item.SelectSingleNode(".//*[local-name()='description']")?.InnerText ?? string.Empty),
                     PublishedAt = item.SelectSingleNode(".//*[local-name()='pubDate']")?.InnerText != null
                         ? System.DateTime.TryParse(item.SelectSingleNode(".//*[local-name()='pubDate']")?.InnerText ?? "", out var pubDate)
                             ? pubDate
@@ -118,7 +118,11 @@ public class RssFeedService
                 CachedAt = System.DateTime.UtcNow
             };
 
-            _cache.Set(cacheKey, feedResponse, cacheDuration);
+            _cache.Set(cacheKey, feedResponse, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = cacheDuration,
+                Size = 1
+            });
             _logger.LogInformation("Successfully fetched and cached RSS feed {FeedTitle} with {ItemCount} items",
                 feedResponse.FeedTitle, feedResponse.Items.Count);
 
@@ -244,6 +248,17 @@ public class RssFeedService
                 Error = "An unexpected error occurred"
             };
         }
+    }
+
+    private static string StripHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return html;
+
+        // Remove HTML tags
+        var withoutTags = System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", string.Empty);
+        // Decode HTML entities
+        return System.Net.WebUtility.HtmlDecode(withoutTags);
     }
 
     private static string? TryExtractThumbnail(System.Xml.XmlNode item)

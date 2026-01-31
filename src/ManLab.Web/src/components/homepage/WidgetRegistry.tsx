@@ -14,7 +14,11 @@ import {
   Monitor,
   Terminal,
   HardDrive,
-  ScrollText
+  ScrollText,
+  Bell,
+  Database,
+  Power,
+  Settings
 } from "lucide-react";
 import type { WidgetTypeDefinitionDto } from "@/types/dashboard";
 
@@ -422,6 +426,133 @@ export const widgetTypes: WidgetTypeDefinitionDto[] = [
         defaultValue: 5
       }
     }
+  },
+  {
+    type: "alerts",
+    name: "Fleet Alerts",
+    description: "Display recent alerts and warnings from your fleet",
+    category: "fleet",
+    icon: "Bell",
+    requiresAdmin: false,
+    configSchema: {
+      maxAlerts: {
+        type: "number",
+        label: "Max Alerts",
+        description: "Maximum number of alerts to display",
+        required: true,
+        min: 3,
+        max: 50,
+        defaultValue: 10
+      },
+      severityFilter: {
+        type: "multiselect",
+        label: "Severity Filter",
+        description: "Which alert severities to show",
+        required: true,
+        options: ["critical", "warning", "info"],
+        defaultValue: ["critical", "warning"]
+      }
+    }
+  },
+  {
+    type: "disk-usage",
+    name: "Disk Usage",
+    description: "Monitor storage utilization across your fleet",
+    category: "fleet",
+    icon: "Database",
+    requiresAdmin: false,
+    configSchema: {
+      showAllNodes: {
+        type: "boolean",
+        label: "Show All Nodes",
+        description: "Show all nodes or only those with warnings",
+        defaultValue: true
+      },
+      warningThreshold: {
+        type: "number",
+        label: "Warning Threshold (%)",
+        description: "Disk usage percentage to trigger warning",
+        required: true,
+        min: 50,
+        max: 95,
+        defaultValue: 80
+      },
+      criticalThreshold: {
+        type: "number",
+        label: "Critical Threshold (%)",
+        description: "Disk usage percentage to trigger critical alert",
+        required: true,
+        min: 70,
+        max: 99,
+        defaultValue: 90
+      }
+    }
+  },
+  {
+    type: "uptime",
+    name: "Uptime Monitor",
+    description: "Track system uptime across your fleet",
+    category: "fleet",
+    icon: "Power",
+    requiresAdmin: false,
+    configSchema: {
+      showAllNodes: {
+        type: "boolean",
+        label: "Show All Nodes",
+        description: "Show all nodes or only offline/problem nodes",
+        defaultValue: true
+      },
+      maxNodes: {
+        type: "number",
+        label: "Max Nodes",
+        description: "Maximum number of nodes to display",
+        required: true,
+        min: 3,
+        max: 30,
+        defaultValue: 10
+      },
+      sortBy: {
+        type: "select",
+        label: "Sort By",
+        description: "How to sort the nodes list",
+        required: true,
+        options: ["uptime", "name", "status"],
+        defaultValue: "uptime"
+      }
+    }
+  },
+  {
+    type: "service-status",
+    name: "Service Status",
+    description: "Monitor critical service health across your fleet",
+    category: "fleet",
+    icon: "Settings",
+    requiresAdmin: false,
+    configSchema: {
+      nodeId: {
+        type: "select",
+        label: "Node",
+        description: "Select a node or choose 'All Nodes'",
+        required: true,
+        options: ["auto"],
+        defaultValue: "auto"
+      },
+      showAllServices: {
+        type: "boolean",
+        label: "Show All Services",
+        description: "Show all services or only non-running ones",
+        defaultValue: false
+      },
+      maxServices: {
+        type: "number",
+        label: "Max Services",
+        description: "Maximum services to show per node",
+        required: true,
+        min: 3,
+        max: 20,
+        defaultValue: 5
+      }
+    }
   }
 ];
 
@@ -441,7 +572,11 @@ export function getWidgetIcon(name: string): LucideIcon {
     Monitor,
     Terminal,
     HardDrive,
-    ScrollText
+    ScrollText,
+    Bell,
+    Database,
+    Power,
+    Settings
   };
   
   return iconMap[name] || Activity;

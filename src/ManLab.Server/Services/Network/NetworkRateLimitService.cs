@@ -119,7 +119,11 @@ public sealed class NetworkRateLimitService
             return 0;
         });
 
-        _cache.Set(windowKey, count + 1, TimeSpan.FromMinutes(1));
+        _cache.Set(windowKey, count + 1, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1),
+            Size = 1
+        });
     }
 
     /// <summary>

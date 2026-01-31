@@ -6,7 +6,7 @@ import type { Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+
 import { fetchDashboardLayout, saveDashboardLayout, fetchWidgetTypes } from "@/api";
 import type { DashboardWidgetDto, WidgetTypeDefinitionDto } from "@/types/dashboard";
 import { Server, Plus, AlertCircle } from "lucide-react";
@@ -26,6 +26,10 @@ import { GpuMonitorWidget } from "@/components/homepage/widgets/GpuMonitorWidget
 import { TopProcessesWidget } from "@/components/homepage/widgets/TopProcessesWidget";
 import { DiskHealthWidget } from "@/components/homepage/widgets/DiskHealthWidget";
 import { ScriptRunsWidget } from "@/components/homepage/widgets/ScriptRunsWidget";
+import { AlertsWidget } from "@/components/homepage/widgets/AlertsWidget";
+import { DiskUsageWidget } from "@/components/homepage/widgets/DiskUsageWidget";
+import { UptimeWidget } from "@/components/homepage/widgets/UptimeWidget";
+import { ServiceStatusWidget } from "@/components/homepage/widgets/ServiceStatusWidget";
 import {
   Sheet,
   SheetContent,
@@ -286,90 +290,129 @@ const DashboardGrid = memo(function DashboardGrid({
   }, {} as Record<WidgetCategory, WidgetTypeDefinitionDto[]>);
 
   return (
-    <div className="min-h-screen bg-background/50">
-      <div className="mx-auto max-w-7xl space-y-8 p-4 md:p-6 lg:p-8">
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-linear-to-r from-primary to-primary/60">
-              Homepage
+    <div className="min-h-screen bg-background">
+      <div className="mx-auto max-w-[1600px] space-y-10 p-6 md:p-10 lg:p-12">
+        <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-border/40">
+          <div className="space-y-2">
+            <h1 className="text-4xl md:text-5xl font-black tracking-tight text-foreground">
+              Overview
             </h1>
-            <p className="text-muted-foreground text-lg font-light max-w-2xl">
-              Customizable dashboard with fleet monitoring, RSS feeds, and more
+            <p className="text-muted-foreground text-lg font-medium max-w-2xl leading-relaxed">
+              Your command center for fleet operations, intelligence, and system status.
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <Button
-              variant={editMode ? "default" : "outline"}
+             <Button
+              variant={editMode ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setEditMode(!editMode)}
+              className="font-medium"
             >
               {editMode ? "Done Editing" : "Edit Layout"}
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleSaveLayout}
-              disabled={isSaving}
-            >
-              Save
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleResetLayout}
-              disabled={editMode}
-            >
-              Reset
-            </Button>
-            <Sheet open={showAddWidget} onOpenChange={setShowAddWidget}>
-              <SheetTrigger
-                render={
-                  <Button variant="default" size="sm" disabled={editMode}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Widget
-                  </Button>
-                }
-              />
-              <SheetContent className="w-[450px] flex flex-col">
-                <SheetHeader className="px-6 py-6 border-b">
-                  <SheetTitle className="text-xl">Add Widget</SheetTitle>
-                  <SheetDescription>
-                    Select a widget type to add to your dashboard
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="p-6">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Category</label>
-                    <Select
-                      value={selectedCategory}
-                      onValueChange={(val) =>
-                        val && setSelectedCategory(val as WidgetCategory)
-                      }
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All</SelectItem>
-                        <SelectItem value="fleet">Fleet Monitoring</SelectItem>
-                        <SelectItem value="feed">Feeds</SelectItem>
-                        <SelectItem value="info">Information</SelectItem>
-                        <SelectItem value="bookmark">Bookmarks</SelectItem>
-                        <SelectItem value="custom">Custom</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <Separator className="opacity-50" />
-                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
-                  {selectedCategory === "all" ? (
-                    Object.entries(categoryWidgets || {}).map(([category, widgets]) => (
-                      <div key={category} className="space-y-3">
-                        <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest px-1">
-                          {category}
-                        </h3>
-                        <div className="grid grid-cols-1 gap-3">
-                          {widgets.map((wt) => {
+            
+            {editMode && (
+              <>
+                 <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSaveLayout}
+                  disabled={isSaving}
+                   className="animate-in fade-in zoom-in-95 duration-200"
+                >
+                  Save Changes
+                </Button>
+                 <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleResetLayout}
+                   className="animate-in fade-in zoom-in-95 duration-200"
+                >
+                  Reset
+                </Button>
+                 <Sheet open={showAddWidget} onOpenChange={setShowAddWidget}>
+                  <SheetTrigger render={
+                     <Button variant="default" size="sm" className="shadow-lg shadow-primary/20">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Widget
+                      </Button>
+                  } />
+                  <SheetContent className="w-[500px] sm:w-[600px] flex flex-col p-0 gap-0 border-l border-border/50 shadow-2xl">
+                    <SheetHeader className="px-8 py-6 border-b border-border/50 bg-muted/5">
+                      <SheetTitle className="text-2xl font-bold tracking-tight">Add Widget</SheetTitle>
+                      <SheetDescription className="text-base">
+                        Select a component to enhance your dashboard capabilities.
+                      </SheetDescription>
+                    </SheetHeader>
+                    
+                    <div className="px-8 py-4 bg-background/50 backdrop-blur-sm sticky top-0 z-10 border-b border-border/40">
+                         <div className="flex items-center gap-4">
+                            <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider shrink-0">Filter by</span>
+                            <Select
+                              value={selectedCategory}
+                              onValueChange={(val) =>
+                                val && setSelectedCategory(val as WidgetCategory)
+                              }
+                            >
+                              <SelectTrigger className="w-[180px] bg-background border-border/60">
+                                <SelectValue placeholder="All Categories" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">All Categories</SelectItem>
+                                <SelectItem value="fleet">Fleet Monitoring</SelectItem>
+                                <SelectItem value="feed">Data Feeds</SelectItem>
+                                <SelectItem value="info">Information</SelectItem>
+                                <SelectItem value="bookmark">Quick Links</SelectItem>
+                                <SelectItem value="custom">Custom Code</SelectItem>
+                              </SelectContent>
+                            </Select>
+                         </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto px-8 py-6 space-y-8">
+                       {selectedCategory === "all" ? (
+                        Object.entries(categoryWidgets || {}).map(([category, widgets]) => (
+                          <div key={category} className="space-y-4">
+                            <div className="flex items-center gap-3">
+                                <span className="h-px flex-1 bg-border/50"></span>
+                                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
+                                  {category === 'fleet' ? 'Fleet Monitoring' : category === 'feed' ? 'Data Feeds' : category}
+                                </h3>
+                                 <span className="h-px flex-1 bg-border/50"></span>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {widgets.map((wt) => {
+                                const Icon = getWidgetIcon(wt.icon);
+                                return (
+                                  <button
+                                    key={wt.type}
+                                    onClick={() => {
+                                      setShowAddWidget(false);
+                                      handleAddWidget(wt.type);
+                                    }}
+                                    className="group relative flex flex-col items-start gap-3 p-4 text-left bg-card hover:bg-accent/50 rounded-xl border border-border/40 hover:border-primary/50 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 active:scale-[0.98]"
+                                  >
+                                    <div className="p-2.5 bg-muted/50 rounded-lg group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+                                      <Icon className="h-6 w-6" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <div className="font-bold text-sm">
+                                        {wt.name}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                                        {wt.description}
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                           {(categoryWidgets?.[selectedCategory] || []).map((wt) => {
                             const Icon = getWidgetIcon(wt.icon);
                             return (
                               <button
@@ -378,16 +421,16 @@ const DashboardGrid = memo(function DashboardGrid({
                                   setShowAddWidget(false);
                                   handleAddWidget(wt.type);
                                 }}
-                                className="group relative flex items-start gap-4 p-4 text-left bg-muted/20 hover:bg-muted/40 rounded-xl border border-border/50 hover:border-primary/40 transition-all duration-200 hover:shadow-md active:scale-[0.98]"
+                                className="group relative flex flex-col items-start gap-3 p-4 text-left bg-card hover:bg-accent/50 rounded-xl border border-border/40 hover:border-primary/50 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 active:scale-[0.98]"
                               >
-                                <div className="shrink-0 p-2.5 bg-background rounded-lg border border-border/50 group-hover:border-primary/30 group-hover:text-primary transition-colors">
-                                  <Icon className="h-5 w-5" />
+                                <div className="p-2.5 bg-muted/50 rounded-lg group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+                                  <Icon className="h-6 w-6" />
                                 </div>
-                                <div className="flex-1 space-y-1">
-                                  <div className="font-semibold text-sm leading-none">
+                                <div className="space-y-1.5">
+                                  <div className="font-bold text-sm">
                                     {wt.name}
                                   </div>
-                                  <div className="text-xs text-muted-foreground/80 leading-relaxed line-clamp-2">
+                                  <div className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                                     {wt.description}
                                   </div>
                                 </div>
@@ -395,71 +438,161 @@ const DashboardGrid = memo(function DashboardGrid({
                             );
                           })}
                         </div>
-                      </div>
-                    ))
-                  ) : (
-                    (categoryWidgets?.[selectedCategory] || []).map((wt) => {
-                      const Icon = getWidgetIcon(wt.icon);
-                      return (
-                        <button
-                          key={wt.type}
-                          onClick={() => {
-                            setShowAddWidget(false);
-                            handleAddWidget(wt.type);
-                          }}
-                          className="group relative flex items-start gap-4 p-4 text-left bg-muted/20 hover:bg-muted/40 rounded-xl border border-border/50 hover:border-primary/40 transition-all duration-200 hover:shadow-md active:scale-[0.98]"
-                        >
-                          <div className="shrink-0 p-2.5 bg-background rounded-lg border border-border/50 group-hover:border-primary/30 group-hover:text-primary transition-colors">
-                            <Icon className="h-5 w-5" />
-                          </div>
-                          <div className="flex-1 space-y-1">
-                            <div className="font-semibold text-sm leading-none">
-                              {wt.name}
+                      )}
+                    </div>
+                  </SheetContent>
+                </Sheet>
+              </>
+            )}
+            
+            {!editMode && (
+                 <Sheet open={showAddWidget} onOpenChange={setShowAddWidget}>
+                  <SheetTrigger render={
+                     <Button variant="outline" size="sm" className="ml-2 group">
+                        <Plus className="h-4 w-4 mr-2 group-hover:text-primary transition-colors" />
+                        Add Widget
+                      </Button>
+                  } />
+                   {/* Render the same content, just duplicated trigger for non-edit mode convenience */}
+                   <SheetContent className="w-[500px] sm:w-[600px] flex flex-col p-0 gap-0 border-l border-border/50 shadow-2xl">
+                     <SheetHeader className="px-8 py-6 border-b border-border/50 bg-muted/5">
+                      <SheetTitle className="text-2xl font-bold tracking-tight">Add Widget</SheetTitle>
+                      <SheetDescription className="text-base">
+                        Select a component to enhance your dashboard capabilities.
+                      </SheetDescription>
+                    </SheetHeader>
+                    
+                    <div className="px-8 py-4 bg-background/50 backdrop-blur-sm sticky top-0 z-10 border-b border-border/40">
+                         <div className="flex items-center gap-4">
+                            <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider shrink-0">Filter by</span>
+                            <Select
+                              value={selectedCategory}
+                              onValueChange={(val) =>
+                                val && setSelectedCategory(val as WidgetCategory)
+                              }
+                            >
+                              <SelectTrigger className="w-[180px] bg-background border-border/60">
+                                <SelectValue placeholder="All Categories" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">All Categories</SelectItem>
+                                <SelectItem value="fleet">Fleet Monitoring</SelectItem>
+                                <SelectItem value="feed">Data Feeds</SelectItem>
+                                <SelectItem value="info">Information</SelectItem>
+                                <SelectItem value="bookmark">Quick Links</SelectItem>
+                                <SelectItem value="custom">Custom Code</SelectItem>
+                              </SelectContent>
+                            </Select>
+                         </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto px-8 py-6 space-y-8">
+                       {selectedCategory === "all" ? (
+                        Object.entries(categoryWidgets || {}).map(([category, widgets]) => (
+                          <div key={category} className="space-y-4">
+                            <div className="flex items-center gap-3">
+                                <span className="h-px flex-1 bg-border/50"></span>
+                                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
+                                  {category === 'fleet' ? 'Fleet Monitoring' : category === 'feed' ? 'Data Feeds' : category}
+                                </h3>
+                                 <span className="h-px flex-1 bg-border/50"></span>
                             </div>
-                            <div className="text-xs text-muted-foreground/80 leading-relaxed line-clamp-2">
-                              {wt.description}
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {widgets.map((wt) => {
+                                const Icon = getWidgetIcon(wt.icon);
+                                return (
+                                  <button
+                                    key={wt.type}
+                                    onClick={() => {
+                                      setShowAddWidget(false);
+                                      handleAddWidget(wt.type);
+                                    }}
+                                    className="group relative flex flex-col items-start gap-3 p-4 text-left bg-card hover:bg-accent/50 rounded-xl border border-border/40 hover:border-primary/50 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 active:scale-[0.98]"
+                                  >
+                                    <div className="p-2.5 bg-muted/50 rounded-lg group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+                                      <Icon className="h-6 w-6" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <div className="font-bold text-sm">
+                                        {wt.name}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                                        {wt.description}
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
                             </div>
                           </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </SheetContent>
-            </Sheet>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleResetLayout}
-              disabled={editMode}
-            >
-              Reset
-            </Button>
+                        ))
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                           {(categoryWidgets?.[selectedCategory] || []).map((wt) => {
+                            const Icon = getWidgetIcon(wt.icon);
+                            return (
+                              <button
+                                key={wt.type}
+                                onClick={() => {
+                                  setShowAddWidget(false);
+                                  handleAddWidget(wt.type);
+                                }}
+                                className="group relative flex flex-col items-start gap-3 p-4 text-left bg-card hover:bg-accent/50 rounded-xl border border-border/40 hover:border-primary/50 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 active:scale-[0.98]"
+                              >
+                                <div className="p-2.5 bg-muted/50 rounded-lg group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+                                  <Icon className="h-6 w-6" />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <div className="font-bold text-sm">
+                                    {wt.name}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                                    {wt.description}
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </SheetContent>
+               </Sheet>
+            )}
           </div>
         </header>
 
-        <Separator className="bg-border/40" />
-
         {isLoading && (
-          <div className="flex items-center justify-center py-20">
-            <Server className="h-8 w-8 text-muted-foreground animate-spin" />
-            <span className="ml-2 text-muted-foreground">Loading dashboard...</span>
+          <div className="flex flex-col items-center justify-center py-32 space-y-6 animate-pulse">
+            <div className="p-4 bg-muted/50 rounded-full">
+              <Server className="h-10 w-10 text-primary/50" />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-medium tracking-tight">Initializing Dashboard</h3>
+              <p className="text-muted-foreground">Loading your personalized layout...</p>
+            </div>
           </div>
         )}
 
         {!isLoading && layouts.length === 0 && (
-          <div className="text-center py-20">
-            <Server className="h-16 w-16 text-muted-foreground/50 mx-auto mb-4" />
-            <h2 className="text-2xl font-semibold text-muted-foreground mb-2">
-              Welcome to Your Homepage
-            </h2>
-            <p className="text-muted-foreground/80 max-w-md mx-auto">
-              Add widgets to customize your dashboard. You can monitor your fleet,
-              display RSS feeds, show weather, and add quick links.
-            </p>
-            <div className="mt-6">
-              <Button onClick={() => handleAddWidget("fleet-stats")}>
-                Add Fleet Stats Widget
+          <div className="flex flex-col items-center justify-center py-32 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <div className="p-8 bg-muted/20 rounded-full ring-1 ring-border shadow-xl">
+              <Server className="h-20 w-20 text-muted-foreground/30" />
+            </div>
+            <div className="text-center space-y-4 max-w-lg">
+              <h2 className="text-3xl font-bold tracking-tight text-foreground">
+                Your Dashboard is Empty
+              </h2>
+              <p className="text-muted-foreground text-lg leading-relaxed">
+                Connect your fleet, add data feeds, or customize your workspace with widgets.
+                It's a blank canvas waiting for your command.
+              </p>
+            </div>
+            <div className="pt-2">
+              <Button size="lg" onClick={() => handleAddWidget("fleet-stats")} className="text-base px-8 h-12 shadow-xl shadow-primary/20 hover:shadow-primary/30 transition-all">
+                <Plus className="mr-2 h-5 w-5" />
+                Initialize First Widget
               </Button>
             </div>
           </div>
@@ -512,27 +645,31 @@ const DashboardGrid = memo(function DashboardGrid({
             draggableHandle=".drag-handle"
             isDraggable={editMode}
             isResizable={editMode}
-            margin={[16, 16]}
+            margin={[24, 24]}
           >
             {layouts.map((widget) => {
               const widgetDef = getWidgetByType(widget.type);
               return (
                 <div
                   key={widget.id}
-                  className="bg-card border shadow-sm hover:shadow-md transition-shadow rounded-lg h-full"
+                  className={`
+                    group h-full rounded-xl transition-all duration-300
+                    ${editMode ? 'ring-2 ring-primary/20 bg-background/80 hover:ring-primary/50' : 'bg-card border border-border/50 shadow-sm hover:shadow-md'}
+                  `}
                 >
-                  <Card className="border-0 shadow-none hover:shadow-none transition-shadow h-full flex flex-col overflow-hidden">
-                    <CardHeader className="flex items-start justify-between pb-3 drag-handle cursor-move shrink-0">
-                      <div className="flex items-center gap-2">
-                        <CardTitle className="text-base">
-                          {widgetDef?.name || widget.type}
-                        </CardTitle>
-                        <div className="text-xs text-muted-foreground/60 px-2 py-1 bg-muted/30 rounded">
-                          {widget.type}
+                  <Card className="h-full flex flex-col overflow-hidden bg-transparent border-0 shadow-none">
+                    {editMode && (
+                      <CardHeader className="flex flex-row items-center justify-between py-3 px-4 shrink-0 transition-colors bg-muted/10 cursor-move drag-handle border-b border-border/20">
+                        <div className="flex items-center gap-2.5 overflow-hidden">
+                          <div className="p-1 rounded bg-background border shadow-xs">
+                             <div className="h-3 w-3 rounded-full bg-primary/40" />
+                          </div>
+                          <CardTitle className="text-sm font-semibold tracking-tight truncate">
+                            {widgetDef?.name || widget.type}
+                          </CardTitle>
                         </div>
-                      </div>
-                      {editMode && (
-                        <div className="flex items-center gap-1">
+                        
+                        <div className="flex items-center gap-1 opacity-100 transition-opacity">
                           <Button
                             variant="ghost"
                             size="icon"
@@ -540,9 +677,9 @@ const DashboardGrid = memo(function DashboardGrid({
                               e.stopPropagation();
                               setConfiguringWidget(widget);
                             }}
-                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-background/80"
                           >
-                            <Settings className="h-4 w-4" />
+                            <Settings className="h-3.5 w-3.5" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -551,14 +688,16 @@ const DashboardGrid = memo(function DashboardGrid({
                               e.stopPropagation();
                               handleRemoveWidget(widget.id);
                             }}
-                            className="h-8 w-8 text-destructive hover:text-destructive/90"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                           >
-                            <span className="text-lg leading-none">×</span>
+                            <span className="text-base leading-none">×</span>
                           </Button>
                         </div>
-                      )}
-                    </CardHeader>
-                    <CardContent className="p-4 flex-1 overflow-auto min-h-0">
+                      </CardHeader>
+                    )}
+                    <CardContent className="flex-1 overflow-y-auto overflow-x-hidden relative p-4">
+                       {/* Overlay to prevent interaction during edit mode */}
+                       {editMode && <div className="absolute inset-0 z-10 bg-background/40" />}
                       {renderWidgetContent(widget, (newConfig) => handleConfigChange(widget.id, newConfig))}
                     </CardContent>
                   </Card>
@@ -735,6 +874,38 @@ function renderWidgetContent(
     case "script-runs":
       return (
         <ScriptRunsWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "alerts":
+      return (
+        <AlertsWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "disk-usage":
+      return (
+        <DiskUsageWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "uptime":
+      return (
+        <UptimeWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "service-status":
+      return (
+        <ServiceStatusWidget
           id={widget.id}
           config={widget.config}
           onConfigChange={onConfigChange}

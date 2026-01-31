@@ -64,12 +64,20 @@ public sealed class SshRateLimitService
         {
             state.LockedUntilUtc = DateTimeOffset.UtcNow.Add(_options.LockoutDuration);
             // Keep state around at least until lockout ends.
-            _cache.Set(cacheKey, state, state.LockedUntilUtc.Value);
+            _cache.Set(cacheKey, state, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpiration = state.LockedUntilUtc.Value,
+                Size = 1
+            });
         }
         else
         {
             // Extend within window.
-            _cache.Set(cacheKey, state, _options.FailureWindow);
+            _cache.Set(cacheKey, state, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = _options.FailureWindow,
+                Size = 1
+            });
         }
     }
 
