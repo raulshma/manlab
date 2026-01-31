@@ -69,6 +69,17 @@ import {
   announceScanEvent,
   announceProgress,
 } from "@/lib/accessibility";
+import { useConfirm } from "@/hooks/useConfirm";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // ============================================================================
 // Types
@@ -294,6 +305,8 @@ async function copyToClipboard(text: string): Promise<void> {
 // ============================================================================
 
 export function SubnetScanTool() {
+  const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm();
+
   // Form state
   const [cidr, setCidr] = useState(() => getStoredString(SUBNET_LAST_KEY, ""));
   const [concurrency, setConcurrency] = useState(() => getStoredNumber(SUBNET_CONCURRENCY_KEY, 100));
@@ -496,9 +509,12 @@ export function SubnetScanTool() {
 
     const prefix = getCidrPrefix(cidr);
     if (prefix !== null && prefix <= 20) {
-      const confirmed = window.confirm(
-        "This is a large subnet scan and may take several minutes. Continue?"
-      );
+      const confirmed = await confirm({
+        title: "Large Subnet Scan",
+        description: "This is a large subnet scan and may take several minutes. Continue?",
+        confirmText: "Continue",
+        cancelText: "Cancel",
+      });
       if (!confirmed) return;
     }
 
@@ -515,7 +531,7 @@ export function SubnetScanTool() {
       notify.error(errorMessage);
       setScanState((prev) => ({ ...prev, isScanning: false }));
     }
-  }, [cidr, concurrency, timeout, isConnected, startSubnetScan]);
+  }, [cidr, concurrency, timeout, isConnected, startSubnetScan, confirm]);
 
   // Quick scan button - detect subnet from common patterns
   const handleQuickScan = useCallback(() => {
@@ -958,6 +974,23 @@ export function SubnetScanTool() {
           </CardContent>
         </Card>
       )}
+
+      <AlertDialog open={confirmState.isOpen} onOpenChange={(open) => !open && handleCancel()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmState.title}</AlertDialogTitle>
+            {confirmState.description && (
+              <AlertDialogDescription>{confirmState.description}</AlertDialogDescription>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancel}>{confirmState.cancelText || "Cancel"}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirm}>
+              {confirmState.confirmText || "Confirm"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

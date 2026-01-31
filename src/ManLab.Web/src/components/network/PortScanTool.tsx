@@ -80,6 +80,17 @@ import {
 } from "@/components/network/port-constants";
 import { announce, announceScanEvent } from "@/lib/accessibility";
 import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
+import { useConfirm } from "@/hooks/useConfirm";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 const PortDistributionChart = lazy(
   () => import("@/components/network/PortDistributionChart")
 );
@@ -310,6 +321,7 @@ function exportToJSON(result: PortScanResult): void {
 export function PortScanTool() {
   // Network tools context for quick actions
   const networkTools = useNetworkToolsOptional();
+  const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm();
 
   // Form state
   const [host, setHost] = useState(() => getStoredString(PORT_HOST_KEY, ""));
@@ -491,9 +503,12 @@ export function PortScanTool() {
     }
 
     if (ports.length > 500) {
-      const confirmed = window.confirm(
-        `This will scan ${ports.length} ports and may take a while. Continue?`
-      );
+      const confirmed = await confirm({
+        title: "Large Port Scan",
+        description: `This will scan ${ports.length} ports and may take a while. Continue?`,
+        confirmText: "Continue",
+        cancelText: "Cancel",
+      });
       if (!confirmed) return;
     }
 
@@ -556,7 +571,7 @@ export function PortScanTool() {
     } finally {
       setIsLoading(false);
     }
-  }, [host, portValidationError, getPortsToScan, concurrency, timeout, isConnected, hubScanPorts]);
+  }, [host, portValidationError, getPortsToScan, concurrency, timeout, isConnected, hubScanPorts, confirm]);
 
   // Handle Enter key press
   const handleKeyDown = useCallback(
@@ -1058,17 +1073,34 @@ export function PortScanTool() {
       
       {/* Empty Initial State */}
       {!isScanning && !result && liveOpenPorts.length === 0 && (
-         <div className="min-h-75 flex flex-col items-center justify-center text-center p-8 border-2 border-dashed rounded-xl border-muted/50 bg-muted/5">
-            <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
-               <Server className="h-8 w-8 text-muted-foreground/50" />
-            </div>
-            <h3 className="text-lg font-semibold mb-2">Ready to Scan</h3>
-            <p className="text-muted-foreground max-w-md">
-               Enter a target above to begin discovering open ports and services.
-               Select a quick preset or define a custom range for specific targeting.
-            </p>
-         </div>
-      )}
-    </div>
-  );
-}
+          <div className="min-h-75 flex flex-col items-center justify-center text-center p-8 border-2 border-dashed rounded-xl border-muted/50 bg-muted/5">
+             <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
+                <Server className="h-8 w-8 text-muted-foreground/50" />
+             </div>
+             <h3 className="text-lg font-semibold mb-2">Ready to Scan</h3>
+             <p className="text-muted-foreground max-w-md">
+                Enter a target above to begin discovering open ports and services.
+                Select a quick preset or define a custom range for specific targeting.
+             </p>
+          </div>
+       )}
+
+      <AlertDialog open={confirmState.isOpen} onOpenChange={(open) => !open && handleCancel()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmState.title}</AlertDialogTitle>
+            {confirmState.description && (
+              <AlertDialogDescription>{confirmState.description}</AlertDialogDescription>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancel}>{confirmState.cancelText || "Cancel"}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirm}>
+              {confirmState.confirmText || "Confirm"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+     </div>
+   );
+ }

@@ -35,6 +35,8 @@ import {
   getArpTable,
   type ArpTableEntry,
 } from "@/api/networkApi";
+import { useConfirm } from "@/hooks/useConfirm";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 const EMPTY_STATE = "No ARP entries found. Try refreshing the table.";
 
@@ -45,6 +47,7 @@ export function ArpTableTool() {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm();
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [ipAddress, setIpAddress] = useState("");
@@ -130,7 +133,13 @@ export function ArpTableTool() {
 
   const handleDelete = useCallback(
     async (ip: string) => {
-      const confirmed = window.confirm(`Remove ARP entry for ${ip}?`);
+      const confirmed = await confirm({
+        title: "Remove ARP Entry",
+        description: `Remove ARP entry for ${ip}?`,
+        confirmText: "Remove",
+        cancelText: "Cancel",
+        destructive: true,
+      });
       if (!confirmed) return;
 
       setIsActionLoading(true);
@@ -145,13 +154,17 @@ export function ArpTableTool() {
         setIsActionLoading(false);
       }
     },
-    [loadTable]
+    [loadTable, confirm]
   );
 
   const handleFlush = useCallback(async () => {
-    const confirmed = window.confirm(
-      "Flush the ARP cache? This will clear dynamic entries on the server."
-    );
+    const confirmed = await confirm({
+      title: "Flush ARP Cache",
+      description: "Flush the ARP cache? This will clear dynamic entries on the server.",
+      confirmText: "Flush",
+      cancelText: "Cancel",
+      destructive: true,
+    });
     if (!confirmed) return;
 
     setIsActionLoading(true);
@@ -165,7 +178,7 @@ export function ArpTableTool() {
     } finally {
       setIsActionLoading(false);
     }
-  }, [loadTable]);
+  }, [loadTable, confirm]);
 
   return (
     <div className="space-y-6">
@@ -360,6 +373,25 @@ export function ArpTableTool() {
           </div>
         </CardContent>
       </Card>
+      <AlertDialog open={confirmState.isOpen} onOpenChange={(open) => !open && handleCancel()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmState.title}</AlertDialogTitle>
+            {confirmState.description && (
+              <AlertDialogDescription>{confirmState.description}</AlertDialogDescription>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancel}>{confirmState.cancelText || "Cancel"}</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleConfirm}
+              className={confirmState.destructive ? "bg-destructive hover:bg-destructive/90" : ""}
+            >
+              {confirmState.confirmText || "Confirm"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -15,6 +15,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   AlertCircle,
   RefreshCw,
   Shield,
@@ -32,6 +41,7 @@ import type {
   SystemUpdateSettings,
   SystemUpdateAvailability,
 } from "@/types";
+import { useConfirm } from "@/hooks/useConfirm";
 
 interface SystemUpdateSettingsPanelProps {
   nodeId: string;
@@ -53,6 +63,7 @@ export function SystemUpdateSettingsPanel({ nodeId }: SystemUpdateSettingsPanelP
   const [isSaving, setIsSaving] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [localSettings, setLocalSettings] = useState<SystemUpdateSettings | null>(null);
+  const { alert, alertState, handleAlertConfirm } = useConfirm();
 
   const handleSave = async () => {
     if (!localSettings) return;
@@ -89,7 +100,11 @@ export function SystemUpdateSettingsPanel({ nodeId }: SystemUpdateSettingsPanelP
       mutate(["systemUpdate", nodeId]);
     } catch (error: unknown) {
       console.error("Failed to create update:", error);
-      alert(error instanceof Error ? error.message : "Failed to create update");
+      await alert({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to create update",
+        confirmText: "OK",
+      });
     }
   };
 
@@ -376,6 +391,22 @@ export function SystemUpdateSettingsPanel({ nodeId }: SystemUpdateSettingsPanelP
           </Card>
         </>
       )}
+
+      <AlertDialog open={alertState.isOpen} onOpenChange={(open) => !open && handleAlertConfirm()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{alertState.title}</AlertDialogTitle>
+            {alertState.description && (
+              <AlertDialogDescription>{alertState.description}</AlertDialogDescription>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={handleAlertConfirm}>
+              {alertState.confirmText || "OK"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

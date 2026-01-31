@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useCallback, useMemo } from "react";
+import { useConfirm } from "@/hooks/useConfirm";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, useStore } from "@tanstack/react-form";
 import {
@@ -69,6 +70,7 @@ import {
 
 export function NetworkSettings() {
   const queryClient = useQueryClient();
+  const { confirm, dialog } = useConfirm();
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: async () => {
@@ -129,10 +131,15 @@ export function NetworkSettings() {
     form.handleSubmit();
   }, [form]);
 
-  const handleReset = useCallback(() => {
-    if (!confirm("Reset all network settings to defaults? This cannot be undone.")) {
-      return;
-    }
+  const handleReset = useCallback(async () => {
+    const confirmed = await confirm({
+      title: "Reset Network Settings",
+      description: "Reset all network settings to defaults? This cannot be undone.",
+      confirmText: "Reset",
+      cancelText: "Cancel",
+      destructive: true,
+    });
+    if (!confirmed) return;
 
     const defaults = DEFAULT_NETWORK_PREFERENCES;
     mutation.mutate(buildNetworkSettingsPayload(defaults), {
@@ -146,7 +153,7 @@ export function NetworkSettings() {
         toast.error("Failed to reset settings: " + error.message);
       },
     });
-  }, [form, mutation, queryClient]);
+  }, [form, mutation, queryClient, confirm]);
 
   return (
     <Card>
@@ -940,6 +947,7 @@ export function NetworkSettings() {
           {isSaving ? "Saving..." : "Save Changes"}
         </Button>
       </CardFooter>
+      {dialog}
     </Card>
   );
 }

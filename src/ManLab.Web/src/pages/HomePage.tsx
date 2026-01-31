@@ -37,7 +37,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
@@ -47,10 +56,11 @@ import {
 } from "@/components/ui/dialog";
 import { WidgetConfigForm } from "@/components/homepage/WidgetConfigForm";
 import { Settings } from "lucide-react";
+import { useConfirm } from "@/hooks/useConfirm";
 
 const ResponsiveGrid = WidthProvider(Responsive);
 
-type WidgetCategory = "fleet" | "feed" | "info" | "bookmark" | "custom";
+type WidgetCategory = "all" | "fleet" | "feed" | "info" | "bookmark" | "custom";
 
 // React-Grid-Layout constants
 const GRID_BREAKPOINTS = { lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 };
@@ -135,8 +145,9 @@ const DashboardGrid = memo(function DashboardGrid({
   const [layouts, setLayouts] = useState<DashboardWidgetDto[]>(initialWidgets);
   const [editMode, setEditMode] = useState(false);
   const [showAddWidget, setShowAddWidget] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<WidgetCategory>("fleet");
+  const [selectedCategory, setSelectedCategory] = useState<WidgetCategory>("all");
   const [configuringWidget, setConfiguringWidget] = useState<DashboardWidgetDto | null>(null);
+  const { confirm, confirmState, handleConfirm, handleCancel } = useConfirm();
 
   const onLayoutChange = useCallback((currentLayout: Layout) => {
     setLayouts((prevLayouts) => {
@@ -221,12 +232,19 @@ const DashboardGrid = memo(function DashboardGrid({
     }
   }, [configuringWidget, handleConfigChange]);
 
-  const handleResetLayout = useCallback(() => {
-    if (confirm("Reset dashboard to default configuration?")) {
+  const handleResetLayout = useCallback(async () => {
+    const confirmed = await confirm({
+      title: "Reset Dashboard",
+      description: "Reset dashboard to default configuration?",
+      confirmText: "Reset",
+      cancelText: "Cancel",
+      destructive: true,
+    });
+    if (confirmed) {
       setLayouts([]);
       onSave([]);
     }
-  }, [onSave]);
+  }, [onSave, confirm]);
 
   const getWidgetByType = useCallback((widgetType: string) => {
     return widgetTypes?.find((wt) => wt.type === widgetType);
@@ -306,6 +324,7 @@ const DashboardGrid = memo(function DashboardGrid({
                         <SelectValue placeholder="Select category" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
                         <SelectItem value="fleet">Fleet Monitoring</SelectItem>
                         <SelectItem value="feed">Feeds</SelectItem>
                         <SelectItem value="info">Information</SelectItem>
@@ -317,40 +336,68 @@ const DashboardGrid = memo(function DashboardGrid({
                 </div>
                 <Separator className="opacity-50" />
                 <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
-                  {Object.entries(categoryWidgets || {}).map(([category, widgets]) => (
-                    <div key={category} className="space-y-3">
-                      <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest px-1">
-                        {category}
-                      </h3>
-                      <div className="grid grid-cols-1 gap-3">
-                        {widgets.map((wt) => {
-                          const Icon = getWidgetIcon(wt.icon);
-                          return (
-                            <button
-                              key={wt.type}
-                              onClick={() => {
-                                setShowAddWidget(false);
-                                handleAddWidget(wt.type);
-                              }}
-                              className="group relative flex items-start gap-4 p-4 text-left bg-muted/20 hover:bg-muted/40 rounded-xl border border-border/50 hover:border-primary/40 transition-all duration-200 hover:shadow-md active:scale-[0.98]"
-                            >
-                              <div className="shrink-0 p-2.5 bg-background rounded-lg border border-border/50 group-hover:border-primary/30 group-hover:text-primary transition-colors">
-                                <Icon className="h-5 w-5" />
-                              </div>
-                              <div className="flex-1 space-y-1">
-                                <div className="font-semibold text-sm leading-none">
-                                  {wt.name}
+                  {selectedCategory === "all" ? (
+                    Object.entries(categoryWidgets || {}).map(([category, widgets]) => (
+                      <div key={category} className="space-y-3">
+                        <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest px-1">
+                          {category}
+                        </h3>
+                        <div className="grid grid-cols-1 gap-3">
+                          {widgets.map((wt) => {
+                            const Icon = getWidgetIcon(wt.icon);
+                            return (
+                              <button
+                                key={wt.type}
+                                onClick={() => {
+                                  setShowAddWidget(false);
+                                  handleAddWidget(wt.type);
+                                }}
+                                className="group relative flex items-start gap-4 p-4 text-left bg-muted/20 hover:bg-muted/40 rounded-xl border border-border/50 hover:border-primary/40 transition-all duration-200 hover:shadow-md active:scale-[0.98]"
+                              >
+                                <div className="shrink-0 p-2.5 bg-background rounded-lg border border-border/50 group-hover:border-primary/30 group-hover:text-primary transition-colors">
+                                  <Icon className="h-5 w-5" />
                                 </div>
-                                <div className="text-xs text-muted-foreground/80 leading-relaxed line-clamp-2">
-                                  {wt.description}
+                                <div className="flex-1 space-y-1">
+                                  <div className="font-semibold text-sm leading-none">
+                                    {wt.name}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground/80 leading-relaxed line-clamp-2">
+                                    {wt.description}
+                                  </div>
                                 </div>
-                              </div>
-                            </button>
-                          );
-                        })}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))
+                  ) : (
+                    (categoryWidgets?.[selectedCategory] || []).map((wt) => {
+                      const Icon = getWidgetIcon(wt.icon);
+                      return (
+                        <button
+                          key={wt.type}
+                          onClick={() => {
+                            setShowAddWidget(false);
+                            handleAddWidget(wt.type);
+                          }}
+                          className="group relative flex items-start gap-4 p-4 text-left bg-muted/20 hover:bg-muted/40 rounded-xl border border-border/50 hover:border-primary/40 transition-all duration-200 hover:shadow-md active:scale-[0.98]"
+                        >
+                          <div className="shrink-0 p-2.5 bg-background rounded-lg border border-border/50 group-hover:border-primary/30 group-hover:text-primary transition-colors">
+                            <Icon className="h-5 w-5" />
+                          </div>
+                          <div className="flex-1 space-y-1">
+                            <div className="font-semibold text-sm leading-none">
+                              {wt.name}
+                            </div>
+                            <div className="text-xs text-muted-foreground/80 leading-relaxed line-clamp-2">
+                              {wt.description}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               </SheetContent>
             </Sheet>
@@ -516,6 +563,25 @@ const DashboardGrid = memo(function DashboardGrid({
           </DialogContent>
         </Dialog>
 
+        <AlertDialog open={confirmState.isOpen} onOpenChange={(open) => !open && handleCancel()}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{confirmState.title}</AlertDialogTitle>
+              {confirmState.description && (
+                <AlertDialogDescription>{confirmState.description}</AlertDialogDescription>
+              )}
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={handleCancel}>{confirmState.cancelText || "Cancel"}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleConfirm}
+                className={confirmState.destructive ? "bg-destructive hover:bg-destructive/90" : ""}
+              >
+                {confirmState.confirmText || "Confirm"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );
