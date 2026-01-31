@@ -21,6 +21,11 @@ import { ResourceChartWidget } from "@/components/homepage/widgets/ResourceChart
 import { SystemUpdatesWidget } from "@/components/homepage/widgets/SystemUpdatesWidget";
 import { CustomHtmlWidget } from "@/components/homepage/widgets/CustomHtmlWidget";
 import { CustomIframeWidget } from "@/components/homepage/widgets/CustomIframeWidget";
+import { NetworkTrafficWidget } from "@/components/homepage/widgets/NetworkTrafficWidget";
+import { GpuMonitorWidget } from "@/components/homepage/widgets/GpuMonitorWidget";
+import { TopProcessesWidget } from "@/components/homepage/widgets/TopProcessesWidget";
+import { DiskHealthWidget } from "@/components/homepage/widgets/DiskHealthWidget";
+import { ScriptRunsWidget } from "@/components/homepage/widgets/ScriptRunsWidget";
 import {
   Sheet,
   SheetContent,
@@ -667,6 +672,46 @@ function renderWidgetContent(
     case "custom-iframe":
       return (
         <CustomIframeWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "network-traffic":
+      return (
+        <NetworkTrafficWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "gpu-monitor":
+      return (
+        <GpuMonitorWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "top-processes":
+      return (
+        <TopProcessesWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "disk-health":
+      return (
+        <DiskHealthWidget
+          id={widget.id}
+          config={widget.config}
+          onConfigChange={onConfigChange}
+        />
+      );
+    case "script-runs":
+      return (
+        <ScriptRunsWidget
           id={widget.id}
           config={widget.config}
           onConfigChange={onConfigChange}

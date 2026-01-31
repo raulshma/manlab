@@ -9,7 +9,12 @@ import {
   Clock, 
   Bookmark, 
   Code, 
-  Globe 
+  Globe,
+  Network,
+  Monitor,
+  Terminal,
+  HardDrive,
+  ScrollText
 } from "lucide-react";
 import type { WidgetTypeDefinitionDto } from "@/types/dashboard";
 
@@ -283,6 +288,140 @@ export const widgetTypes: WidgetTypeDefinitionDto[] = [
         defaultValue: false
       }
     }
+  },
+  {
+    type: "network-traffic",
+    name: "Network Traffic",
+    description: "Display real-time network RX/TX statistics",
+    category: "fleet",
+    icon: "Network",
+    requiresAdmin: false,
+    configSchema: {
+      nodeId: {
+        type: "select",
+        label: "Node",
+        description: "Select a node to monitor",
+        required: true,
+        options: ["auto"],
+        defaultValue: ""
+      },
+      showHistory: {
+        type: "boolean",
+        label: "Show History Chart",
+        description: "Display a mini chart of recent traffic",
+        defaultValue: true
+      }
+    }
+  },
+  {
+    type: "gpu-monitor",
+    name: "GPU Monitor",
+    description: "Display GPU utilization, temperature, and memory usage",
+    category: "fleet",
+    icon: "Monitor",
+    requiresAdmin: false,
+    configSchema: {
+      nodeId: {
+        type: "select",
+        label: "Node",
+        description: "Select a node with NVIDIA GPUs",
+        required: true,
+        options: ["auto"],
+        defaultValue: ""
+      },
+      showAllGpus: {
+        type: "boolean",
+        label: "Show All GPUs",
+        description: "Display all GPUs or just the first one",
+        defaultValue: true
+      }
+    }
+  },
+  {
+    type: "top-processes",
+    name: "Top Processes",
+    description: "Display top CPU or memory consuming processes",
+    category: "fleet",
+    icon: "Terminal",
+    requiresAdmin: false,
+    configSchema: {
+      nodeId: {
+        type: "select",
+        label: "Node",
+        description: "Select a node to monitor",
+        required: true,
+        options: ["auto"],
+        defaultValue: ""
+      },
+      maxProcesses: {
+        type: "number",
+        label: "Max Processes",
+        description: "Number of processes to display",
+        required: true,
+        min: 3,
+        max: 20,
+        defaultValue: 5
+      },
+      sortBy: {
+        type: "select",
+        label: "Sort By",
+        description: "Sort processes by CPU or memory usage",
+        required: true,
+        options: ["cpu", "memory"],
+        defaultValue: "cpu"
+      }
+    }
+  },
+  {
+    type: "disk-health",
+    name: "Disk Health",
+    description: "Display SMART disk health status and statistics",
+    category: "fleet",
+    icon: "HardDrive",
+    requiresAdmin: false,
+    configSchema: {
+      nodeId: {
+        type: "select",
+        label: "Node",
+        description: "Select a node to monitor",
+        required: true,
+        options: ["auto"],
+        defaultValue: ""
+      },
+      showAllDrives: {
+        type: "boolean",
+        label: "Show All Drives",
+        description: "Display all drives or just the first one",
+        defaultValue: true
+      }
+    }
+  },
+  {
+    type: "script-runs",
+    name: "Recent Scripts",
+    description: "Display recent script execution history",
+    category: "fleet",
+    icon: "ScrollText",
+    requiresAdmin: false,
+    configSchema: {
+      nodeId: {
+        type: "select",
+        label: "Node",
+        description: "Select a node to view script runs",
+        required: true,
+        options: ["auto"],
+        defaultValue: ""
+      },
+      maxRuns: {
+        type: "number",
+        label: "Max Runs",
+        description: "Number of recent runs to display",
+        required: true,
+        min: 3,
+        max: 20,
+        defaultValue: 5
+      }
+    }
   }
 ];
 
@@ -297,7 +436,12 @@ export function getWidgetIcon(name: string): LucideIcon {
     Clock,
     Bookmark,
     Code,
-    Globe
+    Globe,
+    Network,
+    Monitor,
+    Terminal,
+    HardDrive,
+    ScrollText
   };
   
   return iconMap[name] || Activity;
