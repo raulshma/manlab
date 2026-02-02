@@ -1,4 +1,5 @@
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.Configuration;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -41,6 +42,19 @@ var valkey = builder.AddValkey("valkey")
     .WithPersistence(
         interval: TimeSpan.FromMinutes(5),
         keysChangedThreshold: 100);
+
+// Redis Insight UI - visual management for Valkey (disabled by default)
+var redisInsightEnabled = builder.Configuration.GetValue<bool>("RedisInsight:Enabled");
+var redisInsightPort = builder.Configuration.GetValue<int>("RedisInsight:Port", 15540);
+
+if (redisInsightEnabled)
+{
+    builder.AddContainer("redis-insight", "redis/redisinsight")
+        .WithImageTag("latest")
+        .WithHttpEndpoint(port: redisInsightPort, targetPort: 5540, name: "http")
+        .WithEnvironment("REDIS_URI", "redis://valkey:6379")
+        .WaitFor(valkey);
+}
 
 builder.AddContainer("nats-ui", "ghcr.io/nats-nui/nui")
     .WithImageTag("latest")
