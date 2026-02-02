@@ -448,7 +448,12 @@ public class AgentHub : Hub
                 if (config.Enabled)
                 {
                     // Copy list to avoid closure/collection modification issues if reusing the object
-                    var context = new ProcessAlertContext(nodeId, data.TopProcesses.ToList(), config);
+                    var context = new ProcessAlertContext
+                    {
+                        NodeId = nodeId,
+                        Processes = data.TopProcesses.ToList(),
+                        Config = config
+                    };
                     await _processAlertQueue.TryEnqueueAsync(context);
                 }
             }

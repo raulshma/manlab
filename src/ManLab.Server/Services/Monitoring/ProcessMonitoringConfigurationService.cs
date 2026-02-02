@@ -5,20 +5,6 @@ using Microsoft.Extensions.Options;
 
 namespace ManLab.Server.Services.Monitoring;
 
-/// <summary>
-/// Configuration for process monitoring with hierarchical settings.
-/// </summary>
-public class ProcessMonitoringConfig
-{
-    public bool Enabled { get; set; } = true;
-    public int TopCpuCount { get; set; } = 10;
-    public int TopMemoryCount { get; set; } = 10;
-    public int RefreshIntervalSeconds { get; set; } = 5;
-    public double CpuAlertThreshold { get; set; } = 80.0;
-    public double MemoryAlertThreshold { get; set; } = 80.0;
-    public string[] ExcludePatterns { get; set; } = Array.Empty<string>();
-}
-
 public interface IProcessMonitoringConfigurationService
 {
     Task<ProcessMonitoringConfig> GetGlobalConfigAsync();

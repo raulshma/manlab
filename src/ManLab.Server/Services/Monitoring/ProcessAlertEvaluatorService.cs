@@ -1,4 +1,5 @@
 using ManLab.Server.Hubs;
+using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.SignalR;
 using NATS.Client.Core;
 
@@ -6,6 +7,7 @@ namespace ManLab.Server.Services.Monitoring;
 
 /// <summary>
 /// Background service that consumes process alert evaluation requests from NATS.
+/// Uses global serializer registry for optimal performance.
 /// </summary>
 public sealed class ProcessAlertEvaluatorService(
     INatsConnection nats,
@@ -13,7 +15,6 @@ public sealed class ProcessAlertEvaluatorService(
     IHubContext<AgentHub> hubContext,
     ILogger<ProcessAlertEvaluatorService> logger) : BackgroundService
 {
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("Process alert evaluator service started (NATS)");

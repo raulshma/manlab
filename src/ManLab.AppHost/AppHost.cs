@@ -56,13 +56,20 @@ if (redisInsightEnabled)
         .WaitFor(valkey);
 }
 
-builder.AddContainer("nats-ui", "ghcr.io/nats-nui/nui")
-    .WithImageTag("latest")
-    // NUI listens on port 31311 by default.
-    // It does not support auto-connection via NATS_URL env var without mounting config files.
-    // User will need to manually connect to 'nats://nats:4222'.
-    .WithHttpEndpoint(port: 14222, targetPort: 31311, name: "http")
-    .WaitFor(nats);
+// NATS UI (NUI) - visual management for NATS (disabled by default)
+var natsUiEnabled = builder.Configuration.GetValue<bool>("Nats:UiEnabled");
+var natsUiPort = builder.Configuration.GetValue<int>("Nats:UiPort", 14222);
+
+if (natsUiEnabled)
+{
+    builder.AddContainer("nats-ui", "ghcr.io/nats-nui/nui")
+        .WithImageTag("latest")
+        // NUI listens on port 31311 by default.
+        // It does not support auto-connection via NATS_URL env var without mounting config files.
+        // User will need to manually connect to 'nats://nats:4222'.
+        .WithHttpEndpoint(port: natsUiPort, targetPort: 31311, name: "http")
+        .WaitFor(nats);
+}
 
 var server = builder.AddProject<Projects.ManLab_Server>("server")
     .WithHttpHealthCheck("/health")

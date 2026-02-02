@@ -1,4 +1,6 @@
 using ManLab.Server.Data.Entities;
+using ManLab.Server.Mappers;
+using ManLab.Shared.Dtos;
 using Microsoft.Extensions.Logging;
 using NATS.Client.Core;
 
@@ -6,6 +8,7 @@ namespace ManLab.Server.Services.Audit;
 
 /// <summary>
 /// NATS-backed queue for audit log events.
+/// Uses AuditEventDto with source-generated JSON serialization and Mapperly for zero-overhead mapping.
 /// </summary>
 public sealed class AuditLogQueue(INatsConnection nats, ILogger<AuditLogQueue> logger)
 {
@@ -15,7 +18,9 @@ public sealed class AuditLogQueue(INatsConnection nats, ILogger<AuditLogQueue> l
     {
         try
         {
-            await nats.PublishAsync(Subject, evt, cancellationToken: cancellationToken).ConfigureAwait(false);
+            // Use Mapperly for zero-runtime-overhead mapping to DTO
+            var dto = evt.ToDto();
+            await nats.PublishAsync(Subject, dto, cancellationToken: cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)
@@ -25,4 +30,3 @@ public sealed class AuditLogQueue(INatsConnection nats, ILogger<AuditLogQueue> l
         }
     }
 }
-

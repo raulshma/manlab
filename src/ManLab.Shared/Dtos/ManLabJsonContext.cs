@@ -59,4 +59,7 @@ namespace ManLab.Shared.Dtos;
 [JsonSerializable(typeof(RssFeedValidationResponse))]
 [JsonSerializable(typeof(WidgetTypeDefinitionDto))]
 [JsonSerializable(typeof(WidgetConfigPropertyDto))]
+[JsonSerializable(typeof(ProcessAlertContext))]
+[JsonSerializable(typeof(ProcessMonitoringConfig))]
+[JsonSerializable(typeof(AuditEventDto))]
 public partial class ManLabJsonContext : JsonSerializerContext;

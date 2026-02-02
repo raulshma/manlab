@@ -1,6 +1,8 @@
 using System.Threading.Channels;
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
+using ManLab.Server.Mappers;
+using ManLab.Shared.Dtos;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using NATS.Client.Core;
@@ -9,6 +11,7 @@ namespace ManLab.Server.Services.Audit;
 
 /// <summary>
 /// Background worker that persists audit events from NATS.
+/// Uses AuditEventDto with source-generated JSON deserialization and Mapperly for zero-overhead mapping.
 /// </summary>
 public sealed class AuditLogWriterService : BackgroundService
 {
@@ -16,7 +19,7 @@ public sealed class AuditLogWriterService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly INatsConnection _nats;
     private readonly IOptionsMonitor<AuditOptions> _options;
-    private readonly Channel<AuditEvent> _localQueue;
+    private readonly Channel<AuditEventDto> _localQueue;
 
     public AuditLogWriterService(
         ILogger<AuditLogWriterService> logger,
@@ -30,7 +33,7 @@ public sealed class AuditLogWriterService : BackgroundService
         _options = options;
 
         // Local buffer to decouple NATS subscription from DB writes
-        _localQueue = Channel.CreateBounded<AuditEvent>(new BoundedChannelOptions(1000)
+        _localQueue = Channel.CreateBounded<AuditEventDto>(new BoundedChannelOptions(1000)
         {
             SingleReader = true,
             SingleWriter = true, // NATS subscription loop is the single writer
@@ -61,7 +64,7 @@ public sealed class AuditLogWriterService : BackgroundService
     {
         try
         {
-            await foreach (var msg in _nats.SubscribeAsync<AuditEvent>(AuditLogQueue.Subject, queueGroup: "manlab.server.audit", cancellationToken: ct))
+            await foreach (var msg in _nats.SubscribeAsync<AuditEventDto>(AuditLogQueue.Subject, queueGroup: "manlab.server.audit", cancellationToken: ct))
             {
                 if (msg.Data is { } evt)
                 {
@@ -129,7 +132,7 @@ public sealed class AuditLogWriterService : BackgroundService
         var maxBatchSize = Math.Max(10, _options.CurrentValue.MaxBatchSize);
         var flushInterval = TimeSpan.FromMilliseconds(Math.Max(50, _options.CurrentValue.FlushIntervalMilliseconds));
 
-        var batch = new List<AuditEvent>(capacity: Math.Min(maxBatchSize, 512));
+        var batch = new List<AuditEventDto>(capacity: Math.Min(maxBatchSize, 512));
         using var timer = new PeriodicTimer(flushInterval);
 
         // Wait for at least one item or a flush tick.
@@ -162,7 +165,9 @@ public sealed class AuditLogWriterService : BackgroundService
             return;
         }
 
-        // Persist in one transaction for efficiency.
+        // Use Mapperly for zero-runtime-overhead mapping to entities
+        var entities = batch.ToEntities().ToList();
+
         const int maxAttempts = 3;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -171,7 +176,7 @@ public sealed class AuditLogWriterService : BackgroundService
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<DataContext>();
 
-                db.AuditEvents.AddRange(batch);
+                db.AuditEvents.AddRange(entities);
                 await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -186,4 +191,3 @@ public sealed class AuditLogWriterService : BackgroundService
         _logger.LogError("Audit DB write failed after {MaxAttempts} attempts; dropping {Count} events", maxAttempts, batch.Count);
     }
 }
-

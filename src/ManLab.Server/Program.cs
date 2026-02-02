@@ -25,6 +25,7 @@ using Quartz;
 using Scalar.AspNetCore;
 using System.Security.Cryptography;
 using System.Text;
+using NATS.Client.Core;
 using NATS.Client.Serializers.Json;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -351,7 +352,16 @@ var connectionString =
     builder.Configuration.GetConnectionString("manlab") ??
     builder.Configuration.GetConnectionString("DefaultConnection");
 
-builder.AddNatsClient("nats");
+// Configure NATS with custom serializer registry for optimal performance.
+// Uses source-generated JSON for types in ManLabJsonContext, falls back to default for others.
+var natsUrl = builder.Configuration.GetConnectionString("nats") ?? "nats://localhost:4222";
+var natsOpts = NatsOpts.Default with
+{
+    Url = natsUrl,
+    SerializerRegistry = ManLabNatsSerializerRegistry.Instance,
+    Name = $"ManLab.Server-{Environment.MachineName}"
+};
+builder.Services.AddSingleton<INatsConnection>(new NatsConnection(natsOpts));
 
 if (string.IsNullOrWhiteSpace(connectionString))
 {

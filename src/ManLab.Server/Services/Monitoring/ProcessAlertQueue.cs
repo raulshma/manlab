@@ -6,6 +6,7 @@ namespace ManLab.Server.Services.Monitoring;
 
 /// <summary>
 /// NATS-backed queue for process alert evaluations.
+/// Uses global serializer registry for optimal performance.
 /// </summary>
 public sealed class ProcessAlertQueue(INatsConnection nats, ILogger<ProcessAlertQueue> logger)
 {

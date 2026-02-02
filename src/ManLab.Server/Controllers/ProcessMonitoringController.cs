@@ -1,6 +1,7 @@
 using ManLab.Server.Services;
 using ManLab.Server.Services.Monitoring;
 using ManLab.Server.Services.Security;
+using ManLab.Shared.Dtos;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 

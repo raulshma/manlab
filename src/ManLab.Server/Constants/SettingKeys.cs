@@ -206,7 +206,15 @@ public static class SettingKeys
 
     public static class Nats
     {
+        /// <summary>
+        /// Whether the NATS UI (NUI) container is enabled.
+        /// </summary>
         public const string UiEnabled = "Nats.UiEnabled";
+
+        /// <summary>
+        /// Port for the NATS UI container (default: 14222).
+        /// </summary>
+        public const string UiPort = "Nats.UiPort";
     }
 
     public static class Network
