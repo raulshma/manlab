@@ -23,6 +23,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Quartz;
 using Scalar.AspNetCore;
+using StackExchange.Redis;
 using System.Security.Cryptography;
 using System.Text;
 using NATS.Client.Core;
@@ -44,6 +45,7 @@ builder.Services
         options.JsonSerializerOptions.TypeInfoResolverChain.Insert(0, ManLabJsonContext.Default);
     });
 
+// Configure SignalR
 builder.Services
     .AddSignalR(hubOptions =>
     {
@@ -88,6 +90,29 @@ builder.Services.AddHttpContextAccessor();
 builder.AddRedisDistributedCache("valkey");
 builder.Services.AddHybridCache();
 builder.Services.AddResponseCaching();
+
+// Register Redis connection multiplexer for health checks and SignalR backplane
+var redisConnectionString = builder.Configuration.GetConnectionString("redis");
+if (!string.IsNullOrWhiteSpace(redisConnectionString))
+{
+    builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+    {
+        var logger = sp.GetRequiredService<ILogger<Program>>();
+        try
+        {
+            var configuration = ConfigurationOptions.Parse(redisConnectionString);
+            configuration.AbortOnConnectFail = false;
+            var multiplexer = ConnectionMultiplexer.Connect(configuration);
+            logger.LogInformation("Redis connection multiplexer initialized");
+            return multiplexer;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to initialize Redis connection multiplexer");
+            throw;
+        }
+    });
+}
 
 // Keep IMemoryCache for rate limiters that need local-only state
 builder.Services.AddMemoryCache(options =>
@@ -346,11 +371,24 @@ builder.Services.AddOptions<TelemetryRollupOptions>()
     .Bind(builder.Configuration.GetSection(TelemetryRollupOptions.SectionName));
 builder.Services.AddHostedService<TelemetryRollupService>();
 
+// Database configuration options (connection pooling, read replica routing)
+builder.Services.AddOptions<DatabaseOptions>()
+    .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
+    .ValidateDataAnnotations();
+
+// SignalR scaling configuration
+builder.Services.AddOptions<SignalROptions>()
+    .Bind(builder.Configuration.GetSection(SignalROptions.SectionName));
+
+// Register data context factory for optimized read queries
+builder.Services.AddDataContextFactorySupport();
+
 // Configure Entity Framework Core with PostgreSQL via Aspire integration.
 // The connection name ("manlab") must match the database resource name in the AppHost.
 var connectionString =
     builder.Configuration.GetConnectionString("manlab") ??
     builder.Configuration.GetConnectionString("DefaultConnection");
+var replicaConnectionString = builder.Configuration.GetConnectionString("manlabReplica");
 
 // Configure NATS with custom serializer registry for optimal performance.
 // Uses source-generated JSON for types in ManLabJsonContext, falls back to default for others.
@@ -370,15 +408,33 @@ if (string.IsNullOrWhiteSpace(connectionString))
         "Run via the Aspire AppHost (which provides ConnectionStrings:manlab) or set ConnectionStrings:DefaultConnection.");
 }
 
-builder.Services.AddDbContext<DataContext>(options =>
+// Build a deferred configuration that resolves options from DI
+builder.Services.AddDbContext<DataContext>((sp, options) =>
 {
+    var dbOptions = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+
     options.UseNpgsql(connectionString, npgsqlOptions =>
     {
         npgsqlOptions.MaxBatchSize(100);
         npgsqlOptions.CommandTimeout(30);
-        npgsqlOptions.EnableRetryOnFailure(3, TimeSpan.FromSeconds(30), null);
+
+        // Configure retry based on options
+        var resiliency = dbOptions.ConnectionResiliency;
+        npgsqlOptions.EnableRetryOnFailure(
+            resiliency.MaxRetryCount,
+            TimeSpan.FromSeconds(resiliency.MaxRetryDelaySeconds),
+            null);
     });
+
     options.AddInterceptors(new BoundedTextSaveChangesInterceptor());
+
+    // Enable detailed errors only in development with option enabled
+    if (builder.Environment.IsDevelopment() && dbOptions.ConnectionResiliency.EnableDetailedErrors)
+    {
+        options.EnableSensitiveDataLogging();
+        options.EnableDetailedErrors();
+    }
+
     // Allow startup to proceed even if model changes exist; migrations will still be applied.
     options.ConfigureWarnings(warnings =>
         warnings.Ignore(RelationalEventId.PendingModelChangesWarning));

@@ -53,6 +53,7 @@ if (redisInsightEnabled)
         .WithImageTag("latest")
         .WithHttpEndpoint(port: redisInsightPort, targetPort: 5540, name: "http")
         .WithEnvironment("REDIS_URI", "redis://valkey:6379")
+        .WithVolume("manlab-redis-insight-data", "/db")
         .WaitFor(valkey);
 }
 
