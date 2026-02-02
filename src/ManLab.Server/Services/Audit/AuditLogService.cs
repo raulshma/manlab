@@ -42,17 +42,21 @@ public sealed class AuditLogService : IAuditLog
 
             Normalize(evt);
 
-            var ok = _queue.Writer.TryWrite(evt);
-            if (ok)
+            // Fire-and-forget dispatch to NATS.
+            _ = Task.Run(async () =>
             {
-                Enqueued.Add(1);
-            }
-            else
-            {
-                Dropped.Add(1);
-            }
+                try
+                {
+                    await _queue.TryEnqueueAsync(evt);
+                }
+                catch
+                {
+                    Dropped.Add(1);
+                }
+            });
 
-            return ok;
+            Enqueued.Add(1);
+            return true;
         }
         catch (Exception ex)
         {

@@ -13,16 +13,11 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
     private readonly IHubContext<NetworkHub> _hubContext;
     private readonly ILogger<PacketCaptureService> _logger;
     private readonly PacketCaptureOptions _options;
+    private readonly Channel<PacketCaptureRecord> _packetChannel;
 
     private readonly object _gate = new();
     private readonly List<PacketCaptureRecord> _packets = [];
-    private readonly Channel<PacketCaptureRecord> _broadcastChannel = Channel.CreateBounded<PacketCaptureRecord>(
-        new BoundedChannelOptions(1000)
-        {
-            FullMode = BoundedChannelFullMode.DropWrite,
-            SingleReader = true,
-            SingleWriter = false
-        });
+
     private long _nextId;
     private long _droppedCount;
     private long _broadcastSampleCounter;
@@ -46,6 +41,14 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
         _options = options.Value;
         _hubContext = hubContext;
         _logger = logger;
+
+        // Channel for buffering packets before broadcasting to SignalR
+        _packetChannel = Channel.CreateBounded<PacketCaptureRecord>(new BoundedChannelOptions(1000)
+        {
+            SingleReader = true,
+            SingleWriter = false, // Multiple packets may arrive concurrently
+            FullMode = BoundedChannelFullMode.DropWrite
+        });
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -380,7 +383,8 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
         var sampleEvery = Math.Max(1, _options.BroadcastSampleEvery);
         if (sampleEvery == 1 || Interlocked.Increment(ref _broadcastSampleCounter) % sampleEvery == 0)
         {
-            _broadcastChannel.Writer.TryWrite(record);
+            // Write directly to the broadcast channel
+            _packetChannel.Writer.TryWrite(record);
         }
     }
 
@@ -388,37 +392,42 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
     {
         var batchSize = Math.Clamp(_options.BroadcastBatchSize, 1, 500);
         var intervalMs = Math.Clamp(_options.BroadcastIntervalMs, 25, 2000);
+
         var batch = new List<PacketCaptureRecord>(batchSize);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(intervalMs));
 
-        while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+        try
         {
-            while (batch.Count < batchSize && _broadcastChannel.Reader.TryRead(out var record))
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
-                batch.Add(record);
-            }
+                while (batch.Count < batchSize && _packetChannel.Reader.TryRead(out var record))
+                {
+                    batch.Add(record);
+                }
 
-            if (batch.Count == 0)
-            {
-                continue;
-            }
+                if (batch.Count == 0)
+                {
+                    continue;
+                }
 
-            try
-            {
-                await _hubContext.Clients
-                    .Group(NetworkHub.PacketCaptureGroup)
-                    .SendAsync("PacketCapturedBatch", batch, ct)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogDebug(ex, "Failed to broadcast packet batch");
-            }
-            finally
-            {
-                batch.Clear();
+                try
+                {
+                    await _hubContext.Clients
+                        .Group(NetworkHub.PacketCaptureGroup)
+                        .SendAsync("PacketCapturedBatch", batch, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogDebug(ex, "Failed to broadcast packet batch");
+                }
+                finally
+                {
+                    batch.Clear();
+                }
             }
         }
+        catch (OperationCanceledException) { }
     }
 
     private PacketCaptureRecord? BuildRecord(RawCapture capture)

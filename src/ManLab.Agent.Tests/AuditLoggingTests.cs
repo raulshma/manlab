@@ -4,6 +4,8 @@ using ManLab.Server.Services.Audit;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Moq;
+using NATS.Client.Core;
 using Xunit;
 
 namespace ManLab.Agent.Tests;
@@ -14,13 +16,21 @@ public sealed class AuditLoggingTests
     public void AuditLogService_TryEnqueue_WhenDisabled_DropsEvent()
     {
         var options = new TestOptionsMonitor<AuditOptions>(new AuditOptions { Enabled = false });
-        var queue = new AuditLogQueue(options);
+        var natsMock = new Mock<INatsConnection>();
+        var queue = new AuditLogQueue(natsMock.Object, NullLogger<AuditLogQueue>.Instance);
         var audit = new AuditLogService(NullLogger<AuditLogService>.Instance, queue, options);
 
         var ok = audit.TryEnqueue(new AuditEvent { EventName = "x", Kind = "audit" });
 
         Assert.False(ok);
-        Assert.False(queue.Reader.TryRead(out _));
+        natsMock.Verify(x => x.PublishAsync(
+            AuditLogQueue.Subject,
+            It.IsAny<AuditEvent>(),
+            It.IsAny<NatsHeaders>(),
+            It.IsAny<string>(),
+            It.IsAny<INatsSerialize<AuditEvent>>(),
+            It.IsAny<NatsPubOpts>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -29,11 +39,21 @@ public sealed class AuditLoggingTests
         var options = new TestOptionsMonitor<AuditOptions>(new AuditOptions
         {
             Enabled = true,
-            QueueCapacity = 100,
             MaxDataJsonBytesUtf8 = 128
         });
 
-        var queue = new AuditLogQueue(options);
+        var natsMock = new Mock<INatsConnection>();
+        natsMock.Setup(x => x.PublishAsync(
+            AuditLogQueue.Subject,
+            It.IsAny<AuditEvent>(),
+            It.IsAny<NatsHeaders>(),
+            It.IsAny<string>(),
+            It.IsAny<INatsSerialize<AuditEvent>>(),
+            It.IsAny<NatsPubOpts>(),
+            It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        var queue = new AuditLogQueue(natsMock.Object, NullLogger<AuditLogQueue>.Instance);
         var audit = new AuditLogService(NullLogger<AuditLogService>.Instance, queue, options);
 
         var big = "{\"data\":\"" + new string('a', 1000) + "\"}";
@@ -47,8 +67,14 @@ public sealed class AuditLoggingTests
         });
 
         Assert.True(ok);
-        Assert.True(queue.Reader.TryRead(out var evt));
-        Assert.Equal("{\"_truncated\":true}", evt.DataJson);
+        natsMock.Verify(x => x.PublishAsync(
+            AuditLogQueue.Subject,
+            It.Is<AuditEvent>(e => e.DataJson == "{\"_truncated\":true}"),
+            It.IsAny<NatsHeaders>(),
+            It.IsAny<string>(),
+            It.IsAny<INatsSerialize<AuditEvent>>(),
+            It.IsAny<NatsPubOpts>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

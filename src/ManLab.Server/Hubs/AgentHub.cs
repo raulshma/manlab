@@ -439,8 +439,7 @@ public class AgentHub : Hub
             // Capture process data to avoid closure issues
             var processesCopy = data.TopProcesses.ToList();
 
-        // Evaluate process alerts asynchronously using bounded queue
-        // Fire-and-forget but with backpressure (drop if full)
+        // Evaluate process alerts asynchronously using NATS
         if (data.TopProcesses is { Count: > 0 })
         {
             try
@@ -450,7 +449,7 @@ public class AgentHub : Hub
                 {
                     // Copy list to avoid closure/collection modification issues if reusing the object
                     var context = new ProcessAlertContext(nodeId, data.TopProcesses.ToList(), config);
-                    _processAlertQueue.TryEnqueue(context);
+                    await _processAlertQueue.TryEnqueueAsync(context);
                 }
             }
             catch (Exception ex)
