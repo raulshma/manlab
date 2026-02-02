@@ -23,6 +23,7 @@ import { DockerStudioPage } from "./pages/DockerStudioPage";
 import { ProcessesPage } from "./pages/ProcessesPage";
 import { UsersPage } from "./pages/UsersPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
+import { NatsPage } from "./pages/NatsPage";
 import { Toaster } from "@/components/ui/sonner";
 
 // Create a client
@@ -54,6 +55,7 @@ function AppRoutes() {
         <Route path="/docker" element={<DockerStudioPage />} />
         <Route path="/processes" element={<ProcessesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/nats" element={<NatsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

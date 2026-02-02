@@ -20,6 +20,7 @@ import { GitHubReleaseSettings } from "@/components/settings/GitHubReleaseSettin
 import { NetworkSettings } from "@/components/settings/NetworkSettings";
 import { AuthSettings } from "@/components/settings/AuthSettings";
 import { ProcessMonitoringSettings } from "@/components/settings/ProcessMonitoringSettings";
+import { NatsSettings } from "@/components/settings/NatsSettings";
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme();
@@ -144,6 +145,7 @@ export function SettingsPage() {
         </TabsContent>
         <TabsContent value="monitoring" className="space-y-4">
             <ProcessMonitoringSettings />
+            <NatsSettings />
         </TabsContent>
 
       </Tabs>

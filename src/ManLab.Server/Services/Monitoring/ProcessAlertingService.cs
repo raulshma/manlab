@@ -251,21 +251,50 @@ public class ProcessAlertingService
             // Batch log all alerts for this node
             foreach (var alert in nodeGroup)
             {
-                _logger.LogWarning(
-                    "Process alert: Node {NodeName} (ID: {NodeId}), Process {ProcessName} (PID: {ProcessId}), {AlertType} {CurrentValue}% exceeds threshold {Threshold}%",
-                    node.Hostname,
-                    node.Id,
-                    alert.ProcessName,
-                    alert.ProcessId,
-                    alert.AlertType,
-                    alert.CurrentValue,
-                    alert.Threshold);
+                if (alert.AlertType == "Memory")
+                {
+                    _logger.LogWarning(
+                        "Process alert: Node {NodeName} (ID: {NodeId}), Process {ProcessName} (PID: {ProcessId}), Memory {CurrentValue} exceeds threshold {Threshold}",
+                        node.Hostname,
+                        node.Id,
+                        alert.ProcessName,
+                        alert.ProcessId,
+                        FormatBytes(alert.CurrentValue),
+                        FormatBytes(alert.Threshold));
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Process alert: Node {NodeName} (ID: {NodeId}), Process {ProcessName} (PID: {ProcessId}), CPU {CurrentValue:F1}% exceeds threshold {Threshold:F1}%",
+                        node.Hostname,
+                        node.Id,
+                        alert.ProcessName,
+                        alert.ProcessId,
+                        alert.CurrentValue,
+                        alert.Threshold);
+                }
             }
 
             // Send Discord notification
             // This would require extending INotificationService
             // For now, we'll just log
         }
+    }
+
+    /// <summary>
+    /// Formats byte values into human-readable format (MB or GB).
+    /// </summary>
+    private static string FormatBytes(double bytes)
+    {
+        const double GB = 1024 * 1024 * 1024;
+        const double MB = 1024 * 1024;
+
+        if (bytes >= GB)
+        {
+            return $"{bytes / GB:F2} GB";
+        }
+
+        return $"{bytes / MB:F1} MB";
     }
 
     /// <summary>

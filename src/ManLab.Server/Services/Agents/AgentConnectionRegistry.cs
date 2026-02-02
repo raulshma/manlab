@@ -24,6 +24,16 @@ public sealed class AgentConnectionRegistry
 
     public void Set(Guid nodeId, string connectionId)
     {
+        // Fix: Clean up old connection ID for this node if it exists to prevent leak in _connectionIdToNode
+        if (_nodeToConnectionId.TryGetValue(nodeId, out var oldConnectionId))
+        {
+            // Only remove if it's different (re-registration case)
+            if (!string.Equals(oldConnectionId, connectionId, StringComparison.Ordinal))
+            {
+                _connectionIdToNode.TryRemove(oldConnectionId, out _);
+            }
+        }
+
         _nodeToConnectionId[nodeId] = connectionId;
         _connectionIdToNode[connectionId] = nodeId;
 

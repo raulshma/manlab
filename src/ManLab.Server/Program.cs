@@ -25,6 +25,7 @@ using Quartz;
 using Scalar.AspNetCore;
 using System.Security.Cryptography;
 using System.Text;
+using NATS.Client.Serializers.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -240,6 +241,8 @@ builder.Services.AddOptions<ProcessMonitoringOptions>()
     .ValidateDataAnnotations();
 builder.Services.AddSingleton<IProcessMonitoringConfigurationService, ProcessMonitoringConfigurationService>();
 builder.Services.AddSingleton<ProcessAlertingService>();
+builder.Services.AddSingleton<ProcessAlertQueue>();
+builder.Services.AddHostedService<ProcessAlertEvaluatorService>();
 
 builder.Services.AddSingleton<DiscordWebhookNotificationService>();
 builder.Services.AddSingleton<INotificationService>(sp => sp.GetRequiredService<DiscordWebhookNotificationService>());
@@ -340,6 +343,8 @@ builder.Services.AddHostedService<TelemetryRollupService>();
 var connectionString =
     builder.Configuration.GetConnectionString("manlab") ??
     builder.Configuration.GetConnectionString("DefaultConnection");
+
+builder.AddNatsClient("nats");
 
 if (string.IsNullOrWhiteSpace(connectionString))
 {

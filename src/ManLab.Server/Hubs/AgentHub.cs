@@ -52,7 +52,7 @@ public class AgentHub : Hub
     private readonly DownloadSessionService _downloadSessions;
     private readonly StreamingDownloadService _streamingDownloads;
     private readonly IProcessMonitoringConfigurationService _processMonitoringConfig;
-    private readonly ProcessAlertingService _processAlerting;
+    private readonly ProcessAlertQueue _processAlertQueue;
     private readonly IHubContext<AgentHub> _hubContext;
 
     public AgentHub(
@@ -64,7 +64,7 @@ public class AgentHub : Hub
         DownloadSessionService downloadSessions,
         StreamingDownloadService streamingDownloads,
         IProcessMonitoringConfigurationService processMonitoringConfig,
-        ProcessAlertingService processAlerting,
+        ProcessAlertQueue processAlertQueue,
         IHubContext<AgentHub> hubContext)
     {
         _logger = logger;
@@ -75,7 +75,7 @@ public class AgentHub : Hub
         _downloadSessions = downloadSessions;
         _streamingDownloads = streamingDownloads;
         _processMonitoringConfig = processMonitoringConfig;
-        _processAlerting = processAlerting;
+        _processAlertQueue = processAlertQueue;
         _hubContext = hubContext;
     }
 
@@ -439,41 +439,26 @@ public class AgentHub : Hub
             // Capture process data to avoid closure issues
             var processesCopy = data.TopProcesses.ToList();
 
-            _ = Task.Run(async () =>
+        // Evaluate process alerts asynchronously using bounded queue
+        // Fire-and-forget but with backpressure (drop if full)
+        if (data.TopProcesses is { Count: > 0 })
+        {
+            try
             {
-                try
+                var config = await _processMonitoringConfig.GetNodeConfigAsync(nodeId);
+                if (config.Enabled)
                 {
-                    var config = await _processMonitoringConfig.GetNodeConfigAsync(nodeId);
-                    if (!config.Enabled || processesCopy.Count == 0)
-                    {
-                        return;
-                    }
-
-                    var alerts = _processAlerting.EvaluateAlerts(processesCopy, config, nodeId);
-                    if (alerts.Count == 0)
-                    {
-                        return;
-                    }
-
-                    // Broadcast alerts to dashboard (non-blocking)
-                    try
-                    {
-                        await _hubContext.Clients.Group(DashboardGroupName).SendAsync("processalerts", nodeId, alerts);
-                    }
-                    catch (Exception broadcastEx)
-                    {
-                        _logger.LogWarning(broadcastEx, "Failed to broadcast process alerts for node {NodeId}", nodeId);
-                    }
-
-                    // Send notifications
-                    await _processAlerting.SendAlertNotificationsAsync(alerts);
+                    // Copy list to avoid closure/collection modification issues if reusing the object
+                    var context = new ProcessAlertContext(nodeId, data.TopProcesses.ToList(), config);
+                    _processAlertQueue.TryEnqueue(context);
                 }
-                catch (Exception ex)
-                {
-                    // Log but don't throw - heartbeat should not fail due to alert processing
-                    _logger.LogError(ex, "Failed to evaluate/notify process alerts for node {NodeId}", nodeId);
-                }
-            });
+            }
+            catch (Exception ex)
+            {
+                 // Log but don't fail heartbeat
+                _logger.LogError(ex, "Failed to enqueue process alerts for node {NodeId}", nodeId);
+            }
+        }
         }
 
         // Node status transitions are handled on Register() (Online) and HealthMonitorService (Offline).

@@ -53,6 +53,9 @@ export const SettingKeys = {
     ReleaseBaseUrl: "GitHub.ReleaseBaseUrl",
     LatestVersion: "GitHub.LatestVersion",
   },
+  Nats: {
+    UiEnabled: "Nats.UiEnabled",
+  },
   Network: {
     RealtimeEnabled: "Network.RealtimeEnabled",
     NotificationsEnabled: "Network.NotificationsEnabled",

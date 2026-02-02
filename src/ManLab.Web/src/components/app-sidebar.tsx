@@ -24,6 +24,14 @@ import { useQuery } from "@tanstack/react-query"
 import { fetchPendingUpdates } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { api } from "@/api"
+import { SettingKeys } from "@/constants/settingKeys"
+import { MessageSquareCode } from "lucide-react"
+
+interface SystemSetting {
+  key: string;
+  value: string | null;
+}
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const location = useLocation()
@@ -51,6 +59,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     staleTime: 30000, // Consider data fresh for 30 seconds
   })
   const pendingCount = pendingData?.totalCount ?? 0
+
+  // Query for system settings to check NATS UI toggle
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: async () => {
+      const response = await api.get<SystemSetting[]>("/api/settings");
+      return response.data;
+    },
+    staleTime: 60000,
+  })
+  const isNatsUiEnabled = settings?.find((s: SystemSetting) => s.key === SettingKeys.Nats.UiEnabled)?.value === "true"
 
   // Debug logging
   React.useEffect(() => {
@@ -170,6 +189,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <span>Monitoring</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                {isNatsUiEnabled && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      render={<NavLink to="/nats" />}
+                      isActive={location.pathname.startsWith("/nats")}
+                    >
+                      <MessageSquareCode />
+                      <span>NATS Console</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     render={<NavLink to="/logs" />}

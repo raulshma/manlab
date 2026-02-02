@@ -204,6 +204,11 @@ public static class SettingKeys
         public const string PreferGitHubForUpdates = "GitHub.PreferGitHubForUpdates";
     }
 
+    public static class Nats
+    {
+        public const string UiEnabled = "Nats.UiEnabled";
+    }
+
     public static class Network
     {
         public const string RealtimeEnabled = "Network.RealtimeEnabled";
