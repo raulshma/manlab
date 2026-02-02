@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.EntityFrameworkCore;
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities;
@@ -16,13 +15,14 @@ public interface ISettingsService
 public class SettingsService : ISettingsService
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IMemoryCache _cache;
+    private readonly ICacheService _cache;
     private readonly ILogger<SettingsService> _logger;
-    private const string CacheKeyPrefix = "SystemSetting_";
+    private const string CacheKeyPrefix = "settings:";
+    private const string SettingsTag = "settings";
 
     public SettingsService(
         IServiceScopeFactory scopeFactory,
-        IMemoryCache cache,
+        ICacheService cache,
         ILogger<SettingsService> logger)
     {
         _scopeFactory = scopeFactory;
@@ -32,25 +32,20 @@ public class SettingsService : ISettingsService
 
     public async Task<string?> GetValueAsync(string key)
     {
-        if (_cache.TryGetValue($"{CacheKeyPrefix}{key}", out string? cachedValue))
-        {
-            return cachedValue;
-        }
+        var cacheKey = $"{CacheKeyPrefix}{key}";
+        var tags = new[] { SettingsTag, $"setting:{key}" };
 
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
-
-        var setting = await db.SystemSettings.FindAsync(key);
-        var value = setting?.Value;
-
-        // Cache for 5 minutes with size tracking
-        _cache.Set($"{CacheKeyPrefix}{key}", value, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
-            Size = 1
-        });
-
-        return value;
+        return await _cache.GetOrCreateAsync(
+            cacheKey,
+            async ct =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+                var setting = await db.SystemSettings.FindAsync(new object[] { key }, ct);
+                return setting?.Value;
+            },
+            expiration: TimeSpan.FromMinutes(5),
+            tags: tags);
     }
 
     public async Task<T> GetValueAsync<T>(string key, T defaultValue)
@@ -89,48 +84,41 @@ public class SettingsService : ISettingsService
         else
         {
             setting.Value = value;
-            setting.Category = category; // Update category just in case
+            setting.Category = category;
             if (description != null) setting.Description = description;
         }
 
         await db.SaveChangesAsync();
 
-        // Invalidate cache for this setting and for GetAll
-        _cache.Remove($"{CacheKeyPrefix}{key}");
-        _cache.Remove($"{CacheKeyPrefix}All");
+        // Invalidate by tag for this specific setting and the "all" collection
+        await _cache.RemoveByTagsAsync(new[] { $"setting:{key}", "settings:all" });
 
-        // If value is not null, cache it
+        // If value is not null, cache it immediately
         if (value != null)
         {
-            _cache.Set($"{CacheKeyPrefix}{key}", value, new MemoryCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
-                Size = 1
-            });
+            var cacheKey = $"{CacheKeyPrefix}{key}";
+            var tags = new[] { SettingsTag, $"setting:{key}" };
+            await _cache.SetAsync(cacheKey, value, expiration: TimeSpan.FromMinutes(5), tags: tags);
         }
     }
 
     public async Task<List<SystemSetting>> GetAllAsync()
     {
-        const string allCacheKey = $"{CacheKeyPrefix}All";
+        var cacheKey = $"{CacheKeyPrefix}all";
+        var tags = new[] { SettingsTag, "settings:all" };
 
-        // Check cache first
-        if (_cache.TryGetValue(allCacheKey, out List<SystemSetting>? cachedSettings))
-        {
-            return cachedSettings ?? new List<SystemSetting>();
-        }
-
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<DataContext>();
-        var settings = await db.SystemSettings.OrderBy(s => s.Category).ThenBy(s => s.Key).ToListAsync();
-
-        // Cache for 2 minutes with size tracking
-        _cache.Set(allCacheKey, settings, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2),
-            Size = settings.Count
-        });
-
-        return settings;
+        return await _cache.GetOrCreateAsync(
+            cacheKey,
+            async ct =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DataContext>();
+                return await db.SystemSettings
+                    .OrderBy(s => s.Category)
+                    .ThenBy(s => s.Key)
+                    .ToListAsync(ct);
+            },
+            expiration: TimeSpan.FromMinutes(2),
+            tags: tags);
     }
 }

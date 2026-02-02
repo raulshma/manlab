@@ -57,7 +57,8 @@ public sealed class FileBrowserController : ControllerBase
     [HttpPost("/api/devices/{nodeId:guid}/file-browser-sessions/{sessionId:guid}/list")]
     public async Task<ActionResult<FileListResponse>> List(Guid nodeId, Guid sessionId, [FromBody] FileListRequest? request)
     {
-        if (!_sessions.TryGet(sessionId, out var session) || session is null)
+        var (sessionFound, session) = await _sessions.TryGetAsync(sessionId);
+        if (!sessionFound || session is null)
         {
             return NotFound("Session not found or expired.");
         }
@@ -201,7 +202,8 @@ public sealed class FileBrowserController : ControllerBase
     [HttpPost("/api/devices/{nodeId:guid}/file-browser-sessions/{sessionId:guid}/read")]
     public async Task<ActionResult<FileReadResponse>> Read(Guid nodeId, Guid sessionId, [FromBody] FileReadRequest request)
     {
-        if (!_sessions.TryGet(sessionId, out var session) || session is null)
+        var (sessionFound, session) = await _sessions.TryGetAsync(sessionId);
+        if (!sessionFound || session is null)
         {
             return NotFound("Session not found or expired.");
         }

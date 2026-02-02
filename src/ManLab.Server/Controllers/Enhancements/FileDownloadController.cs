@@ -98,7 +98,8 @@ public sealed class FileDownloadController : ControllerBase
         }
 
         // Validate file browser session
-        if (!_fileBrowserSessions.TryGet(sessionId, out var fbSession) || fbSession is null)
+        var (fbSessionFound, fbSession) = await _fileBrowserSessions.TryGetAsync(sessionId);
+        if (!fbSessionFound || fbSession is null)
         {
             return NotFound("File browser session not found or expired.");
         }

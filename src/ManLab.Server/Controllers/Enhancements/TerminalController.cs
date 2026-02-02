@@ -135,7 +135,8 @@ public sealed class TerminalController : ControllerBase
             return BadRequest("Input cannot be empty.");
         }
 
-        if (!_sessions.TryGet(sessionId, out var session) || session is null)
+        var (sessionFound, session) = await _sessions.TryGetAsync(sessionId);
+        if (!sessionFound || session is null)
         {
             return NotFound("Session not found or expired.");
         }
@@ -178,7 +179,8 @@ public sealed class TerminalController : ControllerBase
     [HttpPost("/api/devices/{nodeId:guid}/terminal/{sessionId:guid}/close")]
     public async Task<ActionResult<TerminalCloseResponse>> Close(Guid nodeId, Guid sessionId)
     {
-        if (!_sessions.TryGet(sessionId, out var session) || session is null)
+        var (sessionFound, session) = await _sessions.TryGetAsync(sessionId);
+        if (!sessionFound || session is null)
         {
             // Session may have already expired, still try to close in DB
             await _sessions.CloseAsync(sessionId);
@@ -225,7 +227,8 @@ public sealed class TerminalController : ControllerBase
     public async Task<ActionResult<TerminalSessionResponse>> GetSession(Guid nodeId, Guid sessionId)
     {
         // First check cache
-        if (_sessions.TryGet(sessionId, out var cachedSession) && cachedSession is not null)
+        var (sessionFound, cachedSession) = await _sessions.TryGetAsync(sessionId);
+        if (sessionFound && cachedSession is not null)
         {
             if (cachedSession.NodeId != nodeId)
             {

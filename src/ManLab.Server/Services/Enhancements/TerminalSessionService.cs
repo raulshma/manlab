@@ -3,12 +3,11 @@ using ManLab.Server.Data.Entities.Enhancements;
 using ManLab.Server.Data.Enums;
 using ManLab.Server.Services.Audit;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace ManLab.Server.Services.Enhancements;
 
 /// <summary>
-/// In-memory session management for restricted terminal access.
+/// Session management for restricted terminal access using HybridCache.
 /// Sessions are short-lived, audited, and expire automatically.
 /// </summary>
 public sealed class TerminalSessionService
@@ -17,11 +16,15 @@ public sealed class TerminalSessionService
     private static readonly TimeSpan MaxTtl = TimeSpan.FromMinutes(30);
 
     private readonly DataContext _db;
-    private readonly IMemoryCache _cache;
+    private readonly ICacheService _cache;
     private readonly ILogger<TerminalSessionService> _logger;
     private readonly IAuditLog _audit;
 
-    public TerminalSessionService(DataContext db, IMemoryCache cache, ILogger<TerminalSessionService> logger, IAuditLog audit)
+    private const string CacheKeyPrefix = "session:terminal:";
+    private const string SessionsTag = "sessions";
+    private const string TerminalSessionsTag = "terminal-sessions";
+
+    public TerminalSessionService(DataContext db, ICacheService cache, ILogger<TerminalSessionService> logger, IAuditLog audit)
     {
         _db = db;
         _cache = cache;
@@ -90,11 +93,11 @@ public sealed class TerminalSessionService
             ExpiresAt: expiresAt);
 
         // Cache for fast lookups
-        _cache.Set(GetCacheKey(sessionId), session, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpiration = expiresAt,
-            Size = 1 // Track size for cache limits
-        });
+        await _cache.SetAsync(
+            GetCacheKey(sessionId),
+            session,
+            expiration: effectiveTtl,
+            tags: new[] { SessionsTag, TerminalSessionsTag });
 
         _logger.LogInformation("Terminal session created {SessionId} for node {NodeId} by {RequestedBy}",
             sessionId, nodeId, requestedBy ?? "unknown");
@@ -119,16 +122,47 @@ public sealed class TerminalSessionService
     /// <summary>
     /// Attempts to get an active session from cache.
     /// </summary>
-    public bool TryGet(Guid sessionId, out Session? session)
+    public async Task<(bool Success, Session? Session)> TryGetAsync(Guid sessionId)
     {
-        if (_cache.TryGetValue(GetCacheKey(sessionId), out Session? s))
+        var cacheKey = GetCacheKey(sessionId);
+
+        var session = await _cache.GetOrCreateAsync(
+            cacheKey,
+            async ct =>
+            {
+                // Fallback to database if not in cache
+                var dbSession = await _db.TerminalSessions
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.Id == sessionId && s.Status == TerminalSessionStatus.Open, ct);
+
+                if (dbSession is null || dbSession.ExpiresAt <= DateTime.UtcNow)
+                {
+                    return null;
+                }
+
+                return new Session(
+                    SessionId: dbSession.Id,
+                    NodeId: dbSession.NodeId,
+                    RequestedBy: dbSession.RequestedBy,
+                    CreatedAt: dbSession.CreatedAt,
+                    ExpiresAt: dbSession.ExpiresAt);
+            },
+            expiration: TimeSpan.FromMinutes(5),
+            tags: new[] { SessionsTag, TerminalSessionsTag });
+
+        if (session is null)
         {
-            session = s;
-            return true;
+            return (false, null);
         }
 
-        session = null;
-        return false;
+        // Check if session has expired
+        if (session.ExpiresAt <= DateTime.UtcNow)
+        {
+            await _cache.RemoveAsync(cacheKey);
+            return (false, null);
+        }
+
+        return (true, session);
     }
 
     /// <summary>
@@ -136,7 +170,7 @@ public sealed class TerminalSessionService
     /// </summary>
     public async Task<bool> CloseAsync(Guid sessionId)
     {
-        _cache.Remove(GetCacheKey(sessionId));
+        await _cache.RemoveAsync(GetCacheKey(sessionId));
 
         var dbSession = await _db.TerminalSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
         if (dbSession is null)
@@ -171,7 +205,7 @@ public sealed class TerminalSessionService
     /// </summary>
     public async Task<bool> MarkExpiredAsync(Guid sessionId)
     {
-        _cache.Remove(GetCacheKey(sessionId));
+        await _cache.RemoveAsync(GetCacheKey(sessionId));
 
         var dbSession = await _db.TerminalSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
         if (dbSession is null)
@@ -206,7 +240,7 @@ public sealed class TerminalSessionService
     /// </summary>
     public async Task<bool> MarkFailedAsync(Guid sessionId)
     {
-        _cache.Remove(GetCacheKey(sessionId));
+        await _cache.RemoveAsync(GetCacheKey(sessionId));
 
         var dbSession = await _db.TerminalSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
         if (dbSession is null)
@@ -236,5 +270,5 @@ public sealed class TerminalSessionService
         return true;
     }
 
-    private static string GetCacheKey(Guid sessionId) => $"terminal.session.{sessionId:N}";
+    private static string GetCacheKey(Guid sessionId) => $"{CacheKeyPrefix}{sessionId:N}";
 }

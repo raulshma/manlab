@@ -324,7 +324,7 @@ public sealed class FileBrowserPoliciesController : ControllerBase
             return BadRequest(error);
         }
 
-        var result = _sessions.CreateSystemSession(nodeId, maxBytes, ttl);
+        var result = await _sessions.CreateSystemSessionAsync(nodeId, maxBytes, ttl);
         if (!result.Success || result.Session is null)
         {
             return BadRequest(result.Error ?? "Failed to create session");

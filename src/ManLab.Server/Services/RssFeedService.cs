@@ -1,5 +1,4 @@
 using ManLab.Shared.Dtos;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace ManLab.Server.Services;
 
@@ -8,12 +7,12 @@ namespace ManLab.Server.Services;
 /// </summary>
 public class RssFeedService
 {
-    private readonly IMemoryCache _cache;
+    private readonly ICacheService _cache;
     private readonly ILogger<RssFeedService> _logger;
     private readonly HttpClient _httpClient;
     private readonly TimeSpan _defaultCacheDuration = TimeSpan.FromMinutes(5);
 
-    public RssFeedService(IMemoryCache cache, ILogger<RssFeedService> logger, IHttpClientFactory httpClientFactory)
+    public RssFeedService(ICacheService cache, ILogger<RssFeedService> logger, IHttpClientFactory httpClientFactory)
     {
         _cache = cache;
         _logger = logger;
@@ -34,23 +33,26 @@ public class RssFeedService
             return new RssFeedResponse { FeedUrl = feedUrl };
         }
 
-        var cacheKey = $"rss_feed_{feedUrl}_{maxItems}";
+        var cacheKey = $"rss:{feedUrl}:{maxItems}";
         var cacheDuration = customCacheDuration ?? _defaultCacheDuration;
 
-        if (_cache.TryGetValue<RssFeedResponse>(cacheKey, out var cachedResponse) && cachedResponse is not null)
-        {
-            _logger.LogDebug("Returning cached RSS feed for {FeedUrl}", feedUrl);
-            return cachedResponse;
-        }
+        return await _cache.GetOrCreateAsync(
+            cacheKey,
+            async ct => await FetchFeedFromSourceAsync(feedUrl, maxItems, ct),
+            expiration: cacheDuration,
+            tags: new[] { "rss" });
+    }
 
+    private async Task<RssFeedResponse> FetchFeedFromSourceAsync(string feedUrl, int maxItems, CancellationToken ct)
+    {
         try
         {
             _logger.LogInformation("Fetching RSS feed from {FeedUrl}", feedUrl);
 
-            var response = await _httpClient.GetAsync(feedUrl);
+            var response = await _httpClient.GetAsync(feedUrl, ct);
             response.EnsureSuccessStatusCode();
 
-            var content = await response.Content.ReadAsStringAsync();
+            var content = await response.Content.ReadAsStringAsync(ct);
             var doc = new System.Xml.XmlDocument();
             doc.LoadXml(content);
 
@@ -118,11 +120,6 @@ public class RssFeedService
                 CachedAt = System.DateTime.UtcNow
             };
 
-            _cache.Set(cacheKey, feedResponse, new MemoryCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = cacheDuration,
-                Size = 1
-            });
             _logger.LogInformation("Successfully fetched and cached RSS feed {FeedTitle} with {ItemCount} items",
                 feedResponse.FeedTitle, feedResponse.Items.Count);
 

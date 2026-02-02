@@ -82,11 +82,17 @@ builder.Services.AddSingleton<AuditHubFilter>();
 builder.Services.AddHttpContextAccessor();
 
 
+// HybridCache with Valkey (L2) and in-memory (L1) caching
+// Note: Rate limiters still use IMemoryCache directly for local-only state
+builder.AddRedisDistributedCache("valkey");
+builder.Services.AddHybridCache();
+builder.Services.AddResponseCaching();
+
+// Keep IMemoryCache for rate limiters that need local-only state
 builder.Services.AddMemoryCache(options =>
 {
-    options.SizeLimit = 1024; // Maximum cache size (in arbitrary units)
+    options.SizeLimit = 1024;
 });
-builder.Services.AddResponseCaching();
 
 // Auth options (JWT)
 var authOptions = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
@@ -234,6 +240,7 @@ builder.Services.AddOptions<BinaryDistributionOptions>()
     .Bind(builder.Configuration.GetSection(BinaryDistributionOptions.SectionName));
 
 builder.Services.AddSingleton<ISettingsService, SettingsService>();
+builder.Services.AddSingleton<ICacheService, HybridCacheService>();
 
 // Process monitoring configuration and alerting
 builder.Services.AddOptions<ProcessMonitoringOptions>()

@@ -1,12 +1,11 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace ManLab.Server.Services.Enhancements;
 
 /// <summary>
-/// In-memory session issuance for file browser access.
+/// Session issuance for file browser access using HybridCache.
 /// Sessions are short-lived and validated against <see cref="FileBrowserPolicy"/> allowlists.
 /// </summary>
 public sealed class FileBrowserSessionService
@@ -24,10 +23,14 @@ public sealed class FileBrowserSessionService
     public const int TransportSafeMaxBytesPerRead = 48 * 1024;
 
     private readonly DataContext _db;
-    private readonly IMemoryCache _cache;
+    private readonly ICacheService _cache;
     private readonly ILogger<FileBrowserSessionService> _logger;
 
-    public FileBrowserSessionService(DataContext db, IMemoryCache cache, ILogger<FileBrowserSessionService> logger)
+    private const string CacheKeyPrefix = "session:filebrowser:";
+    private const string SessionsTag = "sessions";
+    private const string FileBrowserSessionsTag = "filebrowser-sessions";
+
+    public FileBrowserSessionService(DataContext db, ICacheService cache, ILogger<FileBrowserSessionService> logger)
     {
         _db = db;
         _cache = cache;
@@ -82,18 +85,18 @@ public sealed class FileBrowserSessionService
             CreatedAt: now,
             ExpiresAt: now.Add(effectiveTtl));
 
-        _cache.Set(GetCacheKey(sessionId), session, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpiration = session.ExpiresAt,
-            Size = 1 // Track size for cache limits
-        });
+        await _cache.SetAsync(
+            GetCacheKey(sessionId),
+            session,
+            expiration: effectiveTtl,
+            tags: new[] { SessionsTag, FileBrowserSessionsTag });
 
         _logger.LogInformation("File browser session created {SessionId} for node {NodeId} policy {PolicyId}", sessionId, nodeId, policyId);
 
         return new CreateSessionResult(true, null, session);
     }
 
-    public CreateSessionResult CreateSystemSession(Guid nodeId, int maxBytesPerRead, TimeSpan? ttl = null)
+    public async Task<CreateSessionResult> CreateSystemSessionAsync(Guid nodeId, int maxBytesPerRead, TimeSpan? ttl = null)
     {
         var effectiveTtl = ttl ?? DefaultTtl;
         if (effectiveTtl <= TimeSpan.Zero)
@@ -121,28 +124,41 @@ public sealed class FileBrowserSessionService
             CreatedAt: now,
             ExpiresAt: now.Add(effectiveTtl));
 
-        _cache.Set(GetCacheKey(sessionId), session, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpiration = session.ExpiresAt,
-            Size = 1 // Track size for cache limits
-        });
+        await _cache.SetAsync(
+            GetCacheKey(sessionId),
+            session,
+            expiration: effectiveTtl,
+            tags: new[] { SessionsTag, FileBrowserSessionsTag });
 
         _logger.LogInformation("File browser system session created {SessionId} for node {NodeId}", sessionId, nodeId);
 
         return new CreateSessionResult(true, null, session);
     }
 
-    public bool TryGet(Guid sessionId, out Session? session)
+    public async Task<(bool Success, Session? Session)> TryGetAsync(Guid sessionId)
     {
-        if (_cache.TryGetValue(GetCacheKey(sessionId), out Session? s))
+        var cacheKey = GetCacheKey(sessionId);
+
+        var session = await _cache.GetOrCreateAsync(
+            cacheKey,
+            _ => ValueTask.FromResult<Session?>(null),
+            expiration: TimeSpan.FromMinutes(5),
+            tags: new[] { SessionsTag, FileBrowserSessionsTag });
+
+        if (session is null)
         {
-            session = s;
-            return true;
+            return (false, null);
         }
 
-        session = null;
-        return false;
+        // Check if session has expired
+        if (session.ExpiresAt <= DateTime.UtcNow)
+        {
+            await _cache.RemoveAsync(cacheKey);
+            return (false, null);
+        }
+
+        return (true, session);
     }
 
-    private static string GetCacheKey(Guid sessionId) => $"filebrowser.session.{sessionId:N}";
+    private static string GetCacheKey(Guid sessionId) => $"{CacheKeyPrefix}{sessionId:N}";
 }

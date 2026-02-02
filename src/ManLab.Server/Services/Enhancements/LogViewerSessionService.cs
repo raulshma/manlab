@@ -1,12 +1,11 @@
 using ManLab.Server.Data;
 using ManLab.Server.Data.Entities.Enhancements;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace ManLab.Server.Services.Enhancements;
 
 /// <summary>
-/// In-memory session issuance for log viewer access.
+/// Session issuance for log viewer access using HybridCache.
 /// Sessions are short-lived and validated against <see cref="LogViewerPolicy"/> allowlists.
 /// </summary>
 public sealed class LogViewerSessionService
@@ -15,10 +14,14 @@ public sealed class LogViewerSessionService
     private static readonly TimeSpan MaxTtl = TimeSpan.FromMinutes(60);
 
     private readonly DataContext _db;
-    private readonly IMemoryCache _cache;
+    private readonly ICacheService _cache;
     private readonly ILogger<LogViewerSessionService> _logger;
 
-    public LogViewerSessionService(DataContext db, IMemoryCache cache, ILogger<LogViewerSessionService> logger)
+    private const string CacheKeyPrefix = "session:logviewer:";
+    private const string SessionsTag = "sessions";
+    private const string LogViewerSessionsTag = "logviewer-sessions";
+
+    public LogViewerSessionService(DataContext db, ICacheService cache, ILogger<LogViewerSessionService> logger)
     {
         _db = db;
         _cache = cache;
@@ -71,28 +74,41 @@ public sealed class LogViewerSessionService
             CreatedAt: now,
             ExpiresAt: now.Add(effectiveTtl));
 
-        _cache.Set(GetCacheKey(sessionId), session, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpiration = session.ExpiresAt,
-            Size = 1 // Track size for cache limits
-        });
+        await _cache.SetAsync(
+            GetCacheKey(sessionId),
+            session,
+            expiration: effectiveTtl,
+            tags: new[] { SessionsTag, LogViewerSessionsTag });
 
         _logger.LogInformation("Log viewer session created {SessionId} for node {NodeId} policy {PolicyId}", sessionId, nodeId, policyId);
 
         return new CreateSessionResult(true, null, session);
     }
 
-    public bool TryGet(Guid sessionId, out Session? session)
+    public async Task<(bool Success, Session? Session)> TryGetAsync(Guid sessionId)
     {
-        if (_cache.TryGetValue(GetCacheKey(sessionId), out Session? s))
+        var cacheKey = GetCacheKey(sessionId);
+
+        var session = await _cache.GetOrCreateAsync(
+            cacheKey,
+            _ => ValueTask.FromResult<Session?>(null),
+            expiration: TimeSpan.FromMinutes(5),
+            tags: new[] { SessionsTag, LogViewerSessionsTag });
+
+        if (session is null)
         {
-            session = s;
-            return true;
+            return (false, null);
         }
 
-        session = null;
-        return false;
+        // Check if session has expired
+        if (session.ExpiresAt <= DateTime.UtcNow)
+        {
+            await _cache.RemoveAsync(cacheKey);
+            return (false, null);
+        }
+
+        return (true, session);
     }
 
-    private static string GetCacheKey(Guid sessionId) => $"logviewer.session.{sessionId:N}";
+    private static string GetCacheKey(Guid sessionId) => $"{CacheKeyPrefix}{sessionId:N}";
 }

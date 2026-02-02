@@ -13,6 +13,8 @@ namespace ManLab.Server.Services.Monitoring;
 public sealed class TrafficMonitorJob : IJob
 {
     private static readonly ConcurrentDictionary<string, InterfaceState> InterfaceStates = new();
+    private static readonly TimeSpan InterfaceStateMaxAge = TimeSpan.FromHours(1);
+    private static DateTime _lastInterfaceStateCleanup = DateTime.UtcNow;
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TrafficMonitorJob> _logger;
@@ -164,6 +166,37 @@ public sealed class TrafficMonitorJob : IJob
             success: samples.Count > 0,
             durationMs: (int)sw.ElapsedMilliseconds,
             error: errorMessage);
+
+        // Periodic cleanup of stale interface states to prevent memory leaks
+        CleanupStaleInterfaceStates();
+    }
+
+    private static void CleanupStaleInterfaceStates()
+    {
+        var now = DateTime.UtcNow;
+        if (now - _lastInterfaceStateCleanup < TimeSpan.FromMinutes(10))
+        {
+            return; // Only cleanup every 10 minutes
+        }
+
+        var cutoff = now - InterfaceStateMaxAge;
+        var staleKeys = InterfaceStates
+            .Where(kvp => kvp.Value.TimestampUtc < cutoff)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in staleKeys)
+        {
+            InterfaceStates.TryRemove(key, out _);
+        }
+
+        if (staleKeys.Count > 0)
+        {
+            // Use a no-op logger since we're in a static context
+            Debug.WriteLine($"TrafficMonitorJob: Cleaned up {staleKeys.Count} stale interface state entries");
+        }
+
+        _lastInterfaceStateCleanup = now;
     }
 
     private sealed class InterfaceState

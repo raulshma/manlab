@@ -19,6 +19,15 @@ const apiTarget =
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    chunkSizeWarningLimit: 3000,
+    rollupOptions: {
+      onwarn(warning, warn) {
+        if (warning.message?.includes('PURE')) return;
+        warn(warning);
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

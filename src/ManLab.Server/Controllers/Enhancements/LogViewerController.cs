@@ -41,7 +41,8 @@ public sealed class LogViewerController : ControllerBase
     [HttpPost("/api/devices/{nodeId:guid}/log-viewer-sessions/{sessionId:guid}/read")]
     public async Task<ActionResult<LogReadResponse>> Read(Guid nodeId, Guid sessionId, [FromBody] LogReadRequest request)
     {
-        if (!_sessions.TryGet(sessionId, out var session) || session is null)
+        var (sessionFound, session) = await _sessions.TryGetAsync(sessionId);
+        if (!sessionFound || session is null)
         {
             return NotFound("Session not found or expired.");
         }
@@ -124,7 +125,8 @@ public sealed class LogViewerController : ControllerBase
     [HttpPost("/api/devices/{nodeId:guid}/log-viewer-sessions/{sessionId:guid}/tail")]
     public async Task<ActionResult<LogTailResponse>> Tail(Guid nodeId, Guid sessionId, [FromBody] LogTailRequest request)
     {
-        if (!_sessions.TryGet(sessionId, out var session) || session is null)
+        var (sessionFound, session) = await _sessions.TryGetAsync(sessionId);
+        if (!sessionFound || session is null)
         {
             return NotFound("Session not found or expired.");
         }

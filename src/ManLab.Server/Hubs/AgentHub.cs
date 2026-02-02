@@ -54,6 +54,7 @@ public class AgentHub : Hub
     private readonly IProcessMonitoringConfigurationService _processMonitoringConfig;
     private readonly ProcessAlertQueue _processAlertQueue;
     private readonly IHubContext<AgentHub> _hubContext;
+    private readonly Services.Network.NetworkRateLimitService _networkRateLimit;
 
     public AgentHub(
         ILogger<AgentHub> logger,
@@ -65,7 +66,8 @@ public class AgentHub : Hub
         StreamingDownloadService streamingDownloads,
         IProcessMonitoringConfigurationService processMonitoringConfig,
         ProcessAlertQueue processAlertQueue,
-        IHubContext<AgentHub> hubContext)
+        IHubContext<AgentHub> hubContext,
+        Services.Network.NetworkRateLimitService networkRateLimit)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
@@ -77,6 +79,7 @@ public class AgentHub : Hub
         _processMonitoringConfig = processMonitoringConfig;
         _processAlertQueue = processAlertQueue;
         _hubContext = hubContext;
+        _networkRateLimit = networkRateLimit;
     }
 
     /// <summary>
@@ -103,6 +106,9 @@ public class AgentHub : Hub
         {
             _dashboardConnections.Unregister(Context.ConnectionId);
         }
+
+        // Cleanup network rate limiting state to prevent memory leaks
+        _networkRateLimit.CleanupConnection(Context.ConnectionId);
 
         // Best-effort cleanup of per-connection auth context.
         Context.Items.Remove(ContextNodeIdKey);
@@ -433,13 +439,7 @@ public class AgentHub : Hub
         _logger.HeartbeatReceived(nodeId);
 
         // Evaluate process alerts asynchronously (don't block heartbeat)
-        // Fire-and-forget pattern - errors are logged but don't fail the heartbeat
-        if (data.TopProcesses is { Count: > 0 })
-        {
-            // Capture process data to avoid closure issues
-            var processesCopy = data.TopProcesses.ToList();
-
-        // Evaluate process alerts asynchronously using NATS
+        // Fire-and-forget pattern using NATS - errors are logged but don't fail the heartbeat
         if (data.TopProcesses is { Count: > 0 })
         {
             try
@@ -454,10 +454,9 @@ public class AgentHub : Hub
             }
             catch (Exception ex)
             {
-                 // Log but don't fail heartbeat
+                // Log but don't fail heartbeat
                 _logger.LogError(ex, "Failed to enqueue process alerts for node {NodeId}", nodeId);
             }
-        }
         }
 
         // Node status transitions are handled on Register() (Online) and HealthMonitorService (Offline).
@@ -680,7 +679,8 @@ public class AgentHub : Hub
         Guid sessionNodeId;
         TerminalSessionStatus sessionStatus;
 
-        if (sessionService.TryGet(sessionId, out var cachedSession) && cachedSession is not null)
+        var (cachedSessionFound, cachedSession) = await sessionService.TryGetAsync(sessionId);
+        if (cachedSessionFound && cachedSession is not null)
         {
             sessionNodeId = cachedSession.NodeId;
             // Cache only stores active sessions; treat as open for the isClosed transition below.

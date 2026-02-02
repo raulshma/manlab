@@ -36,6 +36,12 @@ var manlabDb = postgres.AddDatabase("manlab");
 
 var nats = builder.AddNats("nats");
 
+var valkey = builder.AddValkey("valkey")
+    .WithDataVolume("manlab-valkey-data")
+    .WithPersistence(
+        interval: TimeSpan.FromMinutes(5),
+        keysChangedThreshold: 100);
+
 builder.AddContainer("nats-ui", "ghcr.io/nats-nui/nui")
     .WithImageTag("latest")
     // NUI listens on port 31311 by default.
@@ -48,8 +54,10 @@ var server = builder.AddProject<Projects.ManLab_Server>("server")
     .WithHttpHealthCheck("/health")
     .WithReference(manlabDb)
     .WithReference(nats)
+    .WithReference(valkey)
     .WaitFor(manlabDb)
-    .WaitFor(nats);
+    .WaitFor(nats)
+    .WaitFor(valkey);
 
 if (builder.ExecutionContext.IsRunMode)
 {
