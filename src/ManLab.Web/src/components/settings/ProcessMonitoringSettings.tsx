@@ -304,6 +304,8 @@ export function ProcessMonitoringSettings() {
                     <TableHead>Status</TableHead>
                     <TableHead>CPU Count</TableHead>
                     <TableHead>Memory Count</TableHead>
+                    <TableHead>CPU Alert %</TableHead>
+                    <TableHead>Mem Alert %</TableHead>
                     <TableHead>Refresh (s)</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
@@ -385,7 +387,7 @@ function NodeOverrideRow({ node }: { node: Node }) {
     return (
       <TableRow>
         <TableCell className="font-medium">{node.hostname}</TableCell>
-        <TableCell colSpan={4}>
+        <TableCell colSpan={7}>
           <div className="space-y-3 py-2">
             <div className="flex items-center gap-4">
               <Label className="text-sm">Enabled</Label>
@@ -430,6 +432,7 @@ function NodeOverrideRow({ node }: { node: Node }) {
                     className="h-8"
                   />
                 </div>
+
                 <div>
                   <Label className="text-xs">Refresh (s)</Label>
                   <Input
@@ -441,6 +444,38 @@ function NodeOverrideRow({ node }: { node: Node }) {
                       setEditConfig({
                         ...editConfig,
                         refreshIntervalSeconds: parseInt(e.target.value) || 5,
+                      })
+                    }
+                    className="h-8"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">CPU Alert %</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={editConfig.cpuAlertThreshold}
+                    onChange={(e) =>
+                      setEditConfig({
+                        ...editConfig,
+                        cpuAlertThreshold: parseInt(e.target.value) || 80,
+                      })
+                    }
+                    className="h-8"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Mem Alert %</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={editConfig.memoryAlertThreshold}
+                    onChange={(e) =>
+                      setEditConfig({
+                        ...editConfig,
+                        memoryAlertThreshold: parseInt(e.target.value) || 80,
                       })
                     }
                     className="h-8"
@@ -477,13 +512,17 @@ function NodeOverrideRow({ node }: { node: Node }) {
   return (
     <TableRow>
       <TableCell className="font-medium">{node.hostname}</TableCell>
-      <TableCell>
-        <Badge variant={nodeConfig?.enabled ? "default" : "secondary"}>
-          {nodeConfig?.enabled ? "Enabled" : "Disabled"}
-        </Badge>
+      <TableCell colSpan={2}>
+        <div className="flex items-center gap-1">
+          <Badge variant={nodeConfig?.enabled ? "default" : "secondary"}>
+            {nodeConfig?.enabled ? "Enabled" : "Disabled"}
+          </Badge>
+        </div>
       </TableCell>
       <TableCell>{nodeConfig?.topCpuCount ?? 10}</TableCell>
       <TableCell>{nodeConfig?.topMemoryCount ?? 10}</TableCell>
+      <TableCell>{nodeConfig?.cpuAlertThreshold ?? 80}%</TableCell>
+      <TableCell>{nodeConfig?.memoryAlertThreshold ?? 80}%</TableCell>
       <TableCell>{nodeConfig?.refreshIntervalSeconds ?? 5}s</TableCell>
       <TableCell>
         <div className="flex gap-2">

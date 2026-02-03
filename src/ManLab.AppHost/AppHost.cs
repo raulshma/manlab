@@ -107,6 +107,23 @@ else
         .PublishAsDockerComposeService((resource, service) =>
         {
             service.Name = "postgres";
+            service.Restart = "unless-stopped";
+        });
+
+    nats
+        .WithComputeEnvironment(compose)
+        .PublishAsDockerComposeService((resource, service) =>
+        {
+            service.Name = "nats";
+            service.Restart = "unless-stopped";
+        });
+
+    valkey
+        .WithComputeEnvironment(compose)
+        .PublishAsDockerComposeService((resource, service) =>
+        {
+            service.Name = "valkey";
+            service.Restart = "unless-stopped";
         });
 
     server
@@ -133,6 +150,7 @@ else
             // Keep the service name aligned with the resource name so generated
             // references (e.g., depends_on and injected URLs) are consistent.
             service.Name = "server";
+            service.Restart = "unless-stopped";
         });
 
     builder.AddDockerfile("web", "../ManLab.Web")
@@ -144,6 +162,7 @@ else
         .PublishAsDockerComposeService((resource, service) =>
         {
             service.Name = "manlab-web";
+            service.Restart = "unless-stopped";
         });
 }
 
