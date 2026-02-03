@@ -48,7 +48,7 @@ public sealed class ProcessAlertEvaluatorService(
 
     private async Task EvaluateAsync(ProcessAlertContext context, CancellationToken ct)
     {
-        var alerts = alertingService.EvaluateAlerts(context.Processes, context.Config, context.NodeId);
+        var alerts = alertingService.EvaluateAlerts(context.Processes, context.Config, context.NodeId, context.MemoryTotalBytes);
         if (alerts.Count == 0)
         {
             return;

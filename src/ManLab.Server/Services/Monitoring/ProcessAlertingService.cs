@@ -58,7 +58,8 @@ public class ProcessAlertingService
     public List<ProcessAlert> EvaluateAlerts(
         List<ProcessTelemetry> processes,
         ProcessMonitoringConfig config,
-        Guid nodeId)
+        Guid nodeId,
+        long? memoryTotalBytes = null)
     {
         // Fast path for disabled monitoring or no data
         if (!config.Enabled || processes.Count == 0)
@@ -82,7 +83,7 @@ public class ProcessAlertingService
 
             // Pre-calculate threshold values to avoid repeated multiplication
             var cpuThreshold = config.CpuAlertThreshold;
-            var memoryThresholdBytes = config.MemoryAlertThreshold * 1024 * 1024;
+            var memoryThresholdPercent = config.MemoryAlertThreshold;
 
             // Evaluate CPU thresholds - use for loop to avoid LINQ allocations
             var processCount = processes.Count;
@@ -123,26 +124,32 @@ public class ProcessAlertingService
                 var process = processes[i];
                 var memoryBytes = process.MemoryBytes;
 
-                if (memoryBytes.HasValue && memoryBytes.Value > memoryThresholdBytes)
+                // Calculate memory percentage if total memory is available
+                if (memoryBytes.HasValue && memoryTotalBytes.HasValue && memoryTotalBytes.Value > 0)
                 {
-                    var alertKey = string.Concat(nodePrefix, "_", process.ProcessId.ToString(), "_Memory");
+                    var memoryPercent = (memoryBytes.Value * 100.0) / memoryTotalBytes.Value;
 
-                    if (TryGetAlertTime(alertKey, now, cooldown, out var shouldAlert))
+                    if (memoryPercent > memoryThresholdPercent)
                     {
-                        if (shouldAlert)
-                        {
-                            alerts.Add(new ProcessAlert
-                            {
-                                NodeId = nodeId,
-                                ProcessId = process.ProcessId,
-                                ProcessName = process.ProcessName ?? "Unknown",
-                                AlertType = "Memory",
-                                CurrentValue = memoryBytes.Value,
-                                Threshold = memoryThresholdBytes,
-                                TimestampUtc = now
-                            });
+                        var alertKey = string.Concat(nodePrefix, "_", process.ProcessId.ToString(), "_Memory");
 
-                            _lastAlertTimes[alertKey] = now;
+                        if (TryGetAlertTime(alertKey, now, cooldown, out var shouldAlert))
+                        {
+                            if (shouldAlert)
+                            {
+                                alerts.Add(new ProcessAlert
+                                {
+                                    NodeId = nodeId,
+                                    ProcessId = process.ProcessId,
+                                    ProcessName = process.ProcessName ?? "Unknown",
+                                    AlertType = "Memory",
+                                    CurrentValue = memoryPercent,
+                                    Threshold = memoryThresholdPercent,
+                                    TimestampUtc = now
+                                });
+
+                                _lastAlertTimes[alertKey] = now;
+                            }
                         }
                     }
                 }
@@ -254,13 +261,13 @@ public class ProcessAlertingService
                 if (alert.AlertType == "Memory")
                 {
                     _logger.LogWarning(
-                        "Process alert: Node {NodeName} (ID: {NodeId}), Process {ProcessName} (PID: {ProcessId}), Memory {CurrentValue} exceeds threshold {Threshold}",
+                        "Process alert: Node {NodeName} (ID: {NodeId}), Process {ProcessName} (PID: {ProcessId}), Memory {CurrentValue:F1}% exceeds threshold {Threshold:F1}%",
                         node.Hostname,
                         node.Id,
                         alert.ProcessName,
                         alert.ProcessId,
-                        FormatBytes(alert.CurrentValue),
-                        FormatBytes(alert.Threshold));
+                        alert.CurrentValue,
+                        alert.Threshold);
                 }
                 else
                 {

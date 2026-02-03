@@ -24,4 +24,5 @@ public sealed class ProcessAlertContext
     public Guid NodeId { get; set; }
     public List<ProcessTelemetry> Processes { get; set; } = [];
     public ProcessMonitoringConfig Config { get; set; } = new();
+    public long? MemoryTotalBytes { get; set; }
 }

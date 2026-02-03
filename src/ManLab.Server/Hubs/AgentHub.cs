@@ -452,7 +452,8 @@ public class AgentHub : Hub
                     {
                         NodeId = nodeId,
                         Processes = data.TopProcesses.ToList(),
-                        Config = config
+                        Config = config,
+                        MemoryTotalBytes = data.RamTotalBytes
                     };
                     await _processAlertQueue.TryEnqueueAsync(context);
                 }

@@ -51,7 +51,7 @@ public class SettingsService : ISettingsService
     public async Task<T> GetValueAsync<T>(string key, T defaultValue)
     {
         var valueStr = await GetValueAsync(key);
-        if (valueStr == null) return defaultValue;
+        if (string.IsNullOrWhiteSpace(valueStr)) return defaultValue;
 
         try
         {
