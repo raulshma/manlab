@@ -130,7 +130,7 @@ function UpdateCard({ update, isExpanded, onToggle, onViewDetails }: UpdateCardP
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm">{update.packages.length} package(s)</div>
+                  <div className="text-sm">{(update.packages?.length ?? 0)} package(s)</div>
                   {update.completedAt && (
                     <div className="text-xs text-muted-foreground">
                       Completed in {Math.round(
@@ -150,11 +150,11 @@ function UpdateCard({ update, isExpanded, onToggle, onViewDetails }: UpdateCardP
         <CollapsibleContent>
           <CardContent className="space-y-4 pt-0">
             {/* Packages */}
-            {update.packages.length > 0 && (
+            {(update.packages?.length ?? 0) > 0 && (
               <div>
                 <h4 className="text-sm font-medium mb-2">Packages</h4>
                 <div className="space-y-1">
-                  {update.packages.slice(0, 5).map((pkg, idx) => (
+                  {update.packages?.slice(0, 5).map((pkg, idx) => (
                     <div key={idx} className="text-sm flex items-center justify-between p-2 bg-muted/30 rounded">
                       <span className="font-medium">{pkg.name}</span>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -166,9 +166,9 @@ function UpdateCard({ update, isExpanded, onToggle, onViewDetails }: UpdateCardP
                       </div>
                     </div>
                   ))}
-                  {update.packages.length > 5 && (
+                  {(update.packages?.length ?? 0) > 5 && (
                     <p className="text-xs text-muted-foreground text-center">
-                      ... and {update.packages.length - 5} more
+                      ... and {(update.packages?.length ?? 0) - 5} more
                     </p>
                   )}
                 </div>

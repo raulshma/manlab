@@ -19,7 +19,7 @@ public static partial class PlatformCommandBuilder
             ("linux", "apt") or ("linux", null) when IsAptAvailable() => "apt list --upgradable 2>/dev/null",
             ("linux", "yum") => "yum check-update --assumeno 2>/dev/null || yum check-update 2>/dev/null",
             ("linux", "dnf") => "dnf check-update --assumeno 2>/dev/null || dnf check-update 2>/dev/null",
-            ("linux", "pacman") => "pacman -Sy 2>/dev/null && pacman -Qu 2>/dev/null",
+            ("linux", "pacman") => "sudo pacman -Sy 2>/dev/null && pacman -Qu 2>/dev/null",
             ("linux", "zypper") => "zypper list-updates --type patch 2>/dev/null",
             ("linux", _) when !string.IsNullOrEmpty(packageManager) => $"{packageManager} check-update 2>/dev/null",
 
@@ -82,7 +82,7 @@ public static partial class PlatformCommandBuilder
             ("linux", "pacman") => BuildPacmanUpdateCommand(options),
             ("linux", "zypper") => BuildZypperUpdateCommand(options),
             ("linux", _) when !string.IsNullOrEmpty(packageManager) =>
-                $"{packageManager} upgrade -y 2>/dev/null",
+                $"sudo {packageManager} upgrade -y 2>/dev/null",
 
             // Windows
             ("windows", _) or ("windows", null) => BuildWindowsUpdateCommand(options),
@@ -259,7 +259,11 @@ public static partial class PlatformCommandBuilder
 
     private static string BuildAptUpdateCommand(SystemUpdateOptions options)
     {
-        var cmd = "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'";
+        // First update the package lists, then perform the upgrade
+        // Without apt-get update, apt-get upgrade will complete successfully but won't
+        // install any updates if the package list cache is stale
+        // Note: sudo is required since the SSH user is typically not root
+        var cmd = "sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'";
 
         // apt doesn't easily separate security/feature updates without complex filtering
         // We include all updates when any category is selected
@@ -268,7 +272,7 @@ public static partial class PlatformCommandBuilder
 
     private static string BuildYumUpdateCommand(SystemUpdateOptions options)
     {
-        var cmd = "yum update -y";
+        var cmd = "sudo yum update -y";
 
         if (options.IncludeSecurityUpdates && !options.IncludeFeatureUpdates)
         {
@@ -280,7 +284,7 @@ public static partial class PlatformCommandBuilder
 
     private static string BuildDnfUpdateCommand(SystemUpdateOptions options)
     {
-        var cmd = "dnf upgrade -y";
+        var cmd = "sudo dnf upgrade -y";
 
         if (options.IncludeSecurityUpdates && !options.IncludeFeatureUpdates)
         {
@@ -293,16 +297,16 @@ public static partial class PlatformCommandBuilder
     private static string BuildPacmanUpdateCommand(SystemUpdateOptions options)
     {
         // pacman upgrades all packages by default
-        return "pacman -Syu --noconfirm 2>/dev/null";
+        return "sudo pacman -Syu --noconfirm 2>/dev/null";
     }
 
     private static string BuildZypperUpdateCommand(SystemUpdateOptions options)
     {
-        var cmd = "zypper dup -y";
+        var cmd = "sudo zypper dup -y";
 
         if (options.IncludeSecurityUpdates && !options.IncludeFeatureUpdates)
         {
-            cmd = "zypper patch -y --type security";
+            cmd = "sudo zypper patch -y --type security";
         }
 
         return cmd + " 2>/dev/null";

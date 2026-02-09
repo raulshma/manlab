@@ -52,8 +52,7 @@ public sealed class AuditLoggingTests
             It.IsAny<INatsSerialize<AuditEventDto>?>(),
             It.IsAny<NatsPubOpts?>(),
             It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask)
-
+            .Returns(ValueTask.CompletedTask);
 
         var queue = new AuditLogQueue(natsMock.Object, NullLogger<AuditLogQueue>.Instance);
         var audit = new AuditLogService(NullLogger<AuditLogService>.Instance, queue, options);

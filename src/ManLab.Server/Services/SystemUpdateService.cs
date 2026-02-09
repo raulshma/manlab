@@ -243,38 +243,25 @@ public sealed class SystemUpdateService
     }
 
     /// <summary>
-    /// Creates a history entry for job run (both scheduled and manual).
+    /// Creates an audit entry for job run (both scheduled and manual).
+    /// Note: SystemUpdateHistory requires a valid NodeId (FK), so job-level summaries 
+    /// are only tracked via audit logs.
     /// </summary>
     private async Task CreateHistoryEntryAsync(DataContext db, int nodeCount, string triggerType, CancellationToken cancellationToken)
     {
         try
         {
-            using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-
-            var history = new SystemUpdateHistory
-            {
-                Id = Guid.NewGuid(),
-                NodeId = Guid.Empty,
-                StartedAt = DateTime.UtcNow,
-                CompletedAt = DateTime.UtcNow,
-                Status = "Completed",
-                PackagesJson = null
-            };
-
-            db.SystemUpdateHistories.Add(history);
-            var rowsSaved = await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-
-            _logger.LogInformation("Created system update history entry {HistoryId}: {TriggerType} check, found {Count} nodes (saved {Rows} row(s))",
-                history.Id, triggerType, nodeCount, rowsSaved);
-
-            // Also create an audit entry for visibility
+            // Create an audit entry for visibility (SystemUpdateHistory requires a valid NodeId FK,
+            // but job-level runs don't have a specific node, so we use audit logs instead)
             await CreateAuditEntryDirectlyAsync(db, "systemupdate.check",
                 $"{triggerType} check completed. Found {nodeCount} online node(s) with system update enabled.", cancellationToken);
+
+            _logger.LogInformation("Created audit entry for {TriggerType} system update check, found {Count} node(s)",
+                triggerType, nodeCount);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create history entry for manual trigger");
+            _logger.LogError(ex, "Failed to create audit entry for {TriggerType} trigger", triggerType);
             throw;
         }
     }
@@ -287,8 +274,6 @@ public sealed class SystemUpdateService
     {
         try
         {
-            using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-
             var auditEvent = new AuditEvent
             {
                 Id = Guid.NewGuid(),
@@ -305,7 +290,6 @@ public sealed class SystemUpdateService
 
             db.AuditEvents.Add(auditEvent);
             var rowsSaved = await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
 
             _logger.LogInformation("Created audit entry {AuditId}: {EventName} - {Message} (saved {Rows} row(s))",
                 auditEvent.Id, eventName, message, rowsSaved);
@@ -456,7 +440,17 @@ public sealed class SystemUpdateService
         // If auto-approved, start execution
         if (effectiveAutoApprove)
         {
-            _ = Task.Run(() => ExecuteUpdateAsync(update.Id, cancellationToken), cancellationToken);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ExecuteUpdateAsync(update.Id, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Background execution failed for update {UpdateId}", update.Id);
+                }
+            });
         }
 
         return update.Id;
@@ -500,7 +494,17 @@ public sealed class SystemUpdateService
             .SendAsync("PendingUpdateApproved", update.NodeId, "system", updateId.ToString());
 
         // Start execution in background
-        _ = Task.Run(() => ExecuteUpdateAsync(updateId, cancellationToken), cancellationToken);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ExecuteUpdateAsync(updateId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background execution failed for update {UpdateId}", updateId);
+            }
+        });
 
         return true;
     }
@@ -608,12 +612,14 @@ public sealed class SystemUpdateService
             // Build and execute update command
             var updateCommand = PlatformCommandBuilder.BuildUpdateCommand(osType, updateOptions, packageManager);
 
-            await LogAsync(db, updateId, "Info", "Starting system update", cancellationToken: cancellationToken);
+            await LogAsync(db, updateId, "Info", "Starting system update", $"OS: {osType}, Package Manager: {packageManager}\nCommand: {updateCommand}", cancellationToken);
+
+            _logger.LogInformation("Executing system update command for {UpdateId}: {Command}", updateId, updateCommand);
 
             var output = await _sshProvisioningService.ExecuteCommandAsync(options, updateCommand, cancellationToken);
             update.OutputLog = output;
 
-            await LogAsync(db, updateId, "Info", "System update completed", cancellationToken: cancellationToken);
+            await LogAsync(db, updateId, "Info", "System update completed", $"Output length: {output?.Length ?? 0} characters\n\n{output}", cancellationToken);
 
             // Check if reboot is required
             var rebootCheckCommand = PlatformCommandBuilder.BuildRebootCheckCommand(osType, packageManager);

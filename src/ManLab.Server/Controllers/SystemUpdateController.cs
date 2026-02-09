@@ -269,8 +269,9 @@ public sealed class SystemUpdateController : ControllerBase
             RebootRequired = h.RebootRequired,
             RebootApproved = h.RebootApproved,
             RebootedAt = h.RebootedAt,
-            PackageCount = string.IsNullOrEmpty(h.PackagesJson) ? 0 :
-                (JsonSerializer.Deserialize<List<SystemPackage>>(h.PackagesJson)?.Count ?? 0),
+            Packages = string.IsNullOrEmpty(h.PackagesJson)
+                ? new List<SystemPackage>()
+                : JsonSerializer.Deserialize<List<SystemPackage>>(h.PackagesJson) ?? new List<SystemPackage>(),
             ErrorMessage = h.ErrorMessage
         }).ToList();
 
@@ -401,7 +402,7 @@ public sealed record SystemUpdateHistoryItem
     public required bool RebootRequired { get; init; }
     public required bool RebootApproved { get; init; }
     public DateTime? RebootedAt { get; init; }
-    public required int PackageCount { get; init; }
+    public required List<SystemPackage> Packages { get; init; }
     public string? ErrorMessage { get; init; }
 }
 
