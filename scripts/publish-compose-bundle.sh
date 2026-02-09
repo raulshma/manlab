@@ -7,6 +7,18 @@ web_image=""
 pg_password=""
 nats_password=""
 server_port="8081"
+postgres_memory_limit="512M"
+postgres_cpu_limit="1.50"
+nats_memory_limit="96M"
+nats_cpu_limit="0.50"
+valkey_memory_limit="192M"
+valkey_cpu_limit="0.75"
+server_memory_limit="768M"
+server_cpu_limit="1.50"
+web_memory_limit="128M"
+web_cpu_limit="0.50"
+server_gc_heap_hard_limit_percent="70"
+server_gc_conserve_memory="1"
 
 usage() {
   cat <<'EOF'
@@ -61,6 +73,18 @@ NATS_PASSWORD=$nats_password
 SERVER_IMAGE=$server_image
 WEB_IMAGE=$web_image
 SERVER_PORT=$server_port
+POSTGRES_MEMORY_LIMIT=$postgres_memory_limit
+POSTGRES_CPU_LIMIT=$postgres_cpu_limit
+NATS_MEMORY_LIMIT=$nats_memory_limit
+NATS_CPU_LIMIT=$nats_cpu_limit
+VALKEY_MEMORY_LIMIT=$valkey_memory_limit
+VALKEY_CPU_LIMIT=$valkey_cpu_limit
+SERVER_MEMORY_LIMIT=$server_memory_limit
+SERVER_CPU_LIMIT=$server_cpu_limit
+WEB_MEMORY_LIMIT=$web_memory_limit
+WEB_CPU_LIMIT=$web_cpu_limit
+SERVER_DOTNET_GC_HEAP_HARD_LIMIT_PERCENT=$server_gc_heap_hard_limit_percent
+SERVER_DOTNET_GC_CONSERVE_MEMORY=$server_gc_conserve_memory
 EOF
 
 echo "Wrote '$env_path'."
@@ -71,6 +95,18 @@ NATS_PASSWORD=CHANGEME
 SERVER_IMAGE=$server_image
 WEB_IMAGE=$web_image
 SERVER_PORT=$server_port
+POSTGRES_MEMORY_LIMIT=$postgres_memory_limit
+POSTGRES_CPU_LIMIT=$postgres_cpu_limit
+NATS_MEMORY_LIMIT=$nats_memory_limit
+NATS_CPU_LIMIT=$nats_cpu_limit
+VALKEY_MEMORY_LIMIT=$valkey_memory_limit
+VALKEY_CPU_LIMIT=$valkey_cpu_limit
+SERVER_MEMORY_LIMIT=$server_memory_limit
+SERVER_CPU_LIMIT=$server_cpu_limit
+WEB_MEMORY_LIMIT=$web_memory_limit
+WEB_CPU_LIMIT=$web_cpu_limit
+SERVER_DOTNET_GC_HEAP_HARD_LIMIT_PERCENT=$server_gc_heap_hard_limit_percent
+SERVER_DOTNET_GC_CONSERVE_MEMORY=$server_gc_conserve_memory
 EOF
 
 echo "Wrote '$env_example_path'."

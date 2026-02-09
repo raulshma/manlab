@@ -34,42 +34,78 @@ public sealed class OnboardingJobRunner
 
     public bool TryStartInstall(Guid machineId, InstallRequest request)
     {
-        if (_running.ContainsKey(machineId))
+        var cts = new CancellationTokenSource();
+        if (!_running.TryAdd(machineId, (Task.CompletedTask, cts)))
         {
+            cts.Dispose();
             return false;
         }
 
-        var cts = new CancellationTokenSource();
-        var task = Task.Run(() => RunInstallAsync(machineId, request, cts.Token));
+        Task task;
+        try
+        {
+            task = Task.Run(() => RunInstallAsync(machineId, request, cts.Token));
+            _running[machineId] = (task, cts);
+        }
+        catch
+        {
+            _running.TryRemove(machineId, out _);
+            cts.Dispose();
+            throw;
+        }
 
         // Ensure cleanup happens even if task fails/completes
         task.ContinueWith(_ =>
         {
-            _running.TryRemove(machineId, out var removed);
-            removed.Cts?.Dispose();
+            if (_running.TryRemove(machineId, out var removed))
+            {
+                removed.Cts?.Dispose();
+            }
+            else
+            {
+                cts.Dispose();
+            }
         });
 
-        return _running.TryAdd(machineId, (task, cts));
+        return true;
     }
 
     public bool TryStartUninstall(Guid machineId, UninstallRequest request)
     {
-        if (_running.ContainsKey(machineId))
+        var cts = new CancellationTokenSource();
+        if (!_running.TryAdd(machineId, (Task.CompletedTask, cts)))
         {
+            cts.Dispose();
             return false;
         }
 
-        var cts = new CancellationTokenSource();
-        var task = Task.Run(() => RunUninstallAsync(machineId, request, cts.Token));
+        Task task;
+        try
+        {
+            task = Task.Run(() => RunUninstallAsync(machineId, request, cts.Token));
+            _running[machineId] = (task, cts);
+        }
+        catch
+        {
+            _running.TryRemove(machineId, out _);
+            cts.Dispose();
+            throw;
+        }
 
         // Ensure cleanup happens even if task fails/completes
         task.ContinueWith(_ =>
         {
-            _running.TryRemove(machineId, out var removed);
-            removed.Cts?.Dispose();
+            if (_running.TryRemove(machineId, out var removed))
+            {
+                removed.Cts?.Dispose();
+            }
+            else
+            {
+                cts.Dispose();
+            }
         });
 
-        return _running.TryAdd(machineId, (task, cts));
+        return true;
     }
 
     public void CancelJob(Guid machineId)
@@ -897,10 +933,6 @@ public sealed class OnboardingJobRunner
 
             await PublishLogAsync(machineId, "Failed: " + ex.Message);
             await PublishStatusAsync(machineId, OnboardingStatus.Failed, ex.Message);
-        }
-        finally
-        {
-            _running.TryRemove(machineId, out _);
         }
     }
 

@@ -348,6 +348,7 @@ builder.Services.AddSingleton<MonitorJobScheduler>();
 builder.Services.AddHostedService<MonitorJobBootstrapper>();
 builder.Services.AddSingleton<DashboardConnectionTracker>();
 builder.Services.AddHostedService<ServerResourceUsageService>();
+builder.Services.AddHostedService<MemoryPressureMonitor>();
 
 // Auto-update services
 builder.Services.AddScoped<AutoUpdateService>();

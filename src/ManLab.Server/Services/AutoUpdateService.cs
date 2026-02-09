@@ -32,6 +32,8 @@ public sealed class AutoUpdateService
     private readonly ISettingsService _settingsService;
     private readonly IHubContext<AgentHub> _hubContext;
     private readonly DiscordWebhookNotificationService _discordService;
+    private readonly OnboardingJobRunner _onboardingJobRunner;
+    private readonly CredentialEncryptionService _credentialService;
 
     public AutoUpdateService(
         IServiceScopeFactory scopeFactory,
@@ -42,7 +44,9 @@ public sealed class AutoUpdateService
         IHttpContextAccessor httpContextAccessor,
         ISettingsService settingsService,
         IHubContext<AgentHub> hubContext,
-        DiscordWebhookNotificationService discordService)
+        DiscordWebhookNotificationService discordService,
+        OnboardingJobRunner onboardingJobRunner,
+        CredentialEncryptionService credentialService)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -53,6 +57,8 @@ public sealed class AutoUpdateService
         _settingsService = settingsService;
         _hubContext = hubContext;
         _discordService = discordService;
+        _onboardingJobRunner = onboardingJobRunner;
+        _credentialService = credentialService;
     }
 
     /// <summary>
@@ -428,8 +434,7 @@ public sealed class AutoUpdateService
         }
 
         // Check if another job is already running
-        var jobRunner = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<OnboardingJobRunner>();
-        if (jobRunner.IsRunning(machine.Id))
+        if (_onboardingJobRunner.IsRunning(machine.Id))
         {
             _logger.LogDebug("Cannot auto-update node {NodeId}: another job is already running", node.Id);
             return;
@@ -441,17 +446,15 @@ public sealed class AutoUpdateService
         var serverBaseUrl = GetServerBaseUrl();
 
         // Determine install source based on preference
-        var preferGitHub = await _scopeFactory.CreateScope().ServiceProvider
-            .GetRequiredService<ISettingsService>()
-            .GetValueAsync(Constants.SettingKeys.GitHub.PreferGitHubForUpdates, false);
+        var preferGitHub = await _settingsService.GetValueAsync(
+            Constants.SettingKeys.GitHub.PreferGitHubForUpdates,
+            false);
 
-        var githubEnabled = await _scopeFactory.CreateScope().ServiceProvider
-            .GetRequiredService<ISettingsService>()
-            .GetValueAsync(Constants.SettingKeys.GitHub.EnableGitHubDownload, false);
+        var githubEnabled = await _settingsService.GetValueAsync(
+            Constants.SettingKeys.GitHub.EnableGitHubDownload,
+            false);
 
-        var githubBaseUrl = await _scopeFactory.CreateScope().ServiceProvider
-            .GetRequiredService<ISettingsService>()
-            .GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
+        var githubBaseUrl = await _settingsService.GetValueAsync(Constants.SettingKeys.GitHub.ReleaseBaseUrl);
 
         string installSource = "local";
         string? githubUrl = null;
@@ -464,19 +467,18 @@ public sealed class AutoUpdateService
 
         // Determine auth method based on machine settings
         OnboardingJobRunner.InstallRequest request;
-        var credentialService = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<CredentialEncryptionService>();
 
         // Decrypt sudo password if available
         string? sudoPassword = null;
         if (!string.IsNullOrWhiteSpace(machine.EncryptedSudoPassword))
         {
-            sudoPassword = await credentialService.DecryptAsync(machine.EncryptedSudoPassword);
+            sudoPassword = await _credentialService.DecryptAsync(machine.EncryptedSudoPassword);
         }
 
         if (machine.AuthMode == SshAuthMode.Password && !string.IsNullOrWhiteSpace(machine.EncryptedSshPassword))
         {
             // Password authentication
-            var password = await credentialService.DecryptAsync(machine.EncryptedSshPassword);
+            var password = await _credentialService.DecryptAsync(machine.EncryptedSshPassword);
             if (password == null) return;
 
             request = new OnboardingJobRunner.InstallRequest(
@@ -501,11 +503,11 @@ public sealed class AutoUpdateService
         else if (machine.AuthMode == SshAuthMode.PrivateKey && !string.IsNullOrWhiteSpace(machine.EncryptedPrivateKeyPem))
         {
             // Private key authentication
-            var privateKey = await credentialService.DecryptAsync(machine.EncryptedPrivateKeyPem);
+            var privateKey = await _credentialService.DecryptAsync(machine.EncryptedPrivateKeyPem);
             if (privateKey == null) return;
 
             var passphrase = !string.IsNullOrWhiteSpace(machine.EncryptedPrivateKeyPassphrase)
-                ? await credentialService.DecryptAsync(machine.EncryptedPrivateKeyPassphrase)
+                ? await _credentialService.DecryptAsync(machine.EncryptedPrivateKeyPassphrase)
                 : null;
 
             request = new OnboardingJobRunner.InstallRequest(
@@ -534,7 +536,7 @@ public sealed class AutoUpdateService
             return;
         }
 
-        if (!jobRunner.TryStartInstall(machine.Id, request))
+        if (!_onboardingJobRunner.TryStartInstall(machine.Id, request))
         {
             _logger.LogWarning("Failed to start auto-update job for node {NodeId}", node.Id);
             await RecordFailureAsync(db, node.Id, "Failed to start update job");

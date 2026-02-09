@@ -148,7 +148,18 @@ public sealed class DownloadSessionService
             if (DateTime.UtcNow > session.ExpiresAt)
             {
                 _logger.LogInformation("Download session {SessionId} has expired", downloadId);
-                _sessions.TryRemove(downloadId, out _);
+                if (_sessions.TryRemove(downloadId, out var expiredSession))
+                {
+                    // Dispose the CancellationTokenSource to prevent memory leak
+                    try
+                    {
+                        expiredSession.CancellationSource.Dispose();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // Already disposed, ignore
+                    }
+                }
                 session = null;
                 return false;
             }

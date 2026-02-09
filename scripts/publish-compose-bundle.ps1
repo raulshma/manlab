@@ -55,6 +55,19 @@ if ($aspireCmd.Count -eq 1) {
 $envPath = Join-Path $OutputDir '.env'
 $envExamplePath = Join-Path $OutputDir '.env.example'
 
+$postgresMemoryLimit = "512M"
+$postgresCpuLimit = "1.50"
+$natsMemoryLimit = "96M"
+$natsCpuLimit = "0.50"
+$valkeyMemoryLimit = "192M"
+$valkeyCpuLimit = "0.75"
+$serverMemoryLimit = "768M"
+$serverCpuLimit = "1.50"
+$webMemoryLimit = "128M"
+$webCpuLimit = "0.50"
+$serverGcHeapHardLimitPercent = "70"
+$serverGcConserveMemory = "1"
+
 # Stamp/overwrite the minimal set of env vars that the generated compose expects.
 # Avoid writing secrets into CI artifacts by allowing PgPassword to be blank.
 $lines = @(
@@ -62,7 +75,19 @@ $lines = @(
     "NATS_PASSWORD=$NatsPassword",
     "SERVER_IMAGE=$ServerImage",
     "WEB_IMAGE=$WebImage",
-    "SERVER_PORT=$ServerPort"
+    "SERVER_PORT=$ServerPort",
+    "POSTGRES_MEMORY_LIMIT=$postgresMemoryLimit",
+    "POSTGRES_CPU_LIMIT=$postgresCpuLimit",
+    "NATS_MEMORY_LIMIT=$natsMemoryLimit",
+    "NATS_CPU_LIMIT=$natsCpuLimit",
+    "VALKEY_MEMORY_LIMIT=$valkeyMemoryLimit",
+    "VALKEY_CPU_LIMIT=$valkeyCpuLimit",
+    "SERVER_MEMORY_LIMIT=$serverMemoryLimit",
+    "SERVER_CPU_LIMIT=$serverCpuLimit",
+    "WEB_MEMORY_LIMIT=$webMemoryLimit",
+    "WEB_CPU_LIMIT=$webCpuLimit",
+    "SERVER_DOTNET_GC_HEAP_HARD_LIMIT_PERCENT=$serverGcHeapHardLimitPercent",
+    "SERVER_DOTNET_GC_CONSERVE_MEMORY=$serverGcConserveMemory"
 )
 
 Set-Content -Path $envPath -Value $lines -Encoding UTF8
@@ -74,7 +99,19 @@ $exampleLines = @(
     "NATS_PASSWORD=CHANGEME",
     "SERVER_IMAGE=$ServerImage",
     "WEB_IMAGE=$WebImage",
-    "SERVER_PORT=$ServerPort"
+    "SERVER_PORT=$ServerPort",
+    "POSTGRES_MEMORY_LIMIT=$postgresMemoryLimit",
+    "POSTGRES_CPU_LIMIT=$postgresCpuLimit",
+    "NATS_MEMORY_LIMIT=$natsMemoryLimit",
+    "NATS_CPU_LIMIT=$natsCpuLimit",
+    "VALKEY_MEMORY_LIMIT=$valkeyMemoryLimit",
+    "VALKEY_CPU_LIMIT=$valkeyCpuLimit",
+    "SERVER_MEMORY_LIMIT=$serverMemoryLimit",
+    "SERVER_CPU_LIMIT=$serverCpuLimit",
+    "WEB_MEMORY_LIMIT=$webMemoryLimit",
+    "WEB_CPU_LIMIT=$webCpuLimit",
+    "SERVER_DOTNET_GC_HEAP_HARD_LIMIT_PERCENT=$serverGcHeapHardLimitPercent",
+    "SERVER_DOTNET_GC_CONSERVE_MEMORY=$serverGcConserveMemory"
 )
 
 Set-Content -Path $envExamplePath -Value $exampleLines -Encoding UTF8

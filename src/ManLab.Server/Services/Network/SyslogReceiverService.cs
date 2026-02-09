@@ -16,10 +16,9 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
     private readonly IHubContext<NetworkHub> _hubContext;
     private readonly ILogger<SyslogReceiverService> _logger;
     private readonly SyslogOptions _options;
-    private readonly object _gate = new();
-    private readonly List<SyslogMessage> _messages = [];
+    private readonly Lock _gate = new();
+    private CircularBuffer<SyslogMessage>? _messages;
     private long _nextId;
-    private long _droppedCount;
     private SyslogStatus _status;
     private UdpClient? _client;
 
@@ -57,8 +56,8 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
         {
             return _status with
             {
-                BufferedCount = _messages.Count,
-                DroppedCount = _droppedCount
+                BufferedCount = _messages?.Count ?? 0,
+                DroppedCount = _messages?.DroppedCount ?? 0
             };
         }
     }
@@ -68,13 +67,11 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
         count = Math.Clamp(count, 1, 2000);
         lock (_gate)
         {
-            if (_messages.Count == 0)
+            if (_messages is null || _messages.Count == 0)
             {
                 return [];
             }
-
-            var skip = Math.Max(0, _messages.Count - count);
-            return _messages.Skip(skip).ToList();
+            return _messages.GetRecent(count);
         }
     }
 
@@ -82,8 +79,7 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
     {
         lock (_gate)
         {
-            _messages.Clear();
-            _droppedCount = 0;
+            _messages?.Reset();
         }
     }
 
@@ -167,6 +163,7 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
         try
         {
             _client?.Close();
+            _client?.Dispose();
         }
         catch
         {
@@ -185,14 +182,9 @@ public sealed class SyslogReceiverService : BackgroundService, ISyslogMessageSto
     {
         lock (_gate)
         {
+            // Lazy initialization with configured capacity
+            _messages ??= new CircularBuffer<SyslogMessage>(Math.Max(100, _options.MaxBufferedMessages));
             _messages.Add(message);
-            var max = Math.Max(100, _options.MaxBufferedMessages);
-            if (_messages.Count > max)
-            {
-                var overflow = _messages.Count - max;
-                _messages.RemoveRange(0, overflow);
-                _droppedCount += overflow;
-            }
         }
     }
 

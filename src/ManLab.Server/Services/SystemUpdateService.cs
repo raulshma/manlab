@@ -30,6 +30,7 @@ public sealed class SystemUpdateService
     private readonly IHubContext<AgentHub> _hubContext;
     private readonly DiscordWebhookNotificationService _discordService;
     private readonly ISettingsService _settingsService;
+    private readonly CredentialEncryptionService _credentialService;
 
     public SystemUpdateService(
         IServiceScopeFactory scopeFactory,
@@ -39,7 +40,8 @@ public sealed class SystemUpdateService
         SshProvisioningService sshProvisioningService,
         IHubContext<AgentHub> hubContext,
         DiscordWebhookNotificationService discordService,
-        ISettingsService settingsService)
+        ISettingsService settingsService,
+        CredentialEncryptionService credentialService)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
@@ -49,6 +51,7 @@ public sealed class SystemUpdateService
         _hubContext = hubContext;
         _discordService = discordService;
         _settingsService = settingsService;
+        _credentialService = credentialService;
     }
 
     #region Core Update Methods
@@ -878,11 +881,9 @@ public sealed class SystemUpdateService
         OnboardingMachine machine,
         CancellationToken cancellationToken)
     {
-        var credentialService = _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<CredentialEncryptionService>();
-
         if (!string.IsNullOrWhiteSpace(machine.EncryptedSshPassword))
         {
-            var password = await credentialService.DecryptAsync(machine.EncryptedSshPassword);
+            var password = await _credentialService.DecryptAsync(machine.EncryptedSshPassword);
             return new SshProvisioningService.ConnectionOptions(
                 Host: machine.Host,
                 Port: machine.Port,
@@ -894,9 +895,9 @@ public sealed class SystemUpdateService
         }
         else if (!string.IsNullOrWhiteSpace(machine.EncryptedPrivateKeyPem))
         {
-            var privateKey = await credentialService.DecryptAsync(machine.EncryptedPrivateKeyPem);
+            var privateKey = await _credentialService.DecryptAsync(machine.EncryptedPrivateKeyPem);
             var passphrase = !string.IsNullOrWhiteSpace(machine.EncryptedPrivateKeyPassphrase)
-                ? await credentialService.DecryptAsync(machine.EncryptedPrivateKeyPassphrase)
+                ? await _credentialService.DecryptAsync(machine.EncryptedPrivateKeyPassphrase)
                 : null;
 
             return new SshProvisioningService.ConnectionOptions(

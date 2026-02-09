@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Moq;
 using NATS.Client.Core;
 using Xunit;
+using ManLab.Shared.Dtos;
 
 namespace ManLab.Agent.Tests;
 
@@ -25,11 +26,11 @@ public sealed class AuditLoggingTests
         Assert.False(ok);
         natsMock.Verify(x => x.PublishAsync(
             AuditLogQueue.Subject,
-            It.IsAny<AuditEvent>(),
-            It.IsAny<NatsHeaders>(),
-            It.IsAny<string>(),
-            It.IsAny<INatsSerialize<AuditEvent>>(),
-            It.IsAny<NatsPubOpts>(),
+            It.IsAny<AuditEventDto>(),
+            It.IsAny<NatsHeaders?>(),
+            It.IsAny<string?>(),
+            It.IsAny<INatsSerialize<AuditEventDto>?>(),
+            It.IsAny<NatsPubOpts?>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -45,13 +46,14 @@ public sealed class AuditLoggingTests
         var natsMock = new Mock<INatsConnection>();
         natsMock.Setup(x => x.PublishAsync(
             AuditLogQueue.Subject,
-            It.IsAny<AuditEvent>(),
-            It.IsAny<NatsHeaders>(),
-            It.IsAny<string>(),
-            It.IsAny<INatsSerialize<AuditEvent>>(),
-            It.IsAny<NatsPubOpts>(),
+            It.IsAny<AuditEventDto>(),
+            It.IsAny<NatsHeaders?>(),
+            It.IsAny<string?>(),
+            It.IsAny<INatsSerialize<AuditEventDto>?>(),
+            It.IsAny<NatsPubOpts?>(),
             It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask);
+            .Returns(ValueTask.CompletedTask)
+
 
         var queue = new AuditLogQueue(natsMock.Object, NullLogger<AuditLogQueue>.Instance);
         var audit = new AuditLogService(NullLogger<AuditLogService>.Instance, queue, options);
@@ -67,13 +69,39 @@ public sealed class AuditLoggingTests
         });
 
         Assert.True(ok);
+
+        
+        // AuditLogService uses fire-and-forget Task.Run, so we need to wait for the background task to complete.
+        // We'll retry verification for up to 1 second.
+        var deadline = DateTime.UtcNow.AddSeconds(1);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                natsMock.Verify(x => x.PublishAsync(
+                    AuditLogQueue.Subject,
+                    It.Is<AuditEventDto>(e => e.DataJson == "{\"_truncated\":true}"),
+                    It.IsAny<NatsHeaders?>(),
+                    It.IsAny<string?>(),
+                    It.IsAny<INatsSerialize<AuditEventDto>?>(),
+                    It.IsAny<NatsPubOpts?>(),
+                    It.IsAny<CancellationToken>()), Times.Once);
+                return; // verification passed
+            }
+            catch (MockException)
+            {
+                Thread.Sleep(50);
+            }
+        }
+        
+        // Final attempt that will throw if still failing
         natsMock.Verify(x => x.PublishAsync(
             AuditLogQueue.Subject,
-            It.Is<AuditEvent>(e => e.DataJson == "{\"_truncated\":true}"),
-            It.IsAny<NatsHeaders>(),
-            It.IsAny<string>(),
-            It.IsAny<INatsSerialize<AuditEvent>>(),
-            It.IsAny<NatsPubOpts>(),
+            It.Is<AuditEventDto>(e => e.DataJson == "{\"_truncated\":true}"),
+            It.IsAny<NatsHeaders?>(),
+            It.IsAny<string?>(),
+            It.IsAny<INatsSerialize<AuditEventDto>?>(),
+            It.IsAny<NatsPubOpts?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

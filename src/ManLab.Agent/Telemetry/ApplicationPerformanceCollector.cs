@@ -14,9 +14,15 @@ namespace ManLab.Agent.Telemetry;
 /// </summary>
 internal sealed class ApplicationPerformanceCollector
 {
+    private const int MaxTrackedApplications = 64;
+    private const int MaxTrackedDatabases = 64;
+    private const int MaxTrackedEndpoints = 512;
+    private const int MaxMetricKeyLength = 256;
+
     private readonly ILogger _logger;
     private readonly AgentConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly object _metricsGate = new();
 
     // Metrics aggregation state
     private readonly Dictionary<string, ApplicationMetricsAggregator> _appMetrics = new();
@@ -80,22 +86,31 @@ internal sealed class ApplicationPerformanceCollector
     /// </summary>
     public void RecordRequest(string appName, string endpoint, string method, int statusCode, float responseTimeMs, long bytesReceived, long bytesSent)
     {
-        // Update application metrics
-        if (!_appMetrics.TryGetValue(appName, out var appAgg))
-        {
-            appAgg = new ApplicationMetricsAggregator();
-            _appMetrics[appName] = appAgg;
-        }
-        appAgg.RecordRequest(statusCode, responseTimeMs, bytesReceived, bytesSent);
+        appName = NormalizeKey(appName, fallback: "unknown-app");
+        endpoint = NormalizeEndpoint(endpoint);
+        method = NormalizeMethod(method);
 
-        // Update endpoint metrics
-        var endpointKey = $"{method}:{endpoint}";
-        if (!_endpointMetrics.TryGetValue(endpointKey, out var endpointAgg))
+        lock (_metricsGate)
         {
-            endpointAgg = new EndpointMetricsAggregator(endpoint, method);
-            _endpointMetrics[endpointKey] = endpointAgg;
+            // Update application metrics
+            if (!_appMetrics.TryGetValue(appName, out var appAgg))
+            {
+                EnsureCapacity(_appMetrics, MaxTrackedApplications);
+                appAgg = new ApplicationMetricsAggregator();
+                _appMetrics[appName] = appAgg;
+            }
+            appAgg.RecordRequest(statusCode, responseTimeMs, bytesReceived, bytesSent);
+
+            // Update endpoint metrics
+            var endpointKey = $"{method}:{endpoint}";
+            if (!_endpointMetrics.TryGetValue(endpointKey, out var endpointAgg))
+            {
+                EnsureCapacity(_endpointMetrics, MaxTrackedEndpoints);
+                endpointAgg = new EndpointMetricsAggregator(endpoint, method);
+                _endpointMetrics[endpointKey] = endpointAgg;
+            }
+            endpointAgg.RecordRequest(statusCode, responseTimeMs);
         }
-        endpointAgg.RecordRequest(statusCode, responseTimeMs);
 
         // Update throughput
         _throughputAggregator.RecordRequest(responseTimeMs, bytesReceived, bytesSent, statusCode >= 400);
@@ -106,17 +121,29 @@ internal sealed class ApplicationPerformanceCollector
     /// </summary>
     public void RecordDatabaseQuery(string dbName, string query, float executionTimeMs, long? rowsAffected, bool failed)
     {
-        if (!_dbMetrics.TryGetValue(dbName, out var dbAgg))
+        dbName = NormalizeKey(dbName, fallback: "unknown-db");
+
+        lock (_metricsGate)
         {
-            dbAgg = new DatabaseMetricsAggregator();
-            _dbMetrics[dbName] = dbAgg;
+            if (!_dbMetrics.TryGetValue(dbName, out var dbAgg))
+            {
+                EnsureCapacity(_dbMetrics, MaxTrackedDatabases);
+                dbAgg = new DatabaseMetricsAggregator();
+                _dbMetrics[dbName] = dbAgg;
+            }
+            dbAgg.RecordQuery(query, executionTimeMs, rowsAffected, failed);
         }
-        dbAgg.RecordQuery(query, executionTimeMs, rowsAffected, failed);
     }
 
     private List<ApplicationMetrics> CollectApplicationMetrics()
     {
         var result = new List<ApplicationMetrics>();
+        List<KeyValuePair<string, ApplicationMetricsAggregator>> appMetricsSnapshot;
+
+        lock (_metricsGate)
+        {
+            appMetricsSnapshot = _appMetrics.ToList();
+        }
 
         // Collect from configured health check endpoints
         foreach (var endpoint in _config.ApmHealthCheckEndpoints)
@@ -154,7 +181,7 @@ internal sealed class ApplicationPerformanceCollector
         }
 
         // Add metrics for apps without health endpoints
-        foreach (var (name, agg) in _appMetrics)
+        foreach (var (name, agg) in appMetricsSnapshot)
         {
             if (!result.Any(r => r.Name == name))
             {
@@ -202,6 +229,12 @@ internal sealed class ApplicationPerformanceCollector
     private List<DatabaseMetrics> CollectDatabaseMetrics()
     {
         var result = new List<DatabaseMetrics>();
+        List<KeyValuePair<string, DatabaseMetricsAggregator>> dbMetricsSnapshot;
+
+        lock (_metricsGate)
+        {
+            dbMetricsSnapshot = _dbMetrics.ToList();
+        }
 
         // Check configured database endpoints
         foreach (var dbConfig in _config.ApmDatabaseEndpoints)
@@ -233,7 +266,7 @@ internal sealed class ApplicationPerformanceCollector
         }
 
         // Add metrics for databases without configured endpoints
-        foreach (var (name, agg) in _dbMetrics)
+        foreach (var (name, agg) in dbMetricsSnapshot)
         {
             if (!result.Any(r => r.Name == name))
             {
@@ -290,11 +323,74 @@ internal sealed class ApplicationPerformanceCollector
 
     private List<EndpointMetrics> GetEndpointMetrics()
     {
-        return _endpointMetrics.Values
+        List<EndpointMetricsAggregator> endpointMetricsSnapshot;
+        lock (_metricsGate)
+        {
+            endpointMetricsSnapshot = _endpointMetrics.Values.ToList();
+        }
+
+        return endpointMetricsSnapshot
             .Select(agg => agg.GetMetrics())
             .OrderByDescending(m => m.TotalRequests)
             .Take(20)
             .ToList();
+    }
+
+    private static string NormalizeEndpoint(string endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            return "/";
+        }
+
+        endpoint = endpoint.Trim();
+
+        var queryIndex = endpoint.IndexOf('?');
+        if (queryIndex >= 0)
+        {
+            endpoint = endpoint[..queryIndex];
+        }
+
+        if (endpoint.Length > MaxMetricKeyLength)
+        {
+            endpoint = endpoint[..MaxMetricKeyLength];
+        }
+
+        return endpoint;
+    }
+
+    private static string NormalizeMethod(string method)
+    {
+        method = NormalizeKey(method, fallback: "GET");
+        return method.Length > 16
+            ? method[..16].ToUpperInvariant()
+            : method.ToUpperInvariant();
+    }
+
+    private static string NormalizeKey(string value, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        value = value.Trim();
+        return value.Length > MaxMetricKeyLength ? value[..MaxMetricKeyLength] : value;
+    }
+
+    private static void EnsureCapacity<TKey, TValue>(Dictionary<TKey, TValue> dictionary, int maxEntries)
+        where TKey : notnull
+    {
+        if (dictionary.Count < maxEntries)
+        {
+            return;
+        }
+
+        using var keys = dictionary.Keys.GetEnumerator();
+        if (keys.MoveNext())
+        {
+            dictionary.Remove(keys.Current);
+        }
     }
 
 

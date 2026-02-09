@@ -228,6 +228,10 @@ public sealed class NetworkScannerService : INetworkScannerService
 
         await scanTask;
 
+        // Dispose semaphores to prevent memory leak
+        semaphore.Dispose();
+        enrichmentSemaphore.Dispose();
+
         _logger.LogInformation("Subnet scan of {Cidr} completed", cidr);
     }
 
@@ -497,6 +501,9 @@ public sealed class NetworkScannerService : INetworkScannerService
             }
         }));
 
+        // Dispose semaphore to prevent memory leak
+        lookupSemaphore.Dispose();
+
         hops = enriched.OrderBy(h => h.HopNumber).ToList();
 
         stopwatch.Stop();
@@ -571,6 +578,9 @@ public sealed class NetworkScannerService : INetworkScannerService
 
         _logger.LogInformation("Port scan of {Host} completed: {OpenCount} open ports found in {Duration}ms",
             host, result.OpenPorts.Count, result.DurationMs);
+
+        // Dispose semaphore to prevent memory leak
+        semaphore.Dispose();
 
         return result;
     }

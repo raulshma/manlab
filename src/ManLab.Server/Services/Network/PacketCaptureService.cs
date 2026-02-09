@@ -15,11 +15,13 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
     private readonly PacketCaptureOptions _options;
     private readonly Channel<PacketCaptureRecord> _packetChannel;
 
-    private readonly object _gate = new();
-    private readonly List<PacketCaptureRecord> _packets = [];
+    private readonly Lock _gate = new();
+
+    // Circular buffer for O(1) packet storage instead of O(n) List.RemoveRange
+    // Initialized lazily based on MaxBufferedPackets option
+    private CircularBuffer<PacketCaptureRecord>? _packets;
 
     private long _nextId;
-    private long _droppedCount;
     private long _broadcastSampleCounter;
     private string? _error;
     private bool _pcapUnavailable;
@@ -98,8 +100,8 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
                 DeviceName = _deviceName,
                 Filter = _filter,
                 Error = _error,
-                BufferedCount = _packets.Count,
-                DroppedCount = _droppedCount
+                BufferedCount = _packets?.Count ?? 0,
+                DroppedCount = _packets?.DroppedCount ?? 0
             };
         }
     }
@@ -144,13 +146,12 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
         count = Math.Clamp(count, 1, 2000);
         lock (_gate)
         {
-            if (_packets.Count == 0)
+            if (_packets is null || _packets.Count == 0)
             {
                 return [];
             }
 
-            var skip = Math.Max(0, _packets.Count - count);
-            return _packets.Skip(skip).ToList();
+            return _packets.GetRecent(count);
         }
     }
 
@@ -158,8 +159,7 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
     {
         lock (_gate)
         {
-            _packets.Clear();
-            _droppedCount = 0;
+            _packets?.Reset();
         }
     }
 
@@ -370,14 +370,11 @@ public sealed class PacketCaptureService : IPacketCaptureService, IHostedService
 
         lock (_gate)
         {
+            // Lazy initialization of circular buffer with configured capacity
+            _packets ??= new CircularBuffer<PacketCaptureRecord>(Math.Max(200, _options.MaxBufferedPackets));
+            
+            // O(1) add with automatic eviction of oldest items when full
             _packets.Add(record);
-            var max = Math.Max(200, _options.MaxBufferedPackets);
-            if (_packets.Count > max)
-            {
-                var overflow = _packets.Count - max;
-                _packets.RemoveRange(0, overflow);
-                _droppedCount += overflow;
-            }
         }
 
         var sampleEvery = Math.Max(1, _options.BroadcastSampleEvery);

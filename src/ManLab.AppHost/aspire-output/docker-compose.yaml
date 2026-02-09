@@ -18,6 +18,11 @@ services:
     networks:
       - "manlab-network"
     restart: "unless-stopped"
+    deploy:
+      resources:
+        limits:
+          cpus: "${POSTGRES_CPU_LIMIT:-1.50}"
+          memory: "${POSTGRES_MEMORY_LIMIT:-512M}"
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -31,6 +36,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    init: true
     stop_grace_period: "30s"
   nats:
     image: "docker.io/library/nats:2.12"
@@ -44,11 +50,17 @@ services:
     networks:
       - "manlab-network"
     restart: "unless-stopped"
+    deploy:
+      resources:
+        limits:
+          cpus: "${NATS_CPU_LIMIT:-0.50}"
+          memory: "${NATS_MEMORY_LIMIT:-96M}"
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    init: true
     stop_grace_period: "30s"
   valkey:
     image: "docker.io/valkey/valkey:8.0"
@@ -66,6 +78,11 @@ services:
     networks:
       - "manlab-network"
     restart: "unless-stopped"
+    deploy:
+      resources:
+        limits:
+          cpus: "${VALKEY_CPU_LIMIT:-0.75}"
+          memory: "${VALKEY_MEMORY_LIMIT:-192M}"
     healthcheck:
       test:
         - "CMD"
@@ -80,6 +97,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    init: true
     stop_grace_period: "30s"
   server:
     image: "${SERVER_IMAGE}"
@@ -104,6 +122,8 @@ services:
       NATS_PASSWORD: "${NATS_PASSWORD}"
       NATS_URI: "nats://nats:${NATS_PASSWORD}@nats:4222"
       ConnectionStrings__valkey: "valkey:6379"
+      DOTNET_GCHeapHardLimitPercent: "${SERVER_DOTNET_GC_HEAP_HARD_LIMIT_PERCENT:-70}"
+      DOTNET_GCConserveMemory: "${SERVER_DOTNET_GC_CONSERVE_MEMORY:-1}"
     ports:
       - "5247:8080"
     expose:
@@ -119,11 +139,17 @@ services:
     networks:
       - "manlab-network"
     restart: "unless-stopped"
+    deploy:
+      resources:
+        limits:
+          cpus: "${SERVER_CPU_LIMIT:-1.50}"
+          memory: "${SERVER_MEMORY_LIMIT:-768M}"
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    init: true
     stop_grace_period: "30s"
   manlab-web:
     image: "${WEB_IMAGE}"
@@ -141,11 +167,17 @@ services:
     networks:
       - "manlab-network"
     restart: "unless-stopped"
+    deploy:
+      resources:
+        limits:
+          cpus: "${WEB_CPU_LIMIT:-0.50}"
+          memory: "${WEB_MEMORY_LIMIT:-128M}"
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    init: true
     stop_grace_period: "30s"
 networks:
   manlab-network:

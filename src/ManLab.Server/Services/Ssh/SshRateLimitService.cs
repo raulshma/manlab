@@ -55,6 +55,7 @@ public sealed class SshRateLimitService
         var state = _cache.GetOrCreate(cacheKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = _options.FailureWindow;
+            entry.Size = 1;
             return new LockoutState();
         })!;
 

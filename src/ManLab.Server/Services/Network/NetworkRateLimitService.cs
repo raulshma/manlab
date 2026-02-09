@@ -92,6 +92,7 @@ public sealed class NetworkRateLimitService
         var requestCount = _cache.GetOrCreate(windowKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
+            entry.Size = 1;
             return 0;
         });
 
@@ -116,6 +117,7 @@ public sealed class NetworkRateLimitService
         var count = _cache.GetOrCreate(windowKey, entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
+            entry.Size = 1;
             return 0;
         });
 

@@ -32,16 +32,14 @@ public interface IDataContextFactory
 /// </summary>
 public class DataContextFactory : IDataContextFactory
 {
-    private readonly IServiceProvider _serviceProvider;
-    private readonly DatabaseOptions _options;
-    private readonly Random _random = new();
+    private readonly DataContext _dataContext;
 
     public DataContextFactory(
-        IServiceProvider serviceProvider,
+        DataContext dataContext,
         IOptions<DatabaseOptions> options)
     {
-        _serviceProvider = serviceProvider;
-        _options = options.Value;
+        _dataContext = dataContext;
+        _ = options;
     }
 
     /// <summary>
@@ -52,10 +50,7 @@ public class DataContextFactory : IDataContextFactory
     {
         // For now, always use primary since replica routing requires significant additional complexity
         // with multiple DbContext factories and connection string management
-        var scope = _serviceProvider.CreateScope();
-        var context = scope.ServiceProvider.GetRequiredService<DataContext>();
-
-        return ConfigureForReads(context);
+        return ConfigureForReads(_dataContext);
     }
 
     /// <summary>
@@ -63,8 +58,7 @@ public class DataContextFactory : IDataContextFactory
     /// </summary>
     public DataContext CreateReadWriteContext()
     {
-        var scope = _serviceProvider.CreateScope();
-        return scope.ServiceProvider.GetRequiredService<DataContext>();
+        return _dataContext;
     }
 
     /// <summary>
@@ -97,7 +91,7 @@ public static class DataContextFactoryExtensions
     public static IServiceCollection AddDataContextFactorySupport(
         this IServiceCollection services)
     {
-        services.AddSingleton<IDataContextFactory, DataContextFactory>();
+        services.AddScoped<IDataContextFactory, DataContextFactory>();
         return services;
     }
 }

@@ -1,5 +1,6 @@
 using Aspire.Hosting.Docker.Resources.ComposeNodes;
 using Aspire.Hosting.Docker.Resources.ServiceNodes;
+using Aspire.Hosting.Docker.Resources.ServiceNodes.Swarm;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Configuration;
 
@@ -7,12 +8,22 @@ static void ApplyComposeServiceDefaults(Service service)
 {
     service.Restart = "unless-stopped";
     service.StopGracePeriod = "30s";
+    service.Init = true;
 
     service.Logging ??= new Logging();
     service.Logging.Driver = "json-file";
     service.Logging.Options ??= [];
     service.Logging.Options["max-size"] = "10m";
     service.Logging.Options["max-file"] = "3";
+}
+
+static void ApplyComposeResourceLimits(Service service, string memoryLimit, string cpuLimit)
+{
+    service.Deploy ??= new Deploy();
+    service.Deploy.Resources ??= new Resources();
+    service.Deploy.Resources.Limits ??= new ResourceSpec();
+    service.Deploy.Resources.Limits.Memory = memoryLimit;
+    service.Deploy.Resources.Limits.Cpus = cpuLimit;
 }
 
 static void SetDependencyCondition(Service service, string dependencyName, string condition)
@@ -135,6 +146,7 @@ else
         {
             service.Name = "postgres";
             ApplyComposeServiceDefaults(service);
+            ApplyComposeResourceLimits(service, "${POSTGRES_MEMORY_LIMIT:-512M}", "${POSTGRES_CPU_LIMIT:-1.50}");
             service.Healthcheck = new Healthcheck
             {
                 Test = ["CMD-SHELL", "pg_isready -U postgres -h localhost"],
@@ -151,6 +163,7 @@ else
         {
             service.Name = "nats";
             ApplyComposeServiceDefaults(service);
+            ApplyComposeResourceLimits(service, "${NATS_MEMORY_LIMIT:-96M}", "${NATS_CPU_LIMIT:-0.50}");
         });
 
     valkey
@@ -159,6 +172,7 @@ else
         {
             service.Name = "valkey";
             ApplyComposeServiceDefaults(service);
+            ApplyComposeResourceLimits(service, "${VALKEY_MEMORY_LIMIT:-192M}", "${VALKEY_CPU_LIMIT:-0.75}");
             service.Healthcheck = new Healthcheck
             {
                 Test = ["CMD", "valkey-cli", "ping"],
@@ -194,6 +208,10 @@ else
             // references (e.g., depends_on and injected URLs) are consistent.
             service.Name = "server";
             ApplyComposeServiceDefaults(service);
+            ApplyComposeResourceLimits(service, "${SERVER_MEMORY_LIMIT:-768M}", "${SERVER_CPU_LIMIT:-1.50}");
+            service.Environment ??= [];
+            service.Environment["DOTNET_GCHeapHardLimitPercent"] = "${SERVER_DOTNET_GC_HEAP_HARD_LIMIT_PERCENT:-70}";
+            service.Environment["DOTNET_GCConserveMemory"] = "${SERVER_DOTNET_GC_CONSERVE_MEMORY:-1}";
             SetDependencyCondition(service, "postgres", "service_healthy");
             SetDependencyCondition(service, "valkey", "service_healthy");
         });
@@ -208,6 +226,7 @@ else
         {
             service.Name = "manlab-web";
             ApplyComposeServiceDefaults(service);
+            ApplyComposeResourceLimits(service, "${WEB_MEMORY_LIMIT:-128M}", "${WEB_CPU_LIMIT:-0.50}");
         });
 }
 
