@@ -13,6 +13,9 @@ param(
     [string]$PgPassword = "",
 
     [Parameter()]
+    [string]$NatsPassword = "",
+
+    [Parameter()]
     [int]$ServerPort = 8081
 )
 
@@ -56,6 +59,7 @@ $envExamplePath = Join-Path $OutputDir '.env.example'
 # Avoid writing secrets into CI artifacts by allowing PgPassword to be blank.
 $lines = @(
     "PGPASSWORD=$PgPassword",
+    "NATS_PASSWORD=$NatsPassword",
     "SERVER_IMAGE=$ServerImage",
     "WEB_IMAGE=$WebImage",
     "SERVER_PORT=$ServerPort"
@@ -67,6 +71,7 @@ Write-Host "Wrote '$envPath'."
 
 $exampleLines = @(
     "PGPASSWORD=CHANGEME",
+    "NATS_PASSWORD=CHANGEME",
     "SERVER_IMAGE=$ServerImage",
     "WEB_IMAGE=$WebImage",
     "SERVER_PORT=$ServerPort"

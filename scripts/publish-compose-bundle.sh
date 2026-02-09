@@ -5,12 +5,13 @@ output_dir="aspire-output"
 server_image=""
 web_image=""
 pg_password=""
+nats_password=""
 server_port="8081"
 
 usage() {
   cat <<'EOF'
 Usage:
-  publish-compose-bundle.sh [--output-dir DIR] [--server-image IMAGE] [--web-image IMAGE] [--pgpassword PWD] [--server-port PORT]
+  publish-compose-bundle.sh [--output-dir DIR] [--server-image IMAGE] [--web-image IMAGE] [--pgpassword PWD] [--nats-password PWD] [--server-port PORT]
 
 Notes:
   - Requires the Aspire CLI ('aspire') to be installed and on PATH.
@@ -30,6 +31,8 @@ while [[ $# -gt 0 ]]; do
       pg_password="$2"; shift 2;;
     --server-port)
       server_port="$2"; shift 2;;
+    --nats-password)
+      nats_password="$2"; shift 2;;
     -h|--help)
       usage; exit 0;;
     *)
@@ -54,6 +57,7 @@ env_example_path="$output_dir/.env.example"
 
 cat >"$env_path" <<EOF
 PGPASSWORD=$pg_password
+NATS_PASSWORD=$nats_password
 SERVER_IMAGE=$server_image
 WEB_IMAGE=$web_image
 SERVER_PORT=$server_port
@@ -63,6 +67,7 @@ echo "Wrote '$env_path'."
 
 cat >"$env_example_path" <<EOF
 PGPASSWORD=CHANGEME
+NATS_PASSWORD=CHANGEME
 SERVER_IMAGE=$server_image
 WEB_IMAGE=$web_image
 SERVER_PORT=$server_port

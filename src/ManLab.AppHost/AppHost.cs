@@ -1,5 +1,32 @@
+using Aspire.Hosting.Docker.Resources.ComposeNodes;
+using Aspire.Hosting.Docker.Resources.ServiceNodes;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Configuration;
+
+static void ApplyComposeServiceDefaults(Service service)
+{
+    service.Restart = "unless-stopped";
+    service.StopGracePeriod = "30s";
+
+    service.Logging ??= new Logging();
+    service.Logging.Driver = "json-file";
+    service.Logging.Options ??= [];
+    service.Logging.Options["max-size"] = "10m";
+    service.Logging.Options["max-file"] = "3";
+}
+
+static void SetDependencyCondition(Service service, string dependencyName, string condition)
+{
+    if (service.DependsOn is null)
+    {
+        return;
+    }
+
+    if (service.DependsOn.TryGetValue(dependencyName, out var dependency))
+    {
+        dependency.Condition = condition;
+    }
+}
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -107,7 +134,15 @@ else
         .PublishAsDockerComposeService((resource, service) =>
         {
             service.Name = "postgres";
-            service.Restart = "unless-stopped";
+            ApplyComposeServiceDefaults(service);
+            service.Healthcheck = new Healthcheck
+            {
+                Test = ["CMD-SHELL", "pg_isready -U postgres -h localhost"],
+                Interval = "10s",
+                Timeout = "5s",
+                Retries = 10,
+                StartPeriod = "20s"
+            };
         });
 
     nats
@@ -115,7 +150,7 @@ else
         .PublishAsDockerComposeService((resource, service) =>
         {
             service.Name = "nats";
-            service.Restart = "unless-stopped";
+            ApplyComposeServiceDefaults(service);
         });
 
     valkey
@@ -123,7 +158,15 @@ else
         .PublishAsDockerComposeService((resource, service) =>
         {
             service.Name = "valkey";
-            service.Restart = "unless-stopped";
+            ApplyComposeServiceDefaults(service);
+            service.Healthcheck = new Healthcheck
+            {
+                Test = ["CMD", "valkey-cli", "ping"],
+                Interval = "10s",
+                Timeout = "5s",
+                Retries = 10,
+                StartPeriod = "10s"
+            };
         });
 
     server
@@ -150,7 +193,9 @@ else
             // Keep the service name aligned with the resource name so generated
             // references (e.g., depends_on and injected URLs) are consistent.
             service.Name = "server";
-            service.Restart = "unless-stopped";
+            ApplyComposeServiceDefaults(service);
+            SetDependencyCondition(service, "postgres", "service_healthy");
+            SetDependencyCondition(service, "valkey", "service_healthy");
         });
 
     builder.AddDockerfile("web", "../ManLab.Web")
@@ -162,7 +207,7 @@ else
         .PublishAsDockerComposeService((resource, service) =>
         {
             service.Name = "manlab-web";
-            service.Restart = "unless-stopped";
+            ApplyComposeServiceDefaults(service);
         });
 }
 

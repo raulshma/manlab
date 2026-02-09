@@ -1,0 +1,157 @@
+services:
+  postgres:
+    image: "docker.io/timescale/timescaledb:latest-pg17"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "${PGPASSWORD}"
+      LANG: "C.UTF-8"
+      LC_ALL: "C.UTF-8"
+    expose:
+      - "5432"
+    volumes:
+      - type: "volume"
+        target: "/var/lib/postgresql/data"
+        source: "manlab-db-data"
+        read_only: false
+    networks:
+      - "manlab-network"
+    restart: "unless-stopped"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "pg_isready -U postgres -h localhost"
+      interval: "10s"
+      timeout: "5s"
+      retries: 10
+      start_period: "20s"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: "30s"
+  nats:
+    image: "docker.io/library/nats:2.12"
+    command:
+      - "--user"
+      - "nats"
+      - "--pass"
+      - "${NATS_PASSWORD}"
+    expose:
+      - "4222"
+    networks:
+      - "manlab-network"
+    restart: "unless-stopped"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: "30s"
+  valkey:
+    image: "docker.io/valkey/valkey:8.0"
+    command:
+      - "--save"
+      - "300"
+      - "100"
+    expose:
+      - "6379"
+    volumes:
+      - type: "volume"
+        target: "/data"
+        source: "manlab-valkey-data"
+        read_only: false
+    networks:
+      - "manlab-network"
+    restart: "unless-stopped"
+    healthcheck:
+      test:
+        - "CMD"
+        - "valkey-cli"
+        - "ping"
+      interval: "10s"
+      timeout: "5s"
+      retries: 10
+      start_period: "10s"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: "30s"
+  server:
+    image: "${SERVER_IMAGE}"
+    environment:
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_EMIT_EXCEPTION_LOG_ATTRIBUTES: "true"
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_EMIT_EVENT_LOG_ATTRIBUTES: "true"
+      OTEL_DOTNET_EXPERIMENTAL_OTLP_RETRY: "in_memory"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      HTTP_PORTS: "8080"
+      ConnectionStrings__manlab: "Host=postgres;Port=5432;Username=postgres;Password=${PGPASSWORD};Database=manlab"
+      MANLAB_HOST: "postgres"
+      MANLAB_PORT: "5432"
+      MANLAB_USERNAME: "postgres"
+      MANLAB_PASSWORD: "${PGPASSWORD}"
+      MANLAB_URI: "postgresql://postgres:${PGPASSWORD}@postgres:5432/manlab"
+      MANLAB_JDBCCONNECTIONSTRING: "jdbc:postgresql://postgres:5432/manlab"
+      MANLAB_DATABASENAME: "manlab"
+      ConnectionStrings__nats: "nats://nats:${NATS_PASSWORD}@nats:4222"
+      NATS_HOST: "nats"
+      NATS_PORT: "4222"
+      NATS_USERNAME: "nats"
+      NATS_PASSWORD: "${NATS_PASSWORD}"
+      NATS_URI: "nats://nats:${NATS_PASSWORD}@nats:4222"
+      ConnectionStrings__valkey: "valkey:6379"
+    ports:
+      - "5247:8080"
+    expose:
+      - "8080"
+      - "${SERVER_PORT}"
+    depends_on:
+      postgres:
+        condition: "service_healthy"
+      nats:
+        condition: "service_started"
+      valkey:
+        condition: "service_healthy"
+    networks:
+      - "manlab-network"
+    restart: "unless-stopped"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: "30s"
+  manlab-web:
+    image: "${WEB_IMAGE}"
+    environment:
+      SERVER_HTTP: "http://server:8080"
+      services__server__http__0: "http://server:8080"
+      SERVER_HTTPS: "https://server:${SERVER_PORT}"
+      SERVER_HTTP_EXTERNAL: "tcp://server:8080"
+      services__server__http-external__0: "tcp://server:8080"
+    ports:
+      - "8080:80"
+    depends_on:
+      server:
+        condition: "service_started"
+    networks:
+      - "manlab-network"
+    restart: "unless-stopped"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: "30s"
+networks:
+  manlab-network:
+    driver: "bridge"
+volumes:
+  manlab-db-data:
+    driver: "local"
+  manlab-valkey-data:
+    driver: "local"
