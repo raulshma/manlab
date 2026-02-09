@@ -235,13 +235,28 @@ const DashboardGrid = memo(function DashboardGrid({
     });
   }, [onSave]);
 
-  const handleSaveConfig = useCallback((newConfig: Record<string, unknown>, newWidth?: number, newHeight?: number) => {
+  const handleSaveConfig = useCallback((
+    newConfig: Record<string, unknown>, 
+    newWidth?: number, 
+    newHeight?: number, 
+    newWidthPercent?: number, 
+    newHeightPercent?: number,
+    newHorizontalAlign?: 'left' | 'center' | 'right',
+    newVerticalAlign?: 'top' | 'center' | 'bottom'
+  ) => {
     if (configuringWidget) {
       // Update config
       handleConfigChange(configuringWidget.id, newConfig);
 
-      // Update size if changed
-      if (newWidth !== undefined || newHeight !== undefined) {
+      // Update size and alignment if changed
+      if (
+        newWidth !== undefined || 
+        newHeight !== undefined || 
+        newWidthPercent !== undefined || 
+        newHeightPercent !== undefined ||
+        newHorizontalAlign !== undefined ||
+        newVerticalAlign !== undefined
+      ) {
         setLayouts((prevLayouts) => {
           const updatedLayouts = prevLayouts.map((widget) => {
             if (widget.id === configuringWidget.id) {
@@ -249,6 +264,10 @@ const DashboardGrid = memo(function DashboardGrid({
                 ...widget,
                 width: newWidth ?? widget.width,
                 height: newHeight ?? widget.height,
+                widthPercent: newWidthPercent,
+                heightPercent: newHeightPercent,
+                horizontalAlign: newHorizontalAlign ?? widget.horizontalAlign,
+                verticalAlign: newVerticalAlign ?? widget.verticalAlign,
               };
             }
             return widget;
@@ -653,12 +672,22 @@ const DashboardGrid = memo(function DashboardGrid({
               return (
                 <div
                   key={widget.id}
-                  className={`
-                    group h-full rounded-xl transition-all duration-300
-                    ${editMode ? 'ring-2 ring-primary/20 bg-background/80 hover:ring-primary/50' : 'bg-card border border-border/50 shadow-sm hover:shadow-md'}
-                  `}
+                  className="h-full flex"
+                  style={{
+                    justifyContent: widget.horizontalAlign === 'left' ? 'flex-start' : widget.horizontalAlign === 'right' ? 'flex-end' : 'center',
+                    alignItems: widget.verticalAlign === 'top' ? 'flex-start' : widget.verticalAlign === 'bottom' ? 'flex-end' : 'center',
+                  }}
                 >
-                  <Card className="h-full flex flex-col overflow-hidden bg-transparent border-0 shadow-none">
+                  <Card 
+                    className={`
+                      group flex flex-col overflow-hidden transition-all duration-300
+                      ${editMode ? 'ring-2 ring-primary/20 bg-background/80 hover:ring-primary/50' : 'bg-card border border-border/50 shadow-sm hover:shadow-md'}
+                    `}
+                    style={{
+                      width: widget.widthPercent ? `${widget.widthPercent}%` : '100%',
+                      height: widget.heightPercent ? `${widget.heightPercent}%` : '100%',
+                    }}
+                  >
                     {editMode && (
                       <CardHeader className="flex flex-row items-center justify-between py-3 px-4 shrink-0 transition-colors bg-muted/10 cursor-move drag-handle border-b border-border/20">
                         <div className="flex items-center gap-2.5 overflow-hidden">
@@ -699,7 +728,9 @@ const DashboardGrid = memo(function DashboardGrid({
                     <CardContent className="flex-1 overflow-y-auto overflow-x-hidden relative p-4">
                        {/* Overlay to prevent interaction during edit mode */}
                        {editMode && <div className="absolute inset-0 z-10 bg-background/40" />}
-                      {renderWidgetContent(widget, (newConfig) => handleConfigChange(widget.id, newConfig))}
+                       <div className="w-full h-full">
+                         {renderWidgetContent(widget, (newConfig) => handleConfigChange(widget.id, newConfig))}
+                       </div>
                     </CardContent>
                   </Card>
                 </div>
@@ -724,6 +755,10 @@ const DashboardGrid = memo(function DashboardGrid({
                 initialConfig={configuringWidget.config}
                 initialWidth={configuringWidget.width}
                 initialHeight={configuringWidget.height}
+                initialWidthPercent={configuringWidget.widthPercent}
+                initialHeightPercent={configuringWidget.heightPercent}
+                initialHorizontalAlign={configuringWidget.horizontalAlign}
+                initialVerticalAlign={configuringWidget.verticalAlign}
                 onSave={handleSaveConfig}
                 onCancel={() => setConfiguringWidget(null)}
               />

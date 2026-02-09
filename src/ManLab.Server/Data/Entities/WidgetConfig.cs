@@ -38,6 +38,12 @@ public class WidgetConfig
     /// <summary>Row span (height) in grid units.</summary>
     public int Height { get; set; } = 1;
 
+    /// <summary>Optional width percentage (10-100) for content scaling within the cell.</summary>
+    public int? WidthPercent { get; set; }
+
+    /// <summary>Optional height percentage (10-100) for content scaling within the cell.</summary>
+    public int? HeightPercent { get; set; }
+
     /// <summary>Whether this widget requires admin privileges to configure.</summary>
     public bool RequiresAdmin { get; set; } = false;
 

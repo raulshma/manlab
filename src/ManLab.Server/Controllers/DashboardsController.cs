@@ -66,6 +66,8 @@ public class DashboardsController : ControllerBase
                 Row = w.Row,
                 Width = w.Width,
                 Height = w.Height,
+                WidthPercent = w.WidthPercent,
+                HeightPercent = w.HeightPercent,
                 Config = string.IsNullOrEmpty(w.ConfigJson)
                     ? new Dictionary<string, object>()
                     : JsonSerializer.Deserialize<Dictionary<string, object>>(w.ConfigJson) ?? new Dictionary<string, object>()
@@ -138,7 +140,9 @@ public class DashboardsController : ControllerBase
                         Column = widgetDto.Column,
                         Row = widgetDto.Row,
                         Width = widgetDto.Width,
-                        Height = widgetDto.Height
+                        Height = widgetDto.Height,
+                        WidthPercent = widgetDto.WidthPercent,
+                        HeightPercent = widgetDto.HeightPercent
                     };
                     _dbContext.WidgetConfigs.Add(widget);
                 }
@@ -151,6 +155,8 @@ public class DashboardsController : ControllerBase
                     widget.Row = widgetDto.Row;
                     widget.Width = widgetDto.Width;
                     widget.Height = widgetDto.Height;
+                    widget.WidthPercent = widgetDto.WidthPercent;
+                    widget.HeightPercent = widgetDto.HeightPercent;
                 }
             }
 

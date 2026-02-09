@@ -14,7 +14,19 @@ interface WidgetConfigFormProps {
   initialConfig: Record<string, unknown>;
   initialWidth?: number;
   initialHeight?: number;
-  onSave: (config: Record<string, unknown>, width?: number, height?: number) => void;
+  initialWidthPercent?: number;
+  initialHeightPercent?: number;
+  initialHorizontalAlign?: 'left' | 'center' | 'right';
+  initialVerticalAlign?: 'top' | 'center' | 'bottom';
+  onSave: (
+    config: Record<string, unknown>, 
+    width?: number, 
+    height?: number, 
+    widthPercent?: number, 
+    heightPercent?: number,
+    horizontalAlign?: 'left' | 'center' | 'right',
+    verticalAlign?: 'top' | 'center' | 'bottom'
+  ) => void;
   onCancel: () => void;
 }
 
@@ -23,6 +35,10 @@ export function WidgetConfigForm({
   initialConfig,
   initialWidth = 1,
   initialHeight = 2,
+  initialWidthPercent,
+  initialHeightPercent,
+  initialHorizontalAlign = 'center',
+  initialVerticalAlign = 'center',
   onSave,
   onCancel,
 }: WidgetConfigFormProps) {
@@ -40,6 +56,10 @@ export function WidgetConfigForm({
 
   const [width, setWidth] = useState(initialWidth);
   const [height, setHeight] = useState(initialHeight);
+  const [widthPercent, setWidthPercent] = useState<number | undefined>(initialWidthPercent);
+  const [heightPercent, setHeightPercent] = useState<number | undefined>(initialHeightPercent);
+  const [horizontalAlign, setHorizontalAlign] = useState<'left' | 'center' | 'right'>(initialHorizontalAlign);
+  const [verticalAlign, setVerticalAlign] = useState<'top' | 'center' | 'bottom'>(initialVerticalAlign);
 
   const handleChange = (key: string, value: unknown) => {
     setFormData((prev) => ({
@@ -237,6 +257,83 @@ export function WidgetConfigForm({
                     1 column ≈ 25% width • 1 row ≈ 200px height
                 </div>
             </div>
+
+            {/* Content Size Percentage Section */}
+            <div className="mt-4 space-y-3">
+                <h4 className="text-xs font-medium text-muted-foreground">Content Size & Alignment</h4>
+                <div className="grid grid-cols-2 gap-6 bg-muted/10 p-4 rounded-lg border border-border/30">
+                    <div className="space-y-2">
+                        <Label htmlFor="widget-width-percent" className="text-xs font-medium text-muted-foreground">Width %</Label>
+                        <div className="relative">
+                            <Input
+                                id="widget-width-percent"
+                                type="number"
+                                min={10}
+                                max={100}
+                                value={widthPercent ?? ""}
+                                placeholder="100"
+                                onChange={(e) => setWidthPercent(e.target.value ? Number(e.target.value) : undefined)}
+                                className="bg-background border-border/60 pl-3 pr-8"
+                            />
+                            <span className="absolute right-3 top-2.5 text-xs text-muted-foreground pointer-events-none">%</span>
+                        </div>
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="widget-height-percent" className="text-xs font-medium text-muted-foreground">Height %</Label>
+                        <div className="relative">
+                            <Input
+                                id="widget-height-percent"
+                                type="number"
+                                min={10}
+                                max={100}
+                                value={heightPercent ?? ""}
+                                placeholder="100"
+                                onChange={(e) => setHeightPercent(e.target.value ? Number(e.target.value) : undefined)}
+                                className="bg-background border-border/60 pl-3 pr-8"
+                            />
+                            <span className="absolute right-3 top-2.5 text-xs text-muted-foreground pointer-events-none">%</span>
+                        </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                        <Label htmlFor="widget-horizontal-align" className="text-xs font-medium text-muted-foreground">Horizontal Align</Label>
+                        <Select
+                            value={horizontalAlign}
+                            onValueChange={(val) => setHorizontalAlign(val as 'left' | 'center' | 'right')}
+                        >
+                            <SelectTrigger id="widget-horizontal-align" className="bg-background border-border/60 text-xs h-9">
+                                <SelectValue placeholder="Center" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="left">Left</SelectItem>
+                                <SelectItem value="center">Center</SelectItem>
+                                <SelectItem value="right">Right</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="widget-vertical-align" className="text-xs font-medium text-muted-foreground">Vertical Align</Label>
+                        <Select
+                            value={verticalAlign}
+                            onValueChange={(val) => setVerticalAlign(val as 'top' | 'center' | 'bottom')}
+                        >
+                            <SelectTrigger id="widget-vertical-align" className="bg-background border-border/60 text-xs h-9">
+                                <SelectValue placeholder="Center" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="top">Top</SelectItem>
+                                <SelectItem value="center">Center</SelectItem>
+                                <SelectItem value="bottom">Bottom</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    <div className="col-span-2 text-[10px] text-muted-foreground/60 text-center">
+                        Align content within the cell if size is less than 100%
+                    </div>
+                </div>
+            </div>
         </section>
 
         {/* Configuration Section */}
@@ -274,7 +371,7 @@ export function WidgetConfigForm({
         <Button variant="outline" onClick={onCancel} className="h-10 px-6">
           Cancel
         </Button>
-        <Button onClick={() => onSave(formData, width, height)} className="h-10 px-6 shadow-md shadow-primary/10">
+        <Button onClick={() => onSave(formData, width, height, widthPercent, heightPercent, horizontalAlign, verticalAlign)} className="h-10 px-6 shadow-md shadow-primary/10">
           Save Changes
         </Button>
       </div>

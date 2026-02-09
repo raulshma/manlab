@@ -22,6 +22,8 @@ public class DashboardWidgetDto
     public int Row { get; set; }
     public int Width { get; set; }
     public int Height { get; set; }
+    public int? WidthPercent { get; set; }
+    public int? HeightPercent { get; set; }
     public Dictionary<string, object> Config { get; set; } = new();
 }
 

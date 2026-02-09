@@ -12,6 +12,10 @@ export interface DashboardWidgetDto {
   row: number;
   width: number;
   height: number;
+  widthPercent?: number;  // Optional width percentage (0-100) for the widget card
+  heightPercent?: number; // Optional height percentage (0-100) for the widget card
+  horizontalAlign?: 'left' | 'center' | 'right'; // Horizontal alignment within the grid cell
+  verticalAlign?: 'top' | 'center' | 'bottom';   // Vertical alignment within the grid cell
   config: Record<string, unknown>;
 }
 
