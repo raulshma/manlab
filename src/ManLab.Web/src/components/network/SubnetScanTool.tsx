@@ -13,6 +13,7 @@
  */
 
 import { useMemo, useRef, useState, useCallback, useEffect, useLayoutEffect } from "react";
+import { generateId } from "@/lib/utils";
 import {
   Search,
   Loader2,
@@ -164,7 +165,7 @@ function getStoredNumber(key: string, fallback: number): number {
 
 function saveShareSnapshot(cidr: string, hosts: DiscoveredHost[]): string | null {
   if (typeof window === "undefined") return null;
-  const id = crypto.randomUUID();
+  const id = generateId();
   const payload = {
     cidr,
     hosts,

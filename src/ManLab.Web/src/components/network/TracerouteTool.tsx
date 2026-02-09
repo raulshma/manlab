@@ -13,6 +13,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { generateId } from "@/lib/utils";
 import {
   Route,
   Loader2,
@@ -567,7 +568,7 @@ export function TracerouteTool() {
 
         // Add to history
         const newEntry: TracerouteHistoryEntry = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           timestamp: new Date(),
           result: event.result,
         };
@@ -612,7 +613,7 @@ export function TracerouteTool() {
 
         // Add to history
         const newEntry: TracerouteHistoryEntry = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           timestamp: new Date(),
           result: traceResult,
         };
@@ -654,7 +655,7 @@ export function TracerouteTool() {
 
         // Add to history
         const newEntry: TracerouteHistoryEntry = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           timestamp: new Date(),
           result: traceResult,
         };

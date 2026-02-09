@@ -52,7 +52,7 @@ import { StatusBadge } from "@/components/network/StatusIndicators";
 import { announce } from "@/lib/accessibility";
 import { useNetworkToolsOptional } from "@/hooks/useNetworkTools";
 import { motion, AnimatePresence } from "framer-motion";
-import { cn } from "@/lib/utils";
+import { cn, generateId } from "@/lib/utils";
 
 const PingRttChart = lazy(() => import("@/components/network/PingRttChart"));
 
@@ -224,7 +224,7 @@ function createAggregatedHistoryEntry(
   referenceResult: PingResult | null
 ): PingHistoryEntry {
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     timestamp: entry.timeWindow,
     address: host,
     resolvedAddress: referenceResult?.resolvedAddress ?? null,
@@ -468,7 +468,7 @@ export function PingTool() {
         // Single ping mode: add to history (keep last 10)
         const newEntry: PingHistoryEntry = {
           ...result,
-          id: crypto.randomUUID(),
+          id: generateId(),
           timestamp: currentTime,
         };
         setHistory((prev) => [newEntry, ...prev].slice(0, MAX_HISTORY_ENTRIES));

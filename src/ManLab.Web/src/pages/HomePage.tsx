@@ -1,4 +1,5 @@
 import React, { useState, useCallback, memo } from "react";
+import { generateId } from "@/lib/utils";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Responsive } from "react-grid-layout";
 import { WidthProvider } from "@/components/homepage/WidthProvider";
@@ -194,7 +195,7 @@ const DashboardGrid = memo(function DashboardGrid({
   }, [widgetTypes]);
 
   const handleAddWidget = useCallback((widgetType: string) => {
-    const id = `widget-${widgetType}-${crypto.randomUUID()}`;
+    const id = `widget-${widgetType}-${generateId()}`;
     const newWidget: DashboardWidgetDto = {
       id,
       type: widgetType,
