@@ -98,7 +98,7 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { useNetworkToolHistory } from "@/hooks/useNetworkToolHistory";
 import { exportNetworkToolHistory } from "@/api/networkApi";
-import { cn } from "@/lib/utils";
+import { cn, generateId } from "@/lib/utils";
 import type {
   HistorySortBy,
   HistorySortDir,
@@ -596,9 +596,7 @@ export function NetworkToolHistoryPanel() {
     const name = saveViewName.trim();
     if (!name) return;
 
-    const id = typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}`;
+    const id = generateId();
 
     setSavedViews((prev) => [
       {

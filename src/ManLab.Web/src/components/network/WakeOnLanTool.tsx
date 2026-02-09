@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { notify } from "@/lib/network-notify";
 import { sendWakeOnLan } from "@/api/networkApi";
+import { generateId } from "@/lib/utils";
 
 interface SavedDevice {
   id: string;
@@ -132,7 +133,7 @@ export function WakeOnLanTool() {
 
     const name = deviceName.trim() || `Device ${normalized}`;
     const newDevice: SavedDevice = {
-      id: globalThis.crypto?.randomUUID?.() ?? String(Date.now()),
+      id: generateId(),
       name,
       macAddress: normalized,
       broadcastAddress: broadcastAddress || null,
